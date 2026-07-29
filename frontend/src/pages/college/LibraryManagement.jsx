@@ -1,0 +1,911 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  BookPlus,
+  BookmarkCheck,
+  IndianRupee,
+  Library,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import { libraryApi, studentApi } from '../../utils/api';
+
+const today = new Date().toISOString().split('T')[0];
+
+const initialBookForm = {
+  isbn: '',
+  title: '',
+  author: '',
+  format: 'Physical',
+  rack: '',
+  shelf: '',
+  availableQuantity: '1',
+};
+
+const initialIssueForm = {
+  bookId: '',
+  className: '',
+  borrowerId: '',
+  issueDate: today,
+};
+
+const LibraryManagement = () => {
+  const navigate = useNavigate();
+  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
+  const [books, setBooks] = useState([]);
+  const [issues, setIssues] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [bookForm, setBookForm] = useState(initialBookForm);
+  const [issueForm, setIssueForm] = useState(initialIssueForm);
+  const [bookSearch, setBookSearch] = useState('');
+  const [issueSearch, setIssueSearch] = useState('');
+  const [formatFilter, setFormatFilter] = useState('All Formats');
+  const [issueStatusFilter, setIssueStatusFilter] = useState('All Records');
+  const [activeDesk, setActiveDesk] = useState(null);
+  const [circulationAction, setCirculationAction] = useState('issue');
+  const [returnIssueId, setReturnIssueId] = useState('');
+  const [isDamageBook, setIsDamageBook] = useState(false);
+  const [returnDamageCharge, setReturnDamageCharge] = useState('');
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!session || session.role !== 'admin' || !collegeId) {
+      navigate('/login');
+      return;
+    }
+
+    refreshData();
+  }, [collegeId, navigate, session]);
+
+  const refreshData = async () => {
+    try {
+      const [bookResponse, issueResponse, studentResponse] = await Promise.all([
+        libraryApi.getBooks(),
+        libraryApi.getIssues(),
+        studentApi.getAll(),
+      ]);
+      setBooks(bookResponse);
+      setIssues(issueResponse);
+      setStudents(studentResponse);
+      setLoadError('');
+    } catch (error) {
+      setBooks([]);
+      setIssues([]);
+      setStudents([]);
+      setLoadError(error.message || 'Unable to load library data.');
+    }
+  };
+
+  const studentOptions = useMemo(() => {
+    return students
+      .map((student) => ({
+        id: student.id,
+        label: `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Unnamed student',
+        subtitle: student.enrollmentNo || 'Student record',
+        className: student.assignedClass || student.className || '',
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [students]);
+
+  const enhancedBooks = useMemo(() => {
+    return books.map((book) => {
+      const activeIssues = issues.filter((issue) => issue.bookId === book.id && !issue.returnDate).length;
+      const stock = Number(book.availableQuantity) || 0;
+      return {
+        ...book,
+        activeIssues,
+        inStock: Math.max(stock, 0),
+      };
+    });
+  }, [books, issues]);
+
+  const bookChoices = useMemo(() => {
+    return enhancedBooks
+      .map((book) => ({
+        id: book.id,
+        label: `${book.title || 'Untitled Book'}${book.author ? ` by ${book.author}` : ''}`,
+        stock: book.inStock,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [enhancedBooks]);
+
+  const classOptions = useMemo(() => (
+    [...new Set(
+      students
+        .map((student) => student.assignedClass || student.className)
+        .filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b))
+  ), [students]);
+
+  const filteredIssueStudentOptions = useMemo(() => {
+    return studentOptions.filter((student) => {
+      if (!issueForm.className) return false;
+      return student.className === issueForm.className;
+    });
+  }, [issueForm.className, studentOptions]);
+
+  const filteredBooks = useMemo(() => {
+    const query = bookSearch.trim().toLowerCase();
+    return enhancedBooks.filter((book) => {
+      const matchesFormat = formatFilter === 'All Formats' || book.format === formatFilter;
+      if (!matchesFormat) return false;
+      if (!query) return true;
+
+      return (
+        book.isbn?.toLowerCase().includes(query) ||
+        book.title?.toLowerCase().includes(query) ||
+        book.author?.toLowerCase().includes(query) ||
+        getBookRack(book).toLowerCase().includes(query) ||
+        getBookShelf(book).toLowerCase().includes(query) ||
+        book.shelfLocation?.toLowerCase().includes(query)
+      );
+    });
+  }, [bookSearch, enhancedBooks, formatFilter]);
+
+  const enhancedIssues = useMemo(() => {
+    return issues
+      .map((issue) => {
+        const book = books.find((entry) => entry.id === issue.bookId);
+        const borrower = students.find((student) => student.id === issue.borrowerId);
+        const status = getIssueStatus(issue);
+        const computedFine = calculateFine(issue);
+        return {
+          ...issue,
+          bookTitle: book?.title || 'Unknown book',
+          borrowerName: borrower ? `${borrower.firstName || ''} ${borrower.lastName || ''}`.trim() || borrower.enrollmentNo : issue.borrowerName || 'Unknown borrower',
+          borrowerMeta: borrower?.enrollmentNo || 'Student record',
+          borrowerClass: borrower?.assignedClass || borrower?.className || '',
+          status,
+          computedFine,
+        };
+      })
+      .sort((a, b) => new Date(b.issueDate || 0) - new Date(a.issueDate || 0));
+  }, [books, issues, students]);
+
+  const filteredIssues = useMemo(() => {
+    const query = issueSearch.trim().toLowerCase();
+    return enhancedIssues.filter((issue) => {
+      const matchesStatus = issueStatusFilter === 'All Records' || issue.status === issueStatusFilter;
+      if (!matchesStatus) return false;
+      if (!query) return true;
+
+      return (
+        issue.bookTitle.toLowerCase().includes(query) ||
+        issue.borrowerName?.toLowerCase().includes(query) ||
+        issue.borrowerMeta?.toLowerCase().includes(query) ||
+        issue.borrowerClass?.toLowerCase().includes(query) ||
+        issue.issueDate?.toLowerCase().includes(query) ||
+        issue.dueDate?.toLowerCase().includes(query)
+      );
+    });
+  }, [enhancedIssues, issueSearch, issueStatusFilter]);
+
+  const activeIssueChoices = useMemo(() => {
+    return enhancedIssues
+      .filter((issue) => !issue.returnDate)
+      .map((issue) => ({
+        id: issue.id,
+        label: `${issue.bookTitle} | ${issue.borrowerName || 'Borrower pending'}`,
+        subtitle: `${issue.borrowerClass || 'Class pending'} | Issue ${issue.issueDate || '-'}`,
+      }));
+  }, [enhancedIssues]);
+
+  const selectedReturnIssue = useMemo(() => (
+    enhancedIssues.find((issue) => String(issue.id) === String(returnIssueId)) || null
+  ), [enhancedIssues, returnIssueId]);
+
+  const totalTitles = books.length;
+  const totalStock = books.reduce((sum, book) => sum + (Number(book.availableQuantity) || 0), 0);
+  const activeLoans = issues.filter((issue) => !issue.returnDate).length;
+  const pendingFines = enhancedIssues.reduce((sum, issue) => sum + (issue.status !== 'Returned' ? issue.computedFine : 0), 0);
+
+  const handleSaveBook = async (e) => {
+    e.preventDefault();
+
+    const payload = {
+      isbn: bookForm.isbn.trim(),
+      title: bookForm.title.trim(),
+      author: bookForm.author.trim(),
+      format: bookForm.format,
+      rack: bookForm.rack.trim(),
+      shelf: bookForm.shelf.trim(),
+      shelfLocation: formatShelfLocation(bookForm.rack, bookForm.shelf),
+      availableQuantity: Math.max(Number(bookForm.availableQuantity) || 0, 0),
+    };
+
+    if (!payload.isbn || !payload.title || !payload.author || !payload.rack || !payload.shelf) return;
+
+    try {
+      await libraryApi.saveBook(payload);
+      setBookForm(initialBookForm);
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to save the book.');
+    }
+  };
+
+  const handleSaveIssue = async (e) => {
+    e.preventDefault();
+
+    const selectedBook = books.find((book) => book.id === Number(issueForm.bookId));
+    const selectedStudent = students.find((student) => student.id === Number(issueForm.borrowerId));
+    if (!selectedBook || !selectedStudent || !issueForm.issueDate || !issueForm.className) return;
+    if ((Number(selectedBook.availableQuantity) || 0) < 1) return;
+
+    const payload = {
+      bookId: selectedBook.id,
+      borrowerId: selectedStudent.id,
+      issueDate: issueForm.issueDate,
+      dueDate: issueForm.issueDate,
+      finePerDay: '0',
+      damageCharges: '0',
+    };
+
+    try {
+      await libraryApi.saveIssue(payload);
+      setIssueForm(initialIssueForm);
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to create the circulation record.');
+    }
+  };
+
+  const handleReturnBook = async (e) => {
+    e.preventDefault();
+    if (!returnIssueId) return;
+
+    try {
+      await libraryApi.markReturned(returnIssueId, {
+        damageCharges: isDamageBook ? String(Number(returnDamageCharge) || 0) : '0',
+      });
+      setIsDamageBook(false);
+      setReturnDamageCharge('');
+      setReturnIssueId('');
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to mark this book as returned.');
+    }
+  };
+
+  const handleDeleteBook = async (bookId) => {
+    if (issues.some((issue) => issue.bookId === bookId && !issue.returnDate)) {
+      window.alert('Return all active issues before deleting this book.');
+      return;
+    }
+
+    if (!window.confirm('Delete this book from the library catalog?')) return;
+    try {
+      await libraryApi.deleteBook(bookId);
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to delete this book.');
+    }
+  };
+
+  const handleDeleteIssue = async (issueId) => {
+    const issue = issues.find((entry) => entry.id === issueId);
+    if (!issue) return;
+    if (!window.confirm('Delete this circulation record?')) return;
+
+    try {
+      await libraryApi.deleteIssue(issueId);
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to delete this circulation record.');
+    }
+  };
+
+  if (!session || session.role !== 'admin' || !collegeId) return null;
+
+  return (
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f5fbf7_0%,#eefaf0_32%,#f8fafc_100%)] text-slate-900">
+      <div className="border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate('/college')}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
+            >
+              <ArrowLeft size={14} />
+              Back
+            </button>
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-emerald-600">Library Management</p>
+              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Stacks And Circulation Desk</h1>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
+        {loadError ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {loadError}
+          </div>
+        ) : null}
+        <section className="overflow-hidden rounded-4xl bg-[linear-gradient(145deg,#064e3b_0%,#065f46_45%,#0f172a_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(6,78,59,0.8)] lg:px-10 lg:py-10">
+          <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-emerald-200">Library Operations</p>
+              <h2 className="mt-4 max-w-3xl font-serif text-4xl font-black italic leading-none tracking-tight">
+                Manage inventory, lend books with control, and keep late returns visible.
+              </h2>
+              <p className="mt-5 max-w-2xl text-sm leading-7 text-emerald-50/80">
+                Maintain the master catalog with ISBN and shelf placement, then track who borrowed each title, when it is due, and what fine is building up.
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <MetricCard label="Catalog Titles" value={totalTitles} icon={Library} />
+              <MetricCard label="Available Copies" value={totalStock} icon={BookOpen} />
+              <MetricCard label="Active Loans" value={activeLoans} icon={BookmarkCheck} />
+              <MetricCard label="Running Fines" value={`Rs ${pendingFines}`} icon={IndianRupee} />
+            </div>
+          </div>
+        </section>
+
+        {!activeDesk ? (
+          <section className="mt-8 grid gap-5 md:grid-cols-2">
+            <LibraryActionCard
+              icon={BookPlus}
+              title="Add Book"
+              description="Add new titles, ISBN, author, rack, shelf, and available quantity to the library catalog."
+              onClick={() => setActiveDesk('books')}
+            />
+            <LibraryActionCard
+              icon={BookmarkCheck}
+              title="Issue, Return And Fine"
+              description="Issue books to students, mark returns, and review due dates with calculated fine amounts."
+              onClick={() => setActiveDesk('circulation')}
+            />
+          </section>
+        ) : (
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">
+                {activeDesk === 'books' ? 'Add Book Page' : 'Issue Return Fine Page'}
+              </p>
+              <h2 className="mt-2 font-serif text-3xl font-black italic tracking-tight text-slate-950">
+                {activeDesk === 'books' ? 'Book Catalog Entry' : 'Circulation And Fine Desk'}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveDesk(null)}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
+            >
+              <ArrowLeft size={15} />
+              Back To Cards
+            </button>
+          </div>
+        )}
+
+        {activeDesk ? (
+        <div className="mt-8 space-y-8">
+          <div className={`${activeDesk === 'books' ? '' : 'hidden'} space-y-8`}>
+            <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+              <FormTitle
+                title="Book Management"
+                description="Catalog physical and digital library assets with the basic details staff needs during shelving, search, and issue."
+              />
+              <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSaveBook}>
+                <CreativeInput
+                  label="ISBN"
+                  value={bookForm.isbn}
+                  onChange={(e) => setBookForm({ ...bookForm, isbn: e.target.value })}
+                  placeholder="978-93-XXXXXX"
+                />
+                <CreativeInput
+                  label="Book Title"
+                  value={bookForm.title}
+                  onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })}
+                  placeholder="Database System Concepts"
+                />
+                <CreativeInput
+                  label="Author"
+                  value={bookForm.author}
+                  onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })}
+                  placeholder="Abraham Silberschatz"
+                />
+                <CreativeSelect
+                  label="Asset Format"
+                  value={bookForm.format}
+                  onChange={(e) => setBookForm({ ...bookForm, format: e.target.value })}
+                  options={['Physical', 'Digital']}
+                />
+                <CreativeInput
+                  label="Rack"
+                  value={bookForm.rack}
+                  onChange={(e) => setBookForm({ ...bookForm, rack: e.target.value })}
+                  placeholder="Rack B2"
+                />
+                <CreativeInput
+                  label="Shelf"
+                  value={bookForm.shelf}
+                  onChange={(e) => setBookForm({ ...bookForm, shelf: e.target.value })}
+                  placeholder="Shelf 4"
+                />
+                <CreativeInput
+                  label="Available Quantity"
+                  type="number"
+                  min="0"
+                  value={bookForm.availableQuantity}
+                  onChange={(e) => setBookForm({ ...bookForm, availableQuantity: e.target.value })}
+                  placeholder="4"
+                />
+                <div className="md:col-span-2">
+                  <PrimaryButton type="submit" icon={BookPlus} label="Save Book To Catalog" />
+                </div>
+              </form>
+            </section>
+
+            <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <FormTitle
+                  title="Catalog Register"
+                  description="Search by title, ISBN, author, rack, or shelf to find what the library currently holds."
+                />
+                <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                  <SearchInput value={bookSearch} onChange={setBookSearch} placeholder="Search title, ISBN, author, rack, shelf..." />
+                  <CreativeSelect
+                    label="Format"
+                    value={formatFilter}
+                    onChange={(e) => setFormatFilter(e.target.value)}
+                    options={['All Formats', 'Physical', 'Digital']}
+                  />
+                </div>
+              </div>
+
+              {filteredBooks.length > 0 ? (
+                <div className="mt-8 overflow-hidden rounded-[1.8rem] border border-slate-200">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full border-collapse text-left">
+                      <thead>
+                        <tr className="bg-slate-950 text-white">
+                          <th className="border-b border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">S.No.</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Title</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Author</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">ISBN</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Format</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Rack</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Shelf</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Available</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Active Loans</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBooks.map((book, index) => (
+                          <tr key={book.id} className="odd:bg-white even:bg-slate-50">
+                            <td className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">{index + 1}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-black text-slate-950">{book.title}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{book.author}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{book.isbn}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{book.format}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{getBookRack(book)}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{getBookShelf(book)}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{book.inStock}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{book.activeIssues}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3">
+                              <button
+                                onClick={() => handleDeleteBook(book.id)}
+                                className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Library}
+                  title="No books in the catalog"
+                  description="Add the first library title with ISBN, location, and stock so issuing can begin."
+                />
+              )}
+            </section>
+          </div>
+
+          <div className={`${activeDesk === 'circulation' ? '' : 'hidden'} space-y-8`}>
+            <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+              <FormTitle
+                title="Issue, Return And Fines"
+                description="Issue aur return ko alag actions me handle karo. Ek time par sirf ek hi library action active rahega."
+              />
+              <div className="mt-8 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCirculationAction('issue')}
+                  className={`rounded-2xl px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] transition ${
+                    circulationAction === 'issue'
+                      ? 'bg-slate-950 text-white'
+                      : 'border border-slate-200 bg-slate-50 text-slate-600 hover:border-emerald-300 hover:text-emerald-700'
+                  }`}
+                >
+                  Issue Book
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCirculationAction('return')}
+                  className={`rounded-2xl px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] transition ${
+                    circulationAction === 'return'
+                      ? 'bg-emerald-600 text-white'
+                      : 'border border-slate-200 bg-slate-50 text-slate-600 hover:border-emerald-300 hover:text-emerald-700'
+                  }`}
+                >
+                  Return Book
+                </button>
+              </div>
+
+              {circulationAction === 'issue' ? (
+                <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSaveIssue}>
+                  <CreativeSelect
+                    label="Book"
+                    value={issueForm.bookId}
+                    onChange={(e) => setIssueForm({ ...issueForm, bookId: e.target.value })}
+                    options={['', ...bookChoices.map((book) => String(book.id))]}
+                    renderOptionLabel={(value) => {
+                      if (!value) return 'Select book';
+                      const match = bookChoices.find((book) => String(book.id) === value);
+                      return match ? `${match.label} | Stock ${match.stock}` : 'Select book';
+                    }}
+                  />
+                  <CreativeSelect
+                    label="Class"
+                    value={issueForm.className}
+                    onChange={(e) => setIssueForm({ ...issueForm, className: e.target.value, borrowerId: '' })}
+                    options={['', ...classOptions]}
+                    renderOptionLabel={(value) => value || 'Select class'}
+                  />
+                  <CreativeSelect
+                    label="Borrower"
+                    value={issueForm.borrowerId}
+                    onChange={(e) => setIssueForm({ ...issueForm, borrowerId: e.target.value })}
+                    options={['', ...filteredIssueStudentOptions.map((student) => String(student.id))]}
+                    renderOptionLabel={(value) => {
+                      if (!value) return issueForm.className ? 'Select borrower' : 'Select class first';
+                      const match = filteredIssueStudentOptions.find((student) => String(student.id) === value);
+                      return match ? `${match.label} | ${match.subtitle}` : 'Select borrower';
+                    }}
+                    disabled={!issueForm.className}
+                  />
+                  <CreativeInput
+                    label="Issue Date"
+                    type="date"
+                    value={issueForm.issueDate}
+                    onChange={(e) => setIssueForm({ ...issueForm, issueDate: e.target.value })}
+                  />
+                  <div className="md:col-span-2">
+                    <PrimaryButton type="submit" icon={BookmarkCheck} label="Issue Book Now" />
+                  </div>
+                </form>
+              ) : (
+                <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleReturnBook}>
+                  <div className="md:col-span-2">
+                    <CreativeSelect
+                      label="Active Issue Record"
+                      value={returnIssueId}
+                      onChange={(e) => setReturnIssueId(e.target.value)}
+                      options={['', ...activeIssueChoices.map((issue) => String(issue.id))]}
+                      renderOptionLabel={(value) => {
+                        if (!value) return activeIssueChoices.length ? 'Select issued book' : 'No active issue found';
+                        const match = activeIssueChoices.find((issue) => String(issue.id) === value);
+                        return match ? `${match.label} | ${match.subtitle}` : 'Select issued book';
+                      }}
+                    />
+                  </div>
+
+                  <ReadOnlyLibraryField
+                    label="Borrower"
+                    value={selectedReturnIssue?.borrowerName || 'Select an active issue record'}
+                  />
+                  <ReadOnlyLibraryField
+                    label="Book"
+                    value={selectedReturnIssue?.bookTitle || 'Select an active issue record'}
+                  />
+                  <ReadOnlyLibraryField
+                    label="Issue Date"
+                    value={selectedReturnIssue?.issueDate || '-'}
+                  />
+                  <ReadOnlyLibraryField
+                    label="Due Date"
+                    value={selectedReturnIssue?.dueDate || selectedReturnIssue?.issueDate || '-'}
+                  />
+                  <div className="md:col-span-2 rounded-[1.6rem] border border-slate-200 bg-slate-50 p-4">
+                    <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={isDamageBook}
+                        onChange={(e) => {
+                          setIsDamageBook(e.target.checked);
+                          if (!e.target.checked) {
+                            setReturnDamageCharge('');
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      Tick if the returned book is damaged
+                    </label>
+                    <p className="mt-2 text-xs font-semibold text-slate-500">
+                      Damage charge library issue record me save hoga aur monthly fee cycle adjustment ke liye use kiya ja sakta hai.
+                    </p>
+                  </div>
+                  {isDamageBook ? (
+                    <div className="md:col-span-2">
+                      <CreativeInput
+                        label="Damage Charge"
+                        type="number"
+                        min="0"
+                        value={returnDamageCharge}
+                        onChange={(e) => setReturnDamageCharge(e.target.value)}
+                        placeholder="250"
+                      />
+                    </div>
+                  ) : null}
+                  <div className="md:col-span-2">
+                    <PrimaryButton type="submit" icon={BookmarkCheck} label="Return Selected Book" />
+                  </div>
+                </form>
+              )}
+            </section>
+
+            <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <FormTitle
+                  title="Circulation Ledger"
+                  description="See open loans, overdue returns, and the calculated fine amount for each borrowing record."
+                />
+                <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                  <SearchInput value={issueSearch} onChange={setIssueSearch} placeholder="Search borrower, book, date..." />
+                  <CreativeSelect
+                    label="Status"
+                    value={issueStatusFilter}
+                    onChange={(e) => setIssueStatusFilter(e.target.value)}
+                    options={['All Records', 'Issued', 'Overdue', 'Returned']}
+                  />
+                </div>
+              </div>
+
+              {filteredIssues.length > 0 ? (
+                <div className="mt-8 overflow-hidden rounded-[1.8rem] border border-slate-200">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full border-collapse text-left">
+                      <thead>
+                        <tr className="bg-slate-950 text-white">
+                          <th className="border-b border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">S.No.</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Enrollment</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Student</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Class</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Book</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Issue Date</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Return Date</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Damage Charge</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Status</th>
+                          <th className="border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em]">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredIssues.map((issue, index) => (
+                          <tr key={issue.id} className="odd:bg-white even:bg-slate-50">
+                            <td className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">{index + 1}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{issue.borrowerMeta || '-'}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{issue.borrowerName || '-'}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{issue.borrowerClass || '-'}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-black text-slate-950">{issue.bookTitle}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{issue.issueDate || '-'}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">{issue.returnDate || 'Pending'}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">Rs {Number(issue.damageCharges) || 0}</td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3">
+                              <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${getStatusBadgeClass(issue.status)}`}>
+                                {issue.status}
+                              </span>
+                            </td>
+                            <td className="border-b border-l border-slate-200 px-4 py-3">
+                              <button
+                                onClick={() => handleDeleteIssue(issue.id)}
+                                className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={BookmarkCheck}
+                  title="No circulation records yet"
+                  description="Create the first issue entry to track due dates, returns, and automatic fine amounts."
+                />
+              )}
+            </section>
+          </div>
+        </div>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+const getIssueStatus = (issue) => {
+  if (issue.returnDate) return 'Returned';
+  if (!issue.dueDate) return 'Issued';
+  const due = new Date(issue.dueDate);
+  const current = new Date(today);
+  return due < current ? 'Overdue' : 'Issued';
+};
+
+const calculateFine = (issue) => {
+  if (!issue.dueDate) return Number(issue.damageCharges) || 0;
+
+  const endDate = issue.returnDate || today;
+  const dueDate = new Date(issue.dueDate);
+  const targetDate = new Date(endDate);
+  const diffDays = Math.max(Math.ceil((targetDate - dueDate) / (1000 * 60 * 60 * 24)), 0);
+  return diffDays * (Number(issue.finePerDay) || 0) + (Number(issue.damageCharges) || 0);
+};
+
+const getStatusBadgeClass = (status, filled = false) => {
+  if (status === 'Overdue') {
+    return filled
+      ? 'bg-rose-100 text-rose-700'
+      : 'border border-rose-200 bg-rose-50 text-rose-700';
+  }
+  if (status === 'Returned') {
+    return filled
+      ? 'bg-emerald-100 text-emerald-700'
+      : 'border border-emerald-200 bg-emerald-50 text-emerald-700';
+  }
+  return filled
+    ? 'bg-amber-100 text-amber-700'
+    : 'border border-amber-200 bg-amber-50 text-amber-700';
+};
+
+const LibraryActionCard = ({ icon: Icon, title, description, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="group flex min-h-52 flex-col justify-between rounded-4xl border border-slate-200/80 bg-white p-6 text-left shadow-[0_20px_60px_-38px_rgba(15,23,42,0.45)] transition hover:-translate-y-1 hover:border-emerald-300 hover:shadow-[0_26px_70px_-42px_rgba(6,95,70,0.65)] lg:p-8"
+  >
+    <div>
+      <div className="flex items-start justify-between gap-5">
+        <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700 transition group-hover:bg-emerald-600 group-hover:text-white">
+          <Icon size={24} />
+        </div>
+        <div className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 text-slate-400 transition group-hover:border-emerald-200 group-hover:text-emerald-700">
+          <ArrowRight size={18} />
+        </div>
+      </div>
+      <h3 className="mt-7 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h3>
+      <p className="mt-3 text-sm leading-7 text-slate-500">{description}</p>
+    </div>
+    <span className="mt-6 text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">
+      Open Page
+    </span>
+  </button>
+);
+
+const MetricCard = ({ label, value, icon: Icon }) => (
+  <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-50/80">{label}</p>
+        <p className="mt-3 text-4xl font-black tracking-tight text-white">{value}</p>
+      </div>
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200/20 bg-emerald-200/10 text-emerald-50">
+        <Icon size={20} />
+      </div>
+    </div>
+  </div>
+);
+
+const FormTitle = ({ title, description }) => (
+  <div>
+    <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
+    <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
+  </div>
+);
+
+const SearchInput = ({ value, onChange, placeholder }) => (
+  <div className="relative min-w-65">
+    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-12 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+    />
+  </div>
+);
+
+const CreativeInput = ({ label, ...props }) => (
+  <div className="space-y-2.5">
+    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <input
+      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      {...props}
+    />
+  </div>
+);
+
+const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
+  <div className="space-y-2.5">
+    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <select
+      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      {...props}
+    >
+      {options.map((option) => (
+        <option key={option || 'empty-option'} value={option}>
+          {renderOptionLabel ? renderOptionLabel(option) : option || 'Select'}
+        </option>
+      ))}
+    </select>
+  </div>
+);
+
+const PrimaryButton = ({ type, icon: Icon, label }) => (
+  <button
+    type={type}
+    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600"
+  >
+    <Icon size={15} />
+    {label}
+  </button>
+);
+
+const EmptyState = ({ icon: Icon, title, description }) => (
+  <div className="mt-8 rounded-4xl border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center">
+    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
+      <Icon size={34} />
+    </div>
+    <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h4>
+    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">{description}</p>
+  </div>
+);
+
+const ReadOnlyLibraryField = ({ label, value }) => (
+  <div className="rounded-[1.6rem] border border-slate-200 bg-slate-50 p-4">
+    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+    <p className="mt-2 text-sm font-semibold text-slate-900">{value}</p>
+  </div>
+);
+
+export default LibraryManagement;
+
+function formatShelfLocation(rack, shelf) {
+  const rackText = String(rack || '').trim();
+  const shelfText = String(shelf || '').trim();
+  if (!rackText && !shelfText) return '';
+  if (!rackText) return shelfText;
+  if (!shelfText) return rackText;
+  return `${rackText} / ${shelfText}`;
+}
+
+function getBookRack(book) {
+  if (book?.rack) return String(book.rack);
+  const [rackPart = ''] = String(book?.shelfLocation || '').split('/');
+  return rackPart.trim() || '-';
+}
+
+function getBookShelf(book) {
+  if (book?.shelf) return String(book.shelf);
+  const [, shelfPart = ''] = String(book?.shelfLocation || '').split('/');
+  return shelfPart.trim() || '-';
+}
