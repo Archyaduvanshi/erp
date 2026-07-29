@@ -19,6 +19,8 @@
 # Maven / Java
 /backend/target/
 /backend/.mvn/
+/backend/.mvnrepo/
+**/.mvnrepo/
 /backend/mvnw
 /backend/mvnw.cmd
 /backend/logs/
