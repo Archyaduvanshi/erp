@@ -3,8 +3,8 @@
 # Ignore environment and credentials
 *.env
 **/.env
-.env.local
-.env.*.local
+# .env.local
+# .env.*.local
 
 # Node / frontend
 /frontend/node_modules/
@@ -19,8 +19,6 @@
 # Maven / Java
 /backend/target/
 /backend/.mvn/
-/backend/.mvnrepo/
-**/.mvnrepo/
 /backend/mvnw
 /backend/mvnw.cmd
 /backend/logs/
