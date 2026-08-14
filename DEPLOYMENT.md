@@ -13,7 +13,9 @@ Create a web service from the GitHub repository.
 For Render:
 
 - Root Directory: `backend`
-- Runtime: Docker
+- Runtime: Java
+- Build Command: `mvn -B clean package -DskipTests`
+- Start Command: `java -jar target/backend-0.0.1-SNAPSHOT.jar`
 - Health Check Path: `/api/health`
 
 Set these environment variables in the hosting dashboard:
