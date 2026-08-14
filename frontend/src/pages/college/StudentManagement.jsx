@@ -24,7 +24,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { studentApi } from '../../utils/api';
+import { studentApi, uploadApi } from '../../utils/api';
 
 const initialFormData = {
   firstName: '',
@@ -142,33 +142,39 @@ const StudentManagement = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const fileData = await readFileAsDataUrl(file);
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/students/documents');
 
-    setFormData({
-      ...formData,
-      fileUploadPath: file.name,
-    });
-    setPendingDocument({
-      fileName: file.name,
-      fileType: file.type || 'application/octet-stream',
-      fileData,
-      fileSize: file.size,
-    });
+      setFormData({
+        ...formData,
+        fileUploadPath: uploadedFile.filePath || file.name,
+      });
+      setPendingDocument({
+        fileName: uploadedFile.name || file.name,
+        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
+        fileData: uploadedFile.url,
+        fileSize: uploadedFile.size || file.size,
+      });
+      setFormError('');
+    } catch (error) {
+      setFormError(error.message || 'Unable to upload document to ImageKit.');
+    }
   };
 
-  const handlePhotoBrowse = (e) => {
+  const handlePhotoBrowse = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/students/photos');
       setFormError('');
       setFormData((current) => ({
         ...current,
-        photoUrl: typeof reader.result === 'string' ? reader.result : '',
+        photoUrl: uploadedFile.url,
       }));
-    };
-    reader.readAsDataURL(file);
+    } catch (error) {
+      setFormError(error.message || 'Unable to upload photo to ImageKit.');
+    }
   };
 
   const handleSave = () => {
@@ -322,32 +328,39 @@ const StudentManagement = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const fileData = await readFileAsDataUrl(file);
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/students/documents');
 
-    setDetailFormData((current) => ({
-      ...current,
-      fileUploadPath: file.name,
-    }));
-    setPendingDetailDocument({
-      fileName: file.name,
-      fileType: file.type || 'application/octet-stream',
-      fileData,
-      fileSize: file.size,
-    });
+      setDetailFormData((current) => ({
+        ...current,
+        fileUploadPath: uploadedFile.filePath || file.name,
+      }));
+      setPendingDetailDocument({
+        fileName: uploadedFile.name || file.name,
+        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
+        fileData: uploadedFile.url,
+        fileSize: uploadedFile.size || file.size,
+      });
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to upload document to ImageKit.');
+    }
   };
 
-  const handleDetailPhotoBrowse = (e) => {
+  const handleDetailPhotoBrowse = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/students/photos');
       setDetailFormData((current) => ({
         ...current,
-        photoUrl: typeof reader.result === 'string' ? reader.result : current.photoUrl,
+        photoUrl: uploadedFile.url || current.photoUrl,
       }));
-    };
-    reader.readAsDataURL(file);
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to upload photo to ImageKit.');
+    }
   };
 
   const handleUpdateStudent = async () => {
@@ -1510,15 +1523,6 @@ function normalizeStoredDocument(document) {
     fileData: document.fileData || '',
     fileSize: document.fileSize || 0,
   };
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(new Error(`Unable to read file: ${file.name}`));
-    reader.readAsDataURL(file);
-  });
 }
 
 async function downloadQrCode(qrCodeData, studentName) {

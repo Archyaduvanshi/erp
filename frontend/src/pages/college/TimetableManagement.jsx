@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { db } from '../../utils/db';
-import { courseBookApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { courseBookApi, studentApi, teacherApi, timetableApi, uploadApi } from '../../utils/api';
 
 const initialExamSlotForm = {
   examTitle: '',
@@ -222,7 +222,7 @@ const TimetableManagement = () => {
   const roomCoverage = new Set(filteredExamSlots.map((slot) => slot.roomId).filter(Boolean)).size;
   const examCount = filteredExamSlots.length;
 
-  const handleClassTimetableUpload = (e) => {
+  const handleClassTimetableUpload = async (e) => {
     const file = e.target.files?.[0];
     const input = e.target;
     if (!file || !selectedClass) return;
@@ -232,26 +232,23 @@ const TimetableManagement = () => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/timetables/classes');
       const now = new Date().toISOString();
       const payload = {
         className: selectedClass,
-        fileName: file.name,
-        fileData: String(reader.result || ''),
-        fileType: file.type || 'application/octet-stream',
+        fileName: uploadedFile.name || file.name,
+        fileData: uploadedFile.url,
+        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
         uploadedAt: now,
       };
-      try {
-        await timetableApi.saveClassTimetable(payload);
-        await refreshTimetables();
-        setLoadError('');
-        input.value = '';
-      } catch (error) {
-        setLoadError(error.message || 'Unable to upload the class timetable.');
-      }
-    };
-    reader.readAsDataURL(file);
+      await timetableApi.saveClassTimetable(payload);
+      await refreshTimetables();
+      setLoadError('');
+      input.value = '';
+    } catch (error) {
+      setLoadError(error.message || 'Unable to upload the class timetable.');
+    }
   };
 
   const handleSaveExamSlot = (e) => {

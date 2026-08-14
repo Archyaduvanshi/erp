@@ -8,9 +8,9 @@ import {
   MapPin,
   Route,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { studentApi, transportApi } from '../../utils/api';
+import { holidayApi, studentApi, transportApi } from '../../utils/api';
 import { getFacilityAccessState } from '../../utils/facilityUtils';
+import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 
 const StudentTransport = () => {
   const navigate = useNavigate();
@@ -19,7 +19,7 @@ const StudentTransport = () => {
   const [transportRecords, setTransportRecords] = useState([]);
   const [transportAttendanceRecords, setTransportAttendanceRecords] = useState([]);
   const [drivers, setDrivers] = useState([]);
-  const [holidays, setHolidays] = useState(() => db.getAll('holiday_calendar'));
+  const [holidays, setHolidays] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [loadError, setLoadError] = useState('');
 
@@ -31,19 +31,24 @@ const StudentTransport = () => {
 
     const loadTransportWorkspace = async () => {
       try {
-        const [studentResponse, assignmentResponse, driverResponse, attendanceResponse] = await Promise.all([
+        const [studentResponse, assignmentResponse, driverResponse, attendanceResponse, holidayResponse] = await Promise.all([
           studentApi.getById(session.studentId),
           transportApi.getAssignments(),
           transportApi.getDrivers(),
           transportApi.getAttendance(),
+          holidayApi.getAll(),
         ]);
         setStudent(studentResponse);
         setTransportRecords(assignmentResponse);
         setDrivers(driverResponse);
         setTransportAttendanceRecords(attendanceResponse);
-        setHolidays(db.getAll('holiday_calendar'));
+        setHolidays(holidayResponse.filter((holiday) => holidayAppliesToStudentClass(
+          holiday,
+          studentResponse.assignedClass || studentResponse.className,
+        )));
         setLoadError('');
       } catch (error) {
+        setHolidays([]);
         setLoadError(error.message || 'Unable to load student transport details.');
       }
     };
@@ -263,7 +268,7 @@ const StudentTransport = () => {
                       </label>
                     </div>
                   </div>
-                  <div className="mx-auto w-full max-w-[72rem] overflow-x-auto">
+                  <div className="mx-auto w-full max-w-6xl overflow-x-auto">
                     <table className="w-max min-w-full border-collapse text-center">
                       <thead>
                         <tr className="bg-slate-950 text-white">

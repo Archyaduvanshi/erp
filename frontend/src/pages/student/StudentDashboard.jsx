@@ -11,12 +11,19 @@ import {
   Home,
   Library,
   LogOut,
+  Megaphone,
+  Pin,
   Receipt,
   ScrollText,
   UserRound,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { attendanceApi, examApi, libraryApi, studentApi, timetableApi, transportApi } from '../../utils/api';
+import { attendanceApi, examApi, feeApi, holidayApi, libraryApi, noticeApi, studentApi, timetableApi, transportApi } from '../../utils/api';
+import { getFeeFacilityKey, isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
+import { buildFeeRow, formatMoney } from '../../utils/feeUtils';
+import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
+
+const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
+const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
@@ -29,7 +36,10 @@ const StudentDashboard = () => {
   const [transportRecords, setTransportRecords] = useState([]);
   const [libraryIssues, setLibraryIssues] = useState([]);
   const [books, setBooks] = useState([]);
-  const [feePayments] = useState(() => db.getAll('fee_payments'));
+  const [feeStructures, setFeeStructures] = useState([]);
+  const [feePayments, setFeePayments] = useState([]);
+  const [notices, setNotices] = useState([]);
+  const [holidays, setHolidays] = useState([]);
   const [loadError, setLoadError] = useState('');
 
   const studentName = student
@@ -109,7 +119,42 @@ const StudentDashboard = () => {
     .filter((payment) => payment.paymentStatus === 'Success')
     .reduce((sum, payment) => sum + (Number(payment.paidAmount) || 0), 0);
 
-  const pendingBalance = studentPayments.reduce((sum, payment) => sum + (Number(payment.balanceRemaining) || 0), 0);
+  const studentFeeRows = useMemo(() => {
+    if (!student) return [];
+    const studentClassName = normalizeClassName(student.assignedClass || student.className || '');
+    if (!studentClassName) return [];
+    const successfulPayments = studentPayments.filter((payment) => payment.paymentStatus === 'Success');
+    return feeStructures
+      .filter((structure) => normalizeClassName(structure.courseId) === studentClassName)
+      .map((structure) => ({
+        structure,
+        ...buildFeeRow(structure, student.id, successfulPayments),
+      }))
+      .filter((row) => {
+        if (!isFeeStructureApplicableToStudent(row.structure, student)) return false;
+        return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
+      });
+  }, [feeStructures, student, studentPayments]);
+
+  const feeSummary = useMemo(() => {
+    const totalPayable = studentFeeRows.reduce((sum, row) => sum + (Number(row.totalOutstanding) || 0), 0);
+    const currentCycleDue = studentFeeRows.reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
+    const previousPending = studentFeeRows.reduce((sum, row) => sum + (Number(row.previousPendingAmount) || 0), 0);
+    const activeFacilityFee = studentFeeRows
+      .filter((row) => isFacilityFeeStructure(row.structure))
+      .reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
+    return {
+      totalPayable,
+      currentCycleDue,
+      previousPending,
+      activeFacilityFee,
+    };
+  }, [studentFeeRows]);
+
+  const portalNotices = useMemo(
+    () => getPortalNotices(notices, 'student', student?.assignedClass || student?.className, holidays, student?.id),
+    [holidays, notices, student],
+  );
 
   const handleLogout = () => {
     localStorage.removeItem('active_session');
@@ -125,7 +170,7 @@ const StudentDashboard = () => {
 
     const loadStudentDashboard = async () => {
       try {
-        const [studentResponse, timetableResponse, assignmentResponse, bookResponse, issueResponse, attendanceResponse, dateSheetResponse, admitCardResponse] = await Promise.all([
+        const [studentResponse, timetableResponse, assignmentResponse, bookResponse, issueResponse, attendanceResponse, dateSheetResponse, admitCardResponse, noticeResponse, holidayResponse, feeStructureResponse, feePaymentResponse] = await Promise.all([
           studentApi.getById(session.studentId),
           timetableApi.getClassTimetables(),
           transportApi.getAssignments(),
@@ -134,6 +179,10 @@ const StudentDashboard = () => {
           attendanceApi.getAll(),
           examApi.getDateSheets(),
           examApi.getAdmitCards(),
+          noticeApi.getAll(),
+          holidayApi.getAll(),
+          feeApi.getStructures(),
+          feeApi.getPayments(session.studentId),
         ]);
         setStudent(studentResponse);
         setClassTimetables(timetableResponse);
@@ -143,6 +192,10 @@ const StudentDashboard = () => {
         setAttendanceRecords(attendanceResponse);
         setDateSheets(dateSheetResponse);
         setAdmitCards(admitCardResponse);
+        setNotices(noticeResponse);
+        setHolidays(holidayResponse);
+        setFeeStructures(feeStructureResponse);
+        setFeePayments(feePaymentResponse);
         setLoadError('');
       } catch {
         setStudent(null);
@@ -153,12 +206,46 @@ const StudentDashboard = () => {
         setAttendanceRecords([]);
         setDateSheets([]);
         setAdmitCards([]);
+        setNotices([]);
+        setHolidays([]);
+        setFeeStructures([]);
+        setFeePayments([]);
         setLoadError('Unable to load student dashboard data.');
       }
     };
 
     loadStudentDashboard();
   }, [navigate, session]);
+
+  useEffect(() => {
+    if (!session || session.role !== 'student') return undefined;
+
+    let isMounted = true;
+    const refreshHolidays = async () => {
+      try {
+        const holidayResponse = await holidayApi.getAll();
+        if (isMounted) setHolidays(holidayResponse);
+      } catch {
+        // Keep the last good holiday list if a background refresh fails.
+      }
+    };
+    const handleStorage = (event) => {
+      if (event.key === HOLIDAY_NOTICE_STORAGE_KEY) refreshHolidays();
+    };
+
+    window.addEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('focus', refreshHolidays);
+    const intervalId = window.setInterval(refreshHolidays, 10000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', refreshHolidays);
+      window.clearInterval(intervalId);
+    };
+  }, [session]);
 
   if (!session || session.role !== 'student') return null;
 
@@ -228,12 +315,17 @@ const StudentDashboard = () => {
               <MetricCard label="Exam Documents" value={classDateSheets.length + studentAdmitCards.length} icon={FileText} />
               <MetricCard label="Timetable" value={classTimetableRecord ? 'Available' : 'Pending'} icon={CalendarClock} />
               <MetricCard label="Library Loans" value={activeLibraryIssues.length} icon={Library} />
-              <MetricCard label="Fees Paid" value={`Rs ${paidAmount}`} icon={CreditCard} />
+              <MetricCard label="Fees Paid" value={formatMoney(paidAmount)} icon={CreditCard} />
+              <MetricCard label="Notices" value={portalNotices.length} icon={Megaphone} />
             </div>
           </div>
         </section>
 
         <section className="mb-12 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-10 lg:grid-cols-3">
+          <NoticeSummaryCard
+            notices={portalNotices}
+            onClick={() => navigate('/student/notices')}
+          />
           <ModuleCard
             icon={<CheckCircle2 className="text-emerald-700" size={42} />}
             title="Attendance"
@@ -285,7 +377,7 @@ const StudentDashboard = () => {
           <ModuleCard
             icon={<Receipt className="text-rose-700" size={42} />}
             title="Fees"
-            desc={`Paid Rs ${paidAmount} | Pending balance Rs ${pendingBalance}`}
+            desc={`Payable ${formatMoney(feeSummary.totalPayable)} | Cycle ${formatMoney(feeSummary.currentCycleDue)} | Previous ${formatMoney(feeSummary.previousPending)} | Facilities ${formatMoney(feeSummary.activeFacilityFee)}`}
             onClick={() => navigate('/student/fees')}
           />
           <ModuleCard
@@ -314,6 +406,28 @@ const MetricCard = ({ label, value, icon }) => (
   </div>
 );
 
+const NoticeSummaryCard = ({ notices, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="flex w-full flex-col rounded-4xl border border-cyan-100 bg-white p-8 text-left shadow-xl shadow-cyan-100/50 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl md:rounded-[2.5rem] md:p-10"
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-cyan-100 text-cyan-700">
+        <Megaphone size={26} />
+      </div>
+      <span className="rounded-full bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white">
+        {notices.length} Live
+      </span>
+    </div>
+    <h3 className="mt-6 text-2xl font-black tracking-tight text-slate-900">Notice</h3>
+    <p className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-600">
+      {notices[0]?.title || 'College se published notice aate hi yahan show hoga.'}
+    </p>
+    <span className="mt-6 text-[11px] font-black uppercase tracking-[0.22em] text-cyan-700">Open Notice Board</span>
+  </button>
+);
+
 const ModuleCard = ({ icon, title, desc, onClick }) => (
   <button
     onClick={onClick}
@@ -326,5 +440,16 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
     <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{desc}</p>
   </button>
 );
+
+const isFacilityFeeStructure = (structure = {}) => (
+  structure.feeType === 'facility_fee' || structure.billingType === 'monthly_active' || Boolean(getFeeFacilityKey(structure))
+);
+
+const normalizeClassName = (className = '') => String(className)
+  .split('/')
+  .at(0)
+  ?.replace(/\s+-\s+section\s+.+$/i, '')
+  .replace(/\s+section\s+.+$/i, '')
+  .trim() || '';
 
 export default StudentDashboard;

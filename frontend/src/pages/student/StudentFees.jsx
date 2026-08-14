@@ -2,22 +2,21 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
-  CalendarClock,
+  ChevronDown,
   CreditCard,
   Download,
-  IndianRupee,
-  ReceiptText,
+  Landmark,
   Search,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { isFacilityActive, isFacilityRequested } from '../../utils/facilityUtils';
+import { feeApi, studentApi } from '../../utils/api';
+import { getFeeFacilityKey, isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
 import {
-  buildOverallPaymentPreview,
   allocateOverallAmount,
   buildFeeRow,
   calculateTaxBreakdown,
   formatBillingType,
   formatCoveredMonths,
+  formatMoney,
   getTodayKey,
   resolveCoverageLabel,
 } from '../../utils/feeUtils';
@@ -34,15 +33,44 @@ const createPaymentForm = () => ({
   paymentDate: today,
 });
 
+const paymentMethodDetails = {
+  UPI: {
+    title: 'UPI Payment',
+    primary: 'fees@collegeupi',
+    secondary: 'UPI app me amount pay karke UTR / transaction ID paste karein.',
+  },
+  'Bank Transfer': {
+    title: 'Bank Transfer',
+    primary: 'A/C 0000000000 | IFSC COLG0001234',
+    secondary: 'NEFT / IMPS / RTGS ke baad bank reference number submit karein.',
+  },
+  Card: {
+    title: 'Card Payment',
+    primary: 'Gateway reference required',
+    secondary: 'Card payment ke successful gateway reference ko save karein.',
+  },
+  'Net Banking': {
+    title: 'Net Banking',
+    primary: 'Bank confirmation reference required',
+    secondary: 'Net banking receipt ka transaction reference enter karein.',
+  },
+  Other: {
+    title: 'Other Method',
+    primary: 'Reference / proof number required',
+    secondary: 'Cheque, wallet, ya kisi other mode ka proof reference add karein.',
+  },
+};
+
 const StudentFees = () => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [students] = useState(() => db.getAll('students'));
-  const [structures, setStructures] = useState(() => db.getAll('fee_structures'));
-  const [payments, setPayments] = useState(() => db.getAll('fee_payments'));
-  const [dueSearch, setDueSearch] = useState('');
+  const [students, setStudents] = useState([]);
+  const [structures, setStructures] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [receiptSearch, setReceiptSearch] = useState('');
   const [paymentForm, setPaymentForm] = useState(createPaymentForm);
+  const [loadError, setLoadError] = useState('');
+  const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
 
   const student = useMemo(() => {
     if (!session || session.role !== 'student') return null;
@@ -57,23 +85,33 @@ const StudentFees = () => {
   const studentName = student
     ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
     : 'Student';
+  const studentSection = getStudentSectionName(student);
 
-  const transportRequested = isFacilityRequested(student, 'transport');
-  const hostelRequested = isFacilityRequested(student, 'hostel');
-  const libraryRequested = isFacilityRequested(student, 'library');
-  const transportActive = isFacilityActive(student, 'transport');
-  const hostelActive = isFacilityActive(student, 'hostel');
-  const libraryActive = isFacilityActive(student, 'library');
-
-  const refreshData = () => {
-    setStructures(db.getAll('fee_structures'));
-    setPayments(db.getAll('fee_payments'));
+  const refreshData = async () => {
+    try {
+      const studentRequest = session?.studentId ? studentApi.getById(session.studentId) : studentApi.getAll();
+      const [studentResponse, structureResponse, paymentResponse] = await Promise.all([
+        studentRequest,
+        feeApi.getStructures(),
+        feeApi.getPayments(session?.studentId),
+      ]);
+      setStudents(Array.isArray(studentResponse) ? studentResponse : [studentResponse]);
+      setStructures(structureResponse);
+      setPayments(paymentResponse);
+      setLoadError('');
+    } catch (error) {
+      setStudents([]);
+      setStructures([]);
+      setPayments([]);
+      setLoadError(error.message || 'Unable to load fee data from database.');
+    }
   };
 
   const studentStructures = useMemo(() => {
-    if (!student?.assignedClass) return [];
+    const studentClassName = normalizeClassName(student?.assignedClass || student?.className || '');
+    if (!studentClassName) return [];
     return structures
-      .filter((structure) => structure.courseId === student.assignedClass)
+      .filter((structure) => normalizeClassName(structure.courseId) === studentClassName)
       .sort((a, b) => String(a.feeComponent || '').localeCompare(String(b.feeComponent || '')));
   }, [student, structures]);
 
@@ -94,26 +132,10 @@ const StudentFees = () => {
 
   const visibleFeeRows = useMemo(() => {
     return feeRows.filter((row) => {
-      if (row.billingType !== 'monthly_active') return true;
-      const component = String(row.structure.feeComponent || '').toLowerCase();
-      if (component.includes('transport')) return transportActive && row.serviceMonthsCount > 0;
-      if (component.includes('hostel')) return hostelActive && row.serviceMonthsCount > 0;
-      if (component.includes('library')) return libraryActive && row.serviceMonthsCount > 0;
-      return true;
+      if (!isFeeStructureApplicableToStudent(row.structure, student)) return false;
+      return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
     });
-  }, [feeRows, hostelActive, libraryActive, transportActive]);
-
-  const filteredFeeRows = useMemo(() => {
-    const query = dueSearch.trim().toLowerCase();
-    return visibleFeeRows.filter((row) => {
-      if (!query) return true;
-      return (
-        String(row.structure.feeComponent || '').toLowerCase().includes(query) ||
-        String(row.structure.courseId || '').toLowerCase().includes(query) ||
-        String(row.structure.category || '').toLowerCase().includes(query)
-      );
-    });
-  }, [dueSearch, visibleFeeRows]);
+  }, [feeRows, student]);
 
   const receiptRows = useMemo(() => {
     if (!student) return [];
@@ -147,27 +169,46 @@ const StudentFees = () => {
       .sort((a, b) => new Date(b.paymentDate || b.createdAt || 0).getTime() - new Date(a.paymentDate || a.createdAt || 0).getTime());
   }, [payments, receiptSearch, structures, student]);
 
-  const currentCycleOverallTotal = visibleFeeRows.reduce((sum, row) => {
-    return sum + (Number(row.totalCharge) || 0);
-  }, 0);
-  const totalFacilityCharge = visibleFeeRows.reduce((sum, row) => {
-    if (row.billingType !== 'monthly_active') return sum;
-    return sum + (Number(row.totalCharge) || 0);
-  }, 0);
-  const totalCollegeCharge = visibleFeeRows.reduce((sum, row) => {
-    if (row.billingType === 'monthly_active') return sum;
-    return sum + (Number(row.totalCharge) || 0);
-  }, 0);
   const totalCurrentDue = visibleFeeRows.reduce((sum, row) => sum + row.totalOutstanding, 0);
   const totalPreviousPending = visibleFeeRows.reduce((sum, row) => sum + (Number(row.previousPendingAmount) || 0), 0);
-  const totalCurrentCycleDue = visibleFeeRows.reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
+  const totalFacilityCharge = visibleFeeRows.reduce((sum, row) => {
+    if (!isFacilityFeeStructure(row.structure)) return sum;
+    return sum + (Number(row.currentCycleDueAmount) || 0);
+  }, 0);
+  const totalCollegeCharge = visibleFeeRows.reduce((sum, row) => {
+    if (isFacilityFeeStructure(row.structure)) return sum;
+    return sum + (Number(row.currentCycleDueAmount) || 0);
+  }, 0);
   const customPaymentAmount = Number(paymentForm.paidAmount) || 0;
+  const selectedPaymentMethod = paymentMethodDetails[paymentForm.mode] || paymentMethodDetails.Other;
+  const activeFacilityRows = visibleFeeRows.filter((row) => (
+    isFacilityFeeStructure(row.structure) && (Number(row.currentCycleDueAmount) || 0) > 0
+  ));
+  const selectedPaymentSummary = useMemo(() => ({
+    previousPending: totalPreviousPending,
+    collegeFee: totalCollegeCharge,
+    facilityFee: totalFacilityCharge,
+    facilityRows: activeFacilityRows,
+    totalPayable: totalCurrentDue,
+  }), [
+    activeFacilityRows,
+    totalCollegeCharge,
+    totalCurrentDue,
+    totalFacilityCharge,
+    totalPreviousPending,
+  ]);
 
   useEffect(() => {
     if (!session || session.role !== 'student') {
       navigate('/login');
     }
   }, [navigate, session]);
+
+  useEffect(() => {
+    if (session?.role === 'student') {
+      refreshData();
+    }
+  }, [session]);
 
   useEffect(() => {
     if (totalCurrentDue > 0 && !paymentForm.paidAmount) {
@@ -178,14 +219,14 @@ const StudentFees = () => {
     }
   }, [paymentForm.paidAmount, totalCurrentDue]);
 
-  const handleSavePayment = (e) => {
+  const handleSavePayment = async (e) => {
     e.preventDefault();
     if (!student) return;
 
     const paidAmount = Number(paymentForm.paidAmount) || 0;
     if (!paymentForm.transactionId.trim() || paidAmount <= 0) return;
 
-    const allocations = allocateOverallAmount(paidAmount, visibleFeeRows, paymentForm.paymentTarget);
+    const allocations = allocateOverallAmount(paidAmount, visibleFeeRows, 'due_auto');
     if (allocations.length === 0) return;
     const currentDuePaid = allocations
       .filter((allocation) => allocation.kind === 'Current Due')
@@ -194,28 +235,31 @@ const StudentFees = () => {
     const balanceRemaining = Math.max(totalCurrentDue - currentDuePaid, 0);
     const receiptNumber = `FEE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
 
-    db.save('fee_payments', {
-      ...paymentForm,
-      studentId: student.id,
-      structureId: 'overall_total',
-      paidAmount,
-      allocations,
-      coveredMonths: [],
-      resolvedMonths: [],
-      coverageLabel: paymentForm.paymentTarget === 'advance_only'
-        ? 'Advance payment for upcoming cycle'
-        : 'Overall payment auto-adjusted',
-      activeFromMonth: '',
-      billedMonthsCount: allocations.reduce((sum, allocation) => sum + (allocation.coveredMonths?.length || 0), 0),
-      billingType: 'overall_payment',
-      receiptNumber,
-      taxBreakdown: calculateTaxBreakdown(paidAmount),
-      balanceRemaining,
-      downloadLink: `receipt-${receiptNumber}.txt`,
-    });
+    try {
+      await feeApi.savePayment({
+        ...paymentForm,
+        studentId: student.id,
+        structureId: 'overall_total',
+        paidAmount,
+        allocations,
+        coveredMonths: [],
+        resolvedMonths: [],
+        paymentTarget: 'due_auto',
+        coverageLabel: 'Online payment auto-adjusted',
+        activeFromMonth: '',
+        billedMonthsCount: allocations.reduce((sum, allocation) => sum + (allocation.coveredMonths?.length || 0), 0),
+        billingType: 'overall_payment',
+        receiptNumber,
+        taxBreakdown: calculateTaxBreakdown(paidAmount),
+        balanceRemaining,
+        downloadLink: `receipt-${receiptNumber}.txt`,
+      });
 
-    setPaymentForm(createPaymentForm());
-    refreshData();
+      setPaymentForm(createPaymentForm());
+      await refreshData();
+    } catch (error) {
+      setLoadError(error.message || 'Unable to save payment in database.');
+    }
   };
 
   const handleDownloadReceipt = (receipt) => {
@@ -253,10 +297,6 @@ const StudentFees = () => {
     link.click();
     URL.revokeObjectURL(url);
   };
-  const paymentPreview = useMemo(
-    () => buildOverallPaymentPreview(customPaymentAmount, visibleFeeRows, paymentForm.paymentTarget),
-    [customPaymentAmount, paymentForm.paymentTarget, visibleFeeRows],
-  );
 
   if (!session || session.role !== 'student') return null;
 
@@ -274,7 +314,7 @@ const StudentFees = () => {
             </button>
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.28em] text-emerald-600">Student Fees</p>
-              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Smart Fee Wallet</h1>
+              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Fee Management</h1>
             </div>
           </div>
           <div className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700 md:inline-flex">
@@ -284,182 +324,91 @@ const StudentFees = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        <div className="grid gap-8 xl:grid-cols-[1.08fr_0.92fr]">
+        {loadError ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {loadError}
+          </div>
+        ) : null}
+
+        <div className="grid gap-8">
           <section className="space-y-8">
             <Panel
-              title="Fee Components"
-              description="Each facility component shows only its fixed total for the current month cycle. Paid and due amounts are shown separately and do not change the component total."
-            >
-              <div className="mt-6 max-w-md">
-                <SearchInput value={dueSearch} onChange={setDueSearch} placeholder="Search component, category, or class..." />
-              </div>
-
-              {filteredFeeRows.length ? (
-                <div className="mt-6 grid gap-5">
-                  {filteredFeeRows.map((row) => {
-                    const isMonthlyActive = row.billingType === 'monthly_active';
-                    const facilityStatus = resolveServiceStatus(row.structure.feeComponent, student);
-                    const facilityMonths = row.serviceMonthsCount || 0;
-                    const facilityTotalCharge = Number(row.totalCharge) || 0;
-                    const headlineAmount = isMonthlyActive ? facilityTotalCharge : row.totalOutstanding;
-                    return (
-                      <article key={row.structure.id} className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]">
-                        <div className="border-b border-slate-200/80 px-5 py-5">
-                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="text-xl font-black tracking-tight text-slate-950">{row.structure.feeComponent || 'Fee component'}</h3>
-                                <Badge tone={isMonthlyActive ? 'amber' : (row.totalOutstanding > 0 ? 'rose' : 'emerald')} text={isMonthlyActive ? 'Cycle Total Fixed' : (row.totalOutstanding > 0 ? 'Due' : 'Settled')} />
-                                {isMonthlyActive ? <Badge tone="amber" text={facilityStatus} /> : null}
-                              </div>
-                              <p className="mt-2 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                                {row.structure.courseId || student?.assignedClass || 'Class pending'} | {row.structure.category || 'General'} | {formatBillingType(row.billingType, row.structure.feeComponent)}
-                              </p>
-                            </div>
-                            <div className="rounded-[1.4rem] bg-slate-950 px-4 py-3 text-right text-white">
-                              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-300">
-                                {isMonthlyActive ? 'Month Cycle Total' : 'Outstanding'}
-                              </p>
-                              <p className="mt-2 text-2xl font-black tracking-tight">Rs {headlineAmount}</p>
-                              {isMonthlyActive ? (
-                                <div className="mt-2 space-y-1 text-[11px] font-bold uppercase tracking-[0.14em] text-amber-200">
-                                  <p>Paid Rs {row.paid}</p>
-                                  <p>Due Rs {row.totalOutstanding}</p>
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid gap-3 px-5 py-5 md:grid-cols-2 xl:grid-cols-4">
-                          <InfoPill label={isMonthlyActive ? 'Per Month' : 'Base Amount'} value={`Rs ${Number(row.structure.amount) || 0}`} />
-                          <InfoPill label={isMonthlyActive ? 'Months In Cycle' : 'Paid Till Now'} value={isMonthlyActive ? `${facilityMonths} month${facilityMonths === 1 ? '' : 's'}` : `Rs ${row.paid}`} />
-                          <InfoPill label={isMonthlyActive ? 'Paid Till Now' : 'Late Fine'} value={isMonthlyActive ? `Rs ${row.paid}` : `Rs ${row.lateFeeFine}`} />
-                          <InfoPill label={isMonthlyActive ? 'Outstanding' : 'Cycle Window'} value={isMonthlyActive ? `Rs ${row.totalOutstanding}` : row.currentCycleLabel} />
-                        </div>
-
-                        <div className="grid gap-3 border-t border-slate-200/80 px-5 py-5 md:grid-cols-2">
-                          <InfoPill label="Billing Rule" value={formatBillingType(row.billingType, row.structure.feeComponent)} />
-                          <InfoPill label="Due Date" value={row.structure.dueDate || 'Not assigned'} />
-                          <InfoPill label={isMonthlyActive ? 'Cycle Window' : 'Fee Category'} value={isMonthlyActive ? row.currentCycleLabel : (row.structure.category || 'General')} />
-                          <InfoPill label="Covered Months" value={isMonthlyActive ? formatCoveredMonths(row.coveredMonths) : 'Cycle based charge'} />
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : (
-                <EmptyState icon={IndianRupee} title="No fee components found" description="No fee structures are currently linked to this student's class." />
-              )}
-
-              <div className="mt-8 rounded-[1.8rem] bg-[linear-gradient(135deg,#0f172a_0%,#065f46_55%,#111827_100%)] p-6 text-white">
-                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-200">Overall Current Cycle Total</p>
-                <div className="mt-5 grid gap-4 md:grid-cols-3">
-                  <InfoPill label="College Fees" value={`Rs ${totalCollegeCharge}`} />
-                  <InfoPill label="Facility Fees" value={`Rs ${totalFacilityCharge}`} />
-                  <InfoPill label="Overall Total" value={`Rs ${currentCycleOverallTotal}`} />
-                </div>
-                {libraryRequested ? (
-                  <p className="mt-4 text-sm font-semibold text-emerald-50/85">
-                    Library facility is {student?.libraryStatus || 'inactive'} with monthly charge Rs {student?.libraryMonthlyCharge || '0'}.
-                  </p>
-                ) : null}
-              </div>
-            </Panel>
-          </section>
-
-          <section className="space-y-8">
-            <Panel
-              title="Pay Overall Fees"
-              description="Student sirf amount enter karega. System previous pending aur current cycle due dono ko dikhakar payment ko automatic adjust karega."
+              title="Student Fee Collection"
+              description="Payable amount verify karein, online payment proof submit karein, aur receipt database me save karein."
             >
               <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSavePayment}>
-                <div className="rounded-[1.8rem] border border-amber-200 bg-[linear-gradient(180deg,#fffdf6_0%,#fff7ed_100%)] p-5 md:col-span-2">
-                  <div className="flex flex-wrap gap-3">
-                    <InfoPill label="Previous Pending" value={`Rs ${totalPreviousPending}`} />
-                    <InfoPill label="This Month Cycle Due" value={`Rs ${totalCurrentCycleDue}`} />
-                    <InfoPill label="Current Pending Total" value={`Rs ${totalCurrentDue}`} />
-                    <InfoPill label="Entered Amount" value={`Rs ${customPaymentAmount}`} />
-                    <InfoPill label="Advance Amount" value={`Rs ${paymentPreview.advanceAmount}`} />
+                <div className="md:col-span-2">
+                  <LoggedInStudentStrip student={student} studentName={studentName} studentSection={studentSection} />
+                </div>
+                <div className="md:col-span-2 rounded-[1.8rem] border border-emerald-100 bg-emerald-50/70 p-4">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <InvoiceStat label="Previous Pending" value={formatMoney(selectedPaymentSummary.previousPending)} />
+                    <InvoiceStat label="College Fee" value={formatMoney(selectedPaymentSummary.collegeFee)} />
+                    <InvoiceStat label="Facilities" value={formatMoney(selectedPaymentSummary.facilityFee)} />
+                    <InvoiceStat label="Total Payable" value={formatMoney(selectedPaymentSummary.totalPayable)} strong />
                   </div>
-                  <p className="mt-4 text-sm leading-6 text-slate-600">
-                    Agar pichle month cycle ki fees pending hai ya current month cycle ka due bacha hai, dono yahan show honge. Amount pehle current pending dues me adjust hoga, aur extra amount next cycle advance me save ho jayega.
-                  </p>
-                  {visibleFeeRows.some((row) => row.totalOutstanding > 0) ? (
-                    <div className="mt-5 grid gap-3">
-                      {visibleFeeRows
-                        .filter((row) => row.totalOutstanding > 0)
-                        .map((row) => (
-                          <div key={row.structure.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                              <div>
-                                <p className="text-sm font-black text-slate-900">{row.structure.feeComponent || 'Fee component'}</p>
-                                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                                  {row.currentCycleLabel}
-                                </p>
-                              </div>
-                              <div className="grid gap-2 sm:grid-cols-3">
-                                <InfoPill label="Previous Pending" value={`Rs ${Number(row.previousPendingAmount) || 0}`} />
-                                <InfoPill label={row.billingType === 'monthly_active' ? 'This Month Due' : 'This Cycle Due'} value={`Rs ${Number(row.currentCycleDueAmount) || 0}`} />
-                                <InfoPill label="Total Pending" value={`Rs ${Number(row.totalOutstanding) || 0}`} />
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  ) : null}
-                  {paymentPreview.allocations.length ? (
-                    <div className="mt-5 grid gap-3">
-                      {paymentPreview.allocations.map((allocation) => (
-                        <div key={allocation.structureId} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm font-black text-slate-900">{allocation.feeComponent}</p>
-                              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">{allocation.kind}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm font-black text-slate-950">Rs {allocation.amount}</p>
-                              <p className="text-xs font-semibold text-slate-500">{allocation.note}</p>
-                            </div>
-                          </div>
+                  <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <button
+                      type="button"
+                      onClick={() => setFeeSummaryOpen((open) => !open)}
+                      className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition hover:bg-slate-50"
+                      aria-expanded={feeSummaryOpen}
+                    >
+                      <div>
+                        <h4 className="text-sm font-black text-slate-950">Simple Fee Summary</h4>
+                        <p className="mt-1 text-xs font-semibold text-slate-500">Payable amount aur pending balance ka quick summary.</p>
+                      </div>
+                      <ChevronDown className={`shrink-0 text-slate-400 transition ${feeSummaryOpen ? 'rotate-180 text-emerald-700' : ''}`} size={18} />
+                    </button>
+                    <div className={`grid transition-all duration-300 ease-out ${feeSummaryOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+                      <div className="overflow-hidden">
+                        <div className="grid gap-2 px-4 pb-4">
+                          <SummaryLine label="College Fees" value={formatMoney(selectedPaymentSummary.collegeFee)} />
+                          {selectedPaymentSummary.facilityRows.map((row) => (
+                            <SummaryLine key={row.structure.id} label={`${row.structure.feeComponent} Facility`} value={formatMoney(row.currentCycleDueAmount)} />
+                          ))}
+                          {selectedPaymentSummary.facilityRows.length === 0 ? (
+                            <SummaryLine label="Facility Fees" value={formatMoney(0)} />
+                          ) : null}
+                          <SummaryLine label="Previous Pending" value={formatMoney(selectedPaymentSummary.previousPending)} tone={selectedPaymentSummary.previousPending > 0 ? 'danger' : 'default'} />
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
 
                 <SelectField
-                  label="Mode"
+                  label="Collection Mode"
                   value={paymentForm.mode}
                   onChange={(e) => setPaymentForm({ ...paymentForm, mode: e.target.value })}
-                  options={['UPI', 'Card', 'Net Banking', 'Cash', 'Cheque']}
+                  options={['UPI', 'Bank Transfer', 'Card', 'Net Banking', 'Other']}
                 />
-                <SelectField
-                  label="Payment For"
-                  value={paymentForm.paymentTarget}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, paymentTarget: e.target.value })}
-                  options={['due_auto', 'advance_only']}
-                  renderOptionLabel={(value) => (
-                    {
-                      due_auto: 'Adjust In Pending Total',
-                      advance_only: 'Advance Next Cycle',
-                    }[value] || value
-                  )}
-                />
+                <div className="rounded-[1.4rem] border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-emerald-700 shadow-sm">
+                      {paymentForm.mode === 'Bank Transfer' ? <Landmark size={20} /> : <CreditCard size={20} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-950">{selectedPaymentMethod.title}</p>
+                      <p className="mt-1 text-sm font-bold text-emerald-700">{selectedPaymentMethod.primary}</p>
+                      <p className="mt-2 text-xs font-semibold leading-5 text-slate-600">{selectedPaymentMethod.secondary}</p>
+                    </div>
+                  </div>
+                </div>
                 <InputField
-                  label="Transaction ID"
+                  label="UTR / Transaction ID"
                   value={paymentForm.transactionId}
                   onChange={(e) => setPaymentForm({ ...paymentForm, transactionId: e.target.value })}
-                  placeholder="TXN-2026-001"
+                  placeholder="UPI123456 / NEFT-2026-001"
                 />
                 <InputField
-                  label="Gateway Reference"
+                  label="Bank / Gateway Reference"
                   value={paymentForm.gatewayRef}
                   onChange={(e) => setPaymentForm({ ...paymentForm, gatewayRef: e.target.value })}
-                  placeholder="gateway_ref_123"
+                  placeholder="bank_ref_or_gateway_ref"
                 />
                 <InputField
-                  label="Paid Amount"
+                  label="Amount To Collect"
                   type="number"
                   min="0"
                   value={paymentForm.paidAmount}
@@ -467,84 +416,13 @@ const StudentFees = () => {
                   placeholder="25000"
                 />
                 <div className="md:col-span-2">
-                  <InputField
-                    label="Payment Date"
-                    type="date"
-                    value={paymentForm.paymentDate}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })}
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <PrimaryButton type="submit" icon={CreditCard} label="Save Payment And Receipt" />
+                  <PrimaryButton type="submit" icon={CreditCard} label="Tap To Pay" disabled={!student || customPaymentAmount <= 0 || !paymentForm.transactionId.trim()} />
                 </div>
               </form>
-            </Panel>
-
-            <Panel
-              title="Recent Receipts"
-              description="Download saved proofs, review month coverage, and verify remaining balances."
-            >
-              <div className="mt-6 max-w-md">
+              <div className="mt-8 max-w-md">
                 <SearchInput value={receiptSearch} onChange={setReceiptSearch} placeholder="Search receipt or transaction..." />
               </div>
-
-              {receiptRows.length ? (
-                <div className="mt-6 grid gap-5">
-                  {receiptRows.map((receipt) => (
-                    <article key={receipt.id} className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-lg font-black tracking-tight text-slate-950">{receipt.receiptNumber}</h3>
-                            <Badge tone={receipt.paymentStatus === 'Success' ? 'emerald' : 'amber'} text={receipt.paymentStatus || 'Saved'} />
-                          </div>
-                          <p className="mt-2 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                            {receipt.structure?.feeComponent || 'Fee component pending'} | {resolveCoverageLabel(receipt)} | {receipt.mode}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadReceipt(receipt)}
-                          className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-600"
-                        >
-                          <Download size={14} />
-                          Download
-                        </button>
-                      </div>
-
-                      <div className="mt-5 grid gap-3 md:grid-cols-2">
-                        <InfoPill label="Paid Amount" value={`Rs ${Number(receipt.paidAmount) || 0}`} />
-                        <InfoPill label="Balance Remaining" value={`Rs ${Number(receipt.balanceRemaining) || 0}`} />
-                        <InfoPill label="Payment Date" value={receipt.paymentDate || 'Not added'} />
-                        <InfoPill label="Covered Months" value={formatCoveredMonths(receipt.coveredMonths)} />
-                        <InfoPill label="Cycle Window" value={resolveCoverageLabel(receipt)} />
-                        <InfoPill label="Tax Breakdown" value={receipt.taxBreakdown || 'Not available'} />
-                      </div>
-                      {Array.isArray(receipt.allocations) && receipt.allocations.length ? (
-                        <div className="mt-5 rounded-[1.4rem] border border-slate-200 bg-white p-4">
-                          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Auto Allocation</p>
-                          <div className="mt-3 grid gap-3">
-                            {receipt.allocations.map((allocation, index) => (
-                              <div key={`${receipt.id}-${allocation.structureId}-${index}`} className="flex flex-col gap-2 rounded-2xl border border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                  <p className="text-sm font-black text-slate-900">{allocation.feeComponent}</p>
-                                  <p className="text-xs font-semibold text-slate-500">{allocation.note}</p>
-                                </div>
-                                <div className="text-right">
-                                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">{allocation.kind}</p>
-                                  <p className="text-sm font-black text-slate-950">Rs {Number(allocation.amount) || 0}</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState icon={ReceiptText} title="No receipts yet" description="Once a payment is saved for this student, the receipt will appear here." />
-              )}
+              <PaymentHistoryTable rows={receiptRows} onDownload={handleDownloadReceipt} />
             </Panel>
           </section>
         </div>
@@ -553,36 +431,21 @@ const StudentFees = () => {
   );
 };
 
-const resolveServiceStatus = (feeComponent, student) => {
-  const component = String(feeComponent || '').toLowerCase();
-  if (component.includes('transport')) {
-    const requested = student?.transportOptIn === 'yes' || student?.transportOptIn === true;
-    return requested ? (student?.transportStatus || 'inactive') : 'not requested';
-  }
-  if (component.includes('hostel')) {
-    const requested = student?.hostelOptIn === 'yes' || student?.hostelOptIn === true;
-    return requested ? (student?.hostelStatus || 'inactive') : 'not requested';
-  }
-  if (component.includes('library')) {
-    const requested = student?.libraryOptIn === 'yes' || student?.libraryOptIn === true;
-    return requested ? (student?.libraryStatus || 'inactive') : 'not requested';
-  }
-  return 'standard';
-};
+const isFacilityFeeStructure = (structure = {}) => (
+  structure.feeType === 'facility_fee' || structure.billingType === 'monthly_active' || Boolean(getFeeFacilityKey(structure))
+);
 
-const Badge = ({ text, tone = 'slate' }) => {
-  const tones = {
-    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    rose: 'border-rose-200 bg-rose-50 text-rose-700',
-    amber: 'border-amber-200 bg-amber-50 text-amber-700',
-    slate: 'border-slate-200 bg-slate-100 text-slate-700',
-  };
+const normalizeClassName = (className = '') => String(className)
+  .split('/')
+  .at(0)
+  ?.replace(/\s+-\s+section\s+.+$/i, '')
+  .replace(/\s+section\s+.+$/i, '')
+  .trim() || '';
 
-  return (
-    <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${tones[tone]}`}>
-      {text}
-    </span>
-  );
+const getStudentSectionName = (student = {}) => {
+  if (student?.section) return String(student.section).trim();
+  const assignedClassParts = String(student?.assignedClass || '').split('/');
+  return assignedClassParts[1]?.trim() || 'Section pending';
 };
 
 const Panel = ({ title, description, children }) => (
@@ -631,30 +494,115 @@ const SearchInput = ({ value, onChange, placeholder }) => (
   </div>
 );
 
-const PrimaryButton = ({ type, icon: Icon, label }) => (
+const PrimaryButton = ({ type, icon: Icon, label, disabled = false }) => (
   <button
     type={type}
-    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600"
+    disabled={disabled}
+    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
   >
     <Icon size={15} />
     {label}
   </button>
 );
 
-const InfoPill = ({ label, value }) => (
-  <div className="rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-100">
-    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
-    <p className="mt-2 text-sm font-bold text-slate-800">{value}</p>
+const LoggedInStudentStrip = ({ student, studentName, studentSection }) => (
+  <div className="rounded-[1.8rem] border border-slate-200 bg-white p-4">
+    <div className="grid gap-4 md:grid-cols-3">
+      <ReadOnlyContext label="Student Name" value={`${studentName} | ${student?.enrollmentNo || student?.systemId || 'Enrollment pending'}`} />
+      <ReadOnlyContext label="Class" value={student?.assignedClass || student?.className || 'Class pending'} />
+      <ReadOnlyContext label="Section" value={studentSection} />
+    </div>
   </div>
 );
 
-const EmptyState = ({ icon: Icon, title, description }) => (
-  <div className="mt-8 rounded-4xl border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center">
-    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
-      <Icon size={34} />
+const ReadOnlyContext = ({ label, value }) => (
+  <div>
+    <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</p>
+    <div className="mt-2 min-h-14 rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-4 text-sm font-black text-slate-900">
+      {value}
     </div>
-    <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h4>
-    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">{description}</p>
+  </div>
+);
+
+const InvoiceStat = ({ label, value, strong = false, tone = 'default' }) => {
+  const toneClass = {
+    danger: 'border-rose-200 bg-rose-50 text-rose-700',
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    default: 'border-slate-200 bg-white text-slate-950',
+  }[tone] || 'border-slate-200 bg-white text-slate-950';
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className={`${strong ? 'text-2xl' : 'text-xl'} mt-1 font-black tracking-tight`}>{value}</p>
+    </div>
+  );
+};
+
+const SummaryLine = ({ label, value, tone = 'default' }) => {
+  const toneClass = tone === 'danger' ? 'text-rose-600' : 'text-slate-950';
+
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-100">
+      <span className="text-sm font-semibold text-slate-600">{label}</span>
+      <span className={`text-base font-black ${toneClass}`}>{value}</span>
+    </div>
+  );
+};
+
+const PaymentHistoryTable = ({ rows, onDownload }) => (
+  <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <h4 className="text-sm font-black text-slate-950">Payment History</h4>
+      <p className="mt-1 text-xs font-semibold text-slate-500">Sirf is student ke database receipts aur online payment proofs.</p>
+    </div>
+    {rows.length ? (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+          <thead className="bg-white">
+            <tr>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Date</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Receipt</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Mode</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Status</th>
+              <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Amount</th>
+              <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Balance</th>
+              <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Receipt</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((receipt) => (
+              <tr key={receipt.id} className="hover:bg-emerald-50/40">
+                <td className="px-4 py-4 font-semibold text-slate-700">{receipt.paymentDate || '-'}</td>
+                <td className="px-4 py-4 font-black text-slate-900">{receipt.receiptNumber || receipt.transactionId || '-'}</td>
+                <td className="px-4 py-4 text-slate-600">{receipt.mode || '-'}</td>
+                <td className="px-4 py-4">
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${receipt.paymentStatus === 'Success' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {receipt.paymentStatus || 'Saved'}
+                  </span>
+                </td>
+                <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(receipt.paidAmount)}</td>
+                <td className="px-4 py-4 text-right font-semibold text-slate-600">{formatMoney(receipt.balanceRemaining)}</td>
+                <td className="px-4 py-4 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onDownload(receipt)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700"
+                    aria-label="Download receipt"
+                  >
+                    <Download size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="px-4 py-8 text-center text-sm font-semibold text-slate-500">
+        Is student ki payment history abhi empty hai.
+      </div>
+    )}
   </div>
 );
 

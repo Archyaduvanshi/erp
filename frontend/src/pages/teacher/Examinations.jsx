@@ -13,7 +13,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
-import { examApi, teacherApi, timetableApi } from '../../utils/api';
+import { examApi, teacherApi, timetableApi, uploadApi } from '../../utils/api';
 
 const TeacherExaminations = () => {
   const navigate = useNavigate();
@@ -38,14 +38,6 @@ const TeacherExaminations = () => {
   const teacherName = teacher
     ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
     : 'Teacher';
-  const teacherSubjects = useMemo(() => {
-    if (!teacher?.specialization) return [];
-    return teacher.specialization
-      .split(',')
-      .map((subjectName) => subjectName.trim())
-      .filter(Boolean);
-  }, [teacher]);
-
   const assignedClasses = useMemo(() => {
     return deriveTeacherClassesFromTimetables(classTimetables, teacher);
   }, [classTimetables, teacher]);
@@ -91,15 +83,16 @@ const TeacherExaminations = () => {
   }, [assignedClasses, selectedQuestionPaperClass]);
 
   const selectedQuestionClassSubjects = useMemo(() => {
-    return teacherSubjectsByClass[activeQuestionPaperClass] || teacherSubjects;
-  }, [activeQuestionPaperClass, teacherSubjects, teacherSubjectsByClass]);
+    return teacherSubjectsByClass[activeQuestionPaperClass] || [];
+  }, [activeQuestionPaperClass, teacherSubjectsByClass]);
 
   const filteredQuestionPapers = useMemo(() => {
     const query = questionSearch.trim().toLowerCase();
     return questionPapers
       .filter((record) => {
+        const allowedSubjects = teacherSubjectsByClass[record.className] || [];
         const classMatch = assignedClasses.includes(record.className);
-        const subjectMatch = teacherSubjects.includes(record.subjectName);
+        const subjectMatch = allowedSubjects.some((subjectName) => normalizeTeacherText(subjectName) === normalizeTeacherText(record.subjectName));
         return classMatch && subjectMatch;
       })
       .filter((record) => {
@@ -116,14 +109,15 @@ const TeacherExaminations = () => {
         if (examCompare !== 0) return examCompare;
         return compareClassNames(a.className || '', b.className || '');
       });
-  }, [assignedClasses, questionPapers, questionSearch, teacherSubjects]);
+  }, [assignedClasses, questionPapers, questionSearch, teacherSubjectsByClass]);
 
   const questionPaperHistory = useMemo(() => {
     if (!activeQuestionPaperClass) return [];
+    const allowedSubjects = teacherSubjectsByClass[activeQuestionPaperClass] || [];
 
     const classHistory = questionPapers
       .filter((record) => record.className === activeQuestionPaperClass)
-      .filter((record) => String(record.uploadedBy || '').trim() === teacherName)
+      .filter((record) => allowedSubjects.some((subjectName) => normalizeTeacherText(subjectName) === normalizeTeacherText(record.subjectName)))
       .sort((a, b) => {
         const examCompare = String(a.examTitle || '').localeCompare(String(b.examTitle || ''));
         if (examCompare !== 0) return examCompare;
@@ -145,7 +139,7 @@ const TeacherExaminations = () => {
       examTitle,
       records,
     }));
-  }, [activeQuestionPaperClass, questionPapers, teacherName]);
+  }, [activeQuestionPaperClass, questionPapers, teacherSubjectsByClass]);
 
   useEffect(() => {
     if (!session || session.role !== 'teacher') {
@@ -190,12 +184,12 @@ const TeacherExaminations = () => {
     setQuestionPapers(questionPaperResponse);
   };
 
-  const handleQuestionPaperBrowse = (className, subjectName, e) => {
+  const handleQuestionPaperBrowse = async (className, subjectName, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/examinations/question-papers');
       setQuestionPaperDrafts((current) => ({
         ...current,
         [buildQuestionDraftKey(className)]: {
@@ -203,13 +197,15 @@ const TeacherExaminations = () => {
           className,
           subjectName: subjectName || current[buildQuestionDraftKey(className)]?.subjectName || '',
           uploadedBy: teacherName,
-          fileName: file.name,
-          fileData: String(reader.result || ''),
-          fileType: file.type || 'application/octet-stream',
+          fileName: uploadedFile.name || file.name,
+          fileData: uploadedFile.url,
+          fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
         },
       }));
-    };
-    reader.readAsDataURL(file);
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to upload question paper to ImageKit.');
+    }
   };
 
   const handleQuestionDraftChange = (className, subjectName, value) => {
@@ -307,7 +303,7 @@ const TeacherExaminations = () => {
             <ActionCard
               icon={ScrollText}
               title="Question Papers"
-              text="View and upload question papers only for your own subject in the classes assigned to you."
+              text="View previous question papers and upload the next paper for subjects currently assigned to you."
               onClick={() => setActiveSection('questionpaper')}
             />
           </section>
@@ -355,7 +351,7 @@ const TeacherExaminations = () => {
             <div className="grid gap-8 xl:grid-cols-[0.76fr_1.24fr]">
               <Panel
                 title="My Teaching Classes"
-                description="Click a class to open the subjects you teach there. Upload is available only on your own subjects."
+                description="Click a class to open the subjects assigned to you. Previous uploads stay visible even if another teacher uploaded them."
               >
                 {assignedClasses.length > 0 ? (
                   <div className="mt-6 grid gap-3">
@@ -533,7 +529,7 @@ const TeacherExaminations = () => {
 
             <Panel
               title={activeQuestionPaperClass ? `${activeQuestionPaperClass} Upload History` : 'Question Paper Upload History'}
-              description="Yeh full history section exam type ke hisab se dikhata hai ki aapne kis class aur subject me kaunsa paper upload kiya tha."
+              description="Yeh history class aur subject ke hisab se college ka saved question-paper data dikhati hai, uploader teacher koi bhi ho."
             >
               {activeQuestionPaperClass ? (
                 questionPaperHistory.length > 0 ? (
@@ -586,7 +582,7 @@ const TeacherExaminations = () => {
                   </div>
                 ) : (
                   <div className="mt-4 rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
-                    <p className="text-sm font-semibold text-slate-500">Is class me aapka koi uploaded question paper history abhi nahi hai.</p>
+                    <p className="text-sm font-semibold text-slate-500">Is class-subject me abhi koi saved question paper history nahi hai.</p>
                   </div>
                 )
               ) : (

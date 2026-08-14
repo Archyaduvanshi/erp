@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { instituteApi } from '../utils/api';
+import { instituteApi, uploadApi } from '../utils/api';
 import { 
   GraduationCap, Building2, Mail, Lock, ArrowRight, 
   CheckCircle2, User, Phone, MapPin, Hash, Globe, 
@@ -31,12 +31,16 @@ const RegisterInstitute = () => {
     confirmPassword: ''
   });
 
-  const handleLogoChange = (e) => {
+  const handleLogoChange = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setLogoPreview(reader.result);
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/institutes/logos');
+      setLogoPreview(uploadedFile.url);
+      setError('');
+    } catch (uploadError) {
+      setError(uploadError.message || 'Unable to upload logo to ImageKit.');
     }
   };
 

@@ -13,8 +13,7 @@ export const daysLate = (dueDate, referenceDate = getTodayKey()) => {
 };
 
 export const calculateLateFine = (dueDate, isSettled, referenceDate = getTodayKey()) => {
-  if (isSettled) return 0;
-  return daysLate(dueDate, referenceDate) * 25;
+  return 0;
 };
 
 export const calculateTaxBreakdown = (amount) => {
@@ -28,6 +27,8 @@ export const formatCycleLabel = (cycleMonths) => {
   return normalizedCycle === 1 ? 'Monthly collection' : `Every ${normalizedCycle} months`;
 };
 
+export const formatMoney = (amount) => `Rs ${Math.round(Number(amount) || 0).toLocaleString('en-IN')}`;
+
 export const resolveBillingType = (structure = {}) => {
   if (structure.billingType) return structure.billingType;
   const component = String(structure.feeComponent || '').toLowerCase();
@@ -36,9 +37,15 @@ export const resolveBillingType = (structure = {}) => {
 };
 
 export const formatBillingType = (billingType, feeComponent) => (
-  resolveBillingType({ billingType, feeComponent }) === 'monthly_active'
-    ? 'Monthly Active Service'
-    : 'Cycle Based Fee'
+  ({
+    monthly_active: 'Monthly Active Service',
+    active_cycle: 'Active Facility Cycle',
+    cycle_based: 'Cycle Based Fee',
+  }[resolveBillingType({ billingType, feeComponent })] || 'Cycle Based Fee')
+);
+
+export const formatFeeType = (feeType) => (
+  feeType === 'facility_fee' ? 'Facility Fee' : 'College Fee'
 );
 
 const buildSessionMonths = (referenceDate = getTodayKey()) => {
@@ -66,6 +73,54 @@ const getMonthKeyFromDate = (dateValue) => {
   const parsedDate = new Date(dateValue);
   if (Number.isNaN(parsedDate.getTime())) return '';
   return `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const getDateParts = (dateValue) => {
+  if (!dateValue) return null;
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+};
+
+const buildCycleDueDate = (month, dueDay = 1) => {
+  if (!month) return '';
+  const lastDay = new Date(month.year, month.monthNumber, 0).getDate();
+  const day = Math.min(Math.max(Number(dueDay) || 1, 1), lastDay);
+  return `${month.year}-${String(month.monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
+const getFiscalCycleStarts = (cycleMonths, sessionMonths = []) => {
+  const normalizedCycle = Math.min(Math.max(Number(cycleMonths) || 1, 1), 12);
+  const starts = [];
+  for (let index = 0; index < sessionMonths.length; index += normalizedCycle) {
+    starts.push(index);
+  }
+  return starts;
+};
+
+const getDueCycleEntries = (cycleMonths, dueDate, sessionMonths = [], referenceDate = getTodayKey()) => {
+  const normalizedCycle = Math.min(Math.max(Number(cycleMonths) || 1, 1), 12);
+  const dueParts = getDateParts(dueDate);
+  const dueMonthKey = getMonthKeyFromDate(dueDate) || sessionMonths[0]?.key;
+  const dueMonthIndex = Math.max(sessionMonths.findIndex((month) => month.key === dueMonthKey), 0);
+  const dueOffset = Math.min(dueMonthIndex % normalizedCycle, normalizedCycle - 1);
+  const currentMonthKey = getMonthKeyFromDate(referenceDate);
+  const currentMonthIndex = sessionMonths.findIndex((month) => month.key === currentMonthKey);
+  const dueDay = dueParts?.day || 1;
+
+  return getFiscalCycleStarts(normalizedCycle, sessionMonths)
+    .map((startIndex) => {
+      const months = sessionMonths.slice(startIndex, Math.min(startIndex + normalizedCycle, sessionMonths.length));
+      const dueMonth = months[Math.min(dueOffset, months.length - 1)];
+      const cycleDueDate = buildCycleDueDate(dueMonth, dueDay);
+      return {
+        startIndex,
+        months,
+        dueDate: cycleDueDate,
+        isDue: Boolean(cycleDueDate) && referenceDate >= cycleDueDate,
+        isCurrent: currentMonthIndex >= startIndex && currentMonthIndex < startIndex + normalizedCycle,
+      };
+    });
 };
 
 export const getCurrentCycleWindow = (cycleMonths, referenceDate = getTodayKey()) => {
@@ -131,14 +186,24 @@ export const buildFeeRow = (structure, studentId, successfulPayments, referenceD
   const currentCycle = getCurrentCycleWindow(structure.cycleMonths, referenceDate);
   const sessionMonths = buildSessionMonths(referenceDate);
   const currentMonthKey = getMonthKeyFromDate(referenceDate);
-  const currentMonthIndex = sessionMonths.findIndex((month) => month.key === currentMonthKey);
   const paymentEntries = getStructurePaymentEntries(structurePayments, structure.id);
 
   if (billingType === 'monthly_active') {
     const serviceStartKey = getMonthKeyFromDate(structure.activeFromMonth || structure.joinMonth || structure.dueDate) || sessionMonths[0]?.key;
     const serviceStartIndex = Math.max(sessionMonths.findIndex((month) => month.key === serviceStartKey), 0);
-    const eligibleMonths = sessionMonths.filter((month) => month.sessionIndex >= serviceStartIndex && month.sessionIndex <= currentMonthIndex);
+    const dueCycleEntries = getDueCycleEntries(structure.cycleMonths, structure.dueDate, sessionMonths, referenceDate);
+    const dueCycles = dueCycleEntries.filter((cycle) => cycle.isDue);
+    const currentDueCycle = dueCycleEntries.find((cycle) => cycle.isCurrent && cycle.isDue);
+    const latestDueCycle = currentDueCycle || dueCycles[dueCycles.length - 1];
+    const eligibleMonths = dueCycles.flatMap((cycle) => (
+      cycle.months.filter((month) => month.sessionIndex >= serviceStartIndex)
+    ));
     const eligibleMonthKeys = new Set(eligibleMonths.map((month) => month.key));
+    const displayCycle = currentDueCycle || latestDueCycle;
+    const currentCycleMonths = displayCycle
+      ? displayCycle.months.filter((month) => month.sessionIndex >= serviceStartIndex)
+      : [];
+    const currentCycleMonthKeys = new Set(currentCycleMonths.map((month) => month.key));
     const billedMonths = new Set(
       paymentEntries.flatMap((entry) => {
         if (entry.kind !== 'Advance') return entry.coveredMonths;
@@ -158,66 +223,66 @@ export const buildFeeRow = (structure, studentId, successfulPayments, referenceD
       return sum;
     }, 0);
     const remainingMonths = eligibleMonths.filter((month) => !billedMonths.has(month.key));
+    const remainingCurrentCycleMonths = currentCycleMonths.filter((month) => !billedMonths.has(month.key));
     const structureAmount = Number(structure.amount) || 0;
     const totalCharge = structureAmount * eligibleMonths.length;
-    const lateFeeFine = calculateLateFine(structure.dueDate, paid >= totalCharge, referenceDate);
+    const latestDueDate = latestDueCycle?.dueDate || structure.dueDate;
+    const lateFeeFine = calculateLateFine(latestDueDate, paid >= totalCharge, referenceDate);
     const totalOutstanding = Math.max(totalCharge + lateFeeFine - paid, 0);
-    const currentMonthDueAmount = currentMonthKey && eligibleMonthKeys.has(currentMonthKey) && !billedMonths.has(currentMonthKey)
-      ? structureAmount
-      : 0;
-    const currentCycleDueAmount = Math.min(totalOutstanding, currentMonthDueAmount);
+    const currentCycleRawDue = (structureAmount * remainingCurrentCycleMonths.length) + (currentDueCycle ? lateFeeFine : 0);
+    const currentCycleDueAmount = currentDueCycle ? Math.min(totalOutstanding, currentCycleRawDue) : 0;
     const previousPendingAmount = Math.max(totalOutstanding - currentCycleDueAmount, 0);
     return {
       paid,
       structureAmount,
       feeComponent: structure.feeComponent,
       billingType,
-      currentCycleLabel: currentCycle.months.length ? currentCycle.months[currentCycle.months.length - 1].label : currentCycle.label,
-      currentCycleMonths: eligibleMonths,
-      currentCycleMonthKeys: eligibleMonths.map((month) => month.key),
+      currentCycleLabel: currentCycleMonths.length ? `${currentCycleMonths[0].label} - ${currentCycleMonths[currentCycleMonths.length - 1].label}` : currentCycle.label,
+      currentCycleMonths,
+      currentCycleMonthKeys: currentCycleMonths.map((month) => month.key),
       defaultCoveredMonths: remainingMonths.map((month) => month.key),
       coveredMonths: Array.from(billedMonths),
       availableMonths: remainingMonths,
-      serviceMonthsCount: eligibleMonths.length,
+      serviceMonthsCount: currentCycleMonths.length,
       totalCharge,
       lateFeeFine,
       totalOutstanding,
       currentCycleDueAmount,
       previousPendingAmount,
-      reminderCount: totalOutstanding > 0 ? Math.min(Math.ceil(daysLate(structure.dueDate, referenceDate) / 7), 5) : 0,
-      payableLabel: `Rs ${structureAmount * remainingMonths.length} for ${remainingMonths.length} active month${remainingMonths.length === 1 ? '' : 's'}`,
+      reminderCount: totalOutstanding > 0 ? Math.min(Math.ceil(daysLate(latestDueDate, referenceDate) / 7), 5) : 0,
+      payableLabel: `${formatMoney(structureAmount * remainingCurrentCycleMonths.length)} for ${remainingCurrentCycleMonths.length} active month${remainingCurrentCycleMonths.length === 1 ? '' : 's'}`,
     };
   }
 
   const normalizedCycle = Math.min(Math.max(Number(structure.cycleMonths) || 1, 1), 12);
-  const firstDueKey = getMonthKeyFromDate(structure.dueDate) || sessionMonths[0]?.key;
-  const firstDueIndex = Math.max(sessionMonths.findIndex((month) => month.key === firstDueKey), 0);
-  const dueCycleCount = currentMonthIndex >= firstDueIndex
-    ? Math.floor((currentMonthIndex - firstDueIndex) / normalizedCycle) + 1
-    : 0;
-  const totalBaseDue = (Number(structure.amount) || 0) * dueCycleCount;
-  const activeCycleStartIndex = dueCycleCount > 0 ? firstDueIndex + ((dueCycleCount - 1) * normalizedCycle) : firstDueIndex;
-  const activeCycleMonths = sessionMonths.slice(activeCycleStartIndex, Math.min(activeCycleStartIndex + normalizedCycle, sessionMonths.length));
+  const dueCycleEntries = getDueCycleEntries(normalizedCycle, structure.dueDate, sessionMonths, referenceDate);
+  const dueCycles = dueCycleEntries.filter((cycle) => cycle.isDue);
+  const currentDueCycle = dueCycleEntries.find((cycle) => cycle.isCurrent && cycle.isDue);
+  const latestDueCycle = currentDueCycle || dueCycles[dueCycles.length - 1];
+  const monthlyAmount = Number(structure.amount) || 0;
+  const totalBaseDue = dueCycles.reduce((sum, cycle) => sum + (monthlyAmount * cycle.months.length), 0);
+  const activeCycleMonths = currentDueCycle?.months || currentCycle.months;
+  const latestDueCycleMonths = latestDueCycle?.months || [];
   const activeCycleStartKey = activeCycleMonths[0]?.key || '';
+  const latestDueCycleStartKey = latestDueCycleMonths[0]?.key || activeCycleStartKey;
   const paid = paymentEntries.reduce((sum, entry) => {
     if (entry.kind !== 'Advance') return sum + entry.amount;
-    if (!entry.advanceTargetMonthKey || (activeCycleStartKey && entry.advanceTargetMonthKey <= activeCycleStartKey)) {
+    if (!entry.advanceTargetMonthKey || (latestDueCycleStartKey && entry.advanceTargetMonthKey <= latestDueCycleStartKey)) {
       return sum + entry.amount;
     }
     return sum;
   }, 0);
-  const latestDueMonth = activeCycleMonths[0];
-  const dueDay = structure.dueDate ? String(new Date(structure.dueDate).getDate()).padStart(2, '0') : '01';
-  const latestDueDate = latestDueMonth ? `${latestDueMonth.year}-${String(latestDueMonth.monthNumber).padStart(2, '0')}-${dueDay}` : structure.dueDate;
+  const latestDueDate = latestDueCycle?.dueDate || structure.dueDate;
   const lateFeeFine = calculateLateFine(latestDueDate, paid >= totalBaseDue, referenceDate);
   const totalOutstanding = Math.max(totalBaseDue + lateFeeFine - paid, 0);
-  const currentCycleDueAmount = dueCycleCount > 0
-    ? Math.min(totalOutstanding, (Number(structure.amount) || 0) + lateFeeFine)
+  const currentCycleBaseDue = currentDueCycle ? monthlyAmount * activeCycleMonths.length : 0;
+  const currentCycleDueAmount = currentDueCycle
+    ? Math.min(totalOutstanding, currentCycleBaseDue + lateFeeFine)
     : 0;
   const previousPendingAmount = Math.max(totalOutstanding - currentCycleDueAmount, 0);
   return {
     paid,
-    structureAmount: Number(structure.amount) || 0,
+    structureAmount: monthlyAmount,
     feeComponent: structure.feeComponent,
     billingType,
     currentCycleLabel: activeCycleMonths.length ? `${activeCycleMonths[0].label} - ${activeCycleMonths[activeCycleMonths.length - 1].label}` : currentCycle.label,
@@ -232,8 +297,8 @@ export const buildFeeRow = (structure, studentId, successfulPayments, referenceD
     totalOutstanding,
     currentCycleDueAmount,
     previousPendingAmount,
-    reminderCount: totalOutstanding > 0 ? Math.min(Math.ceil(daysLate(structure.dueDate, referenceDate) / 7), 5) : 0,
-    payableLabel: `Rs ${totalOutstanding} for this cycle`,
+    reminderCount: totalOutstanding > 0 ? Math.min(Math.ceil(daysLate(latestDueDate, referenceDate) / 7), 5) : 0,
+    payableLabel: `${formatMoney(totalOutstanding)} for this cycle`,
   };
 };
 

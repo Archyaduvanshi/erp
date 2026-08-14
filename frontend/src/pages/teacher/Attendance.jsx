@@ -7,8 +7,8 @@ import {
   Search,
   Users,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { attendanceApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { attendanceApi, holidayApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 
 const createSessionForm = () => ({
   date: new Date().toISOString().split('T')[0],
@@ -23,7 +23,7 @@ const TeacherAttendance = () => {
   const [teachers, setTeachers] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [classTimetables, setClassTimetables] = useState([]);
-  const [holidays, setHolidays] = useState(() => db.getAll('holiday_calendar'));
+  const [holidays, setHolidays] = useState([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [sessionForm, setSessionForm] = useState(createSessionForm);
   const [attendanceMap, setAttendanceMap] = useState({});
@@ -33,17 +33,18 @@ const TeacherAttendance = () => {
   const registerScrollRef = useRef(null);
 
   async function refreshData() {
-    const [studentResponse, teacherResponse, timetableResponse, attendanceResponse] = await Promise.all([
+    const [studentResponse, teacherResponse, timetableResponse, attendanceResponse, holidayResponse] = await Promise.all([
       studentApi.getAll(),
       teacherApi.getAll(),
       timetableApi.getClassTimetables(),
       attendanceApi.getAll(),
+      holidayApi.getAll(),
     ]);
     setStudents(studentResponse);
     setTeachers(teacherResponse);
     setAttendanceRecords(attendanceResponse);
     setClassTimetables(timetableResponse);
-    setHolidays(db.getAll('holiday_calendar'));
+    setHolidays(holidayResponse.filter((holiday) => holiday.audience === 'All' || holiday.audience === 'Students'));
     setLoadError('');
   }
 
@@ -78,6 +79,10 @@ const TeacherAttendance = () => {
     return deriveTeacherClassesFromTimetables(classTimetables, teacher);
   }, [classTimetables, teacher]);
 
+  const teacherSubjectsByClass = useMemo(() => {
+    return deriveTeacherSubjectsByClass(classTimetables, teacher);
+  }, [classTimetables, teacher]);
+
   const teachingClasses = useMemo(() => {
     const classesWithStudents = new Set(
       students
@@ -109,14 +114,21 @@ const TeacherAttendance = () => {
     return readTimetableTemplate(selectedClassRecord);
   }, [classTimetables, selectedClass]);
 
+  const teacherKeys = useMemo(() => buildTeacherIdentityKeys(teacher), [teacher]);
+
+  const selectedClassSubjects = useMemo(() => (
+    teacherSubjectsByClass[selectedClass] || []
+  ), [selectedClass, teacherSubjectsByClass]);
+
   const timetableSubject = useMemo(() => {
     if (!selectedClassTimetableTemplate || !sessionForm.lectureNumber) return '';
-    return getTimetableSubjectForSession(
+    return getTimetableSubjectForTeacherSession(
       selectedClassTimetableTemplate,
       sessionForm.date,
       sessionForm.lectureNumber,
+      teacherKeys,
     );
-  }, [selectedClassTimetableTemplate, sessionForm.date, sessionForm.lectureNumber]);
+  }, [selectedClassTimetableTemplate, sessionForm.date, sessionForm.lectureNumber, teacherKeys]);
 
   useEffect(() => {
     setSessionForm((current) => {
@@ -131,7 +143,11 @@ const TeacherAttendance = () => {
   const teacherRecords = useMemo(() => {
     const query = recordSearch.trim().toLowerCase();
     return attendanceRecords
-      .filter((record) => teachingClasses.includes(record.className) || record.markedBy === teacherName)
+      .filter((record) => teachingClasses.includes(record.className))
+      .filter((record) => {
+        const allowedSubjects = teacherSubjectsByClass[record.className] || [];
+        return allowedSubjects.some((subjectName) => normalizeAttendanceText(subjectName) === normalizeAttendanceText(record.subject));
+      })
       .filter((record) => selectedClass ? record.className === selectedClass : true)
       .filter((record) => {
         if (!query) return true;
@@ -146,13 +162,16 @@ const TeacherAttendance = () => {
         );
       })
       .sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
-  }, [attendanceRecords, recordSearch, selectedClass, teacherName, teachingClasses]);
+  }, [attendanceRecords, recordSearch, selectedClass, teacherSubjectsByClass, teachingClasses]);
 
   const today = new Date().toISOString().split('T')[0];
   const isSundaySession = getDayNameFromDate(sessionForm.date) === 'Sunday';
   const selectedHoliday = useMemo(() => (
-    holidays.find((holiday) => String(holiday.holidayDate || '') === String(sessionForm.date || '')) || null
-  ), [holidays, sessionForm.date]);
+    holidays.find((holiday) => (
+      String(holiday.holidayDate || '') === String(sessionForm.date || '') &&
+      holidayAppliesToStudentClass(holiday, selectedClass)
+    )) || null
+  ), [holidays, selectedClass, sessionForm.date]);
   const isHolidaySession = Boolean(selectedHoliday);
 
   const monthlyAttendanceRegister = useMemo(() => {
@@ -195,7 +214,10 @@ const TeacherAttendance = () => {
     const holidayColumnMap = new Map();
     dayColumns.forEach((dayNumber) => {
       const dayDateValue = formatMonthDateKey(selectedYear, selectedMonth + 1, dayNumber);
-      const matchingHoliday = holidays.find((holiday) => String(holiday.holidayDate || '') === dayDateValue);
+      const matchingHoliday = holidays.find((holiday) => (
+        String(holiday.holidayDate || '') === dayDateValue &&
+        holidayAppliesToStudentClass(holiday, selectedClass)
+      ));
       if (matchingHoliday?.title) {
         holidayColumnMap.set(dayNumber, matchingHoliday.title);
         return;
@@ -292,7 +314,10 @@ const TeacherAttendance = () => {
     }
 
     const unmarkedStudents = selectedClassStudents.filter((student) => !attendanceMap[String(student.id)]);
-    if (!selectedClass || !sessionForm.lectureNumber.trim() || !sessionForm.subject.trim() || unmarkedStudents.length > 0) {
+    const canMarkSubject = selectedClassSubjects.some((subjectName) => (
+      normalizeAttendanceText(subjectName) === normalizeAttendanceText(sessionForm.subject)
+    ));
+    if (!selectedClass || !sessionForm.lectureNumber.trim() || !sessionForm.subject.trim() || !canMarkSubject || unmarkedStudents.length > 0) {
       return;
     }
 
@@ -491,6 +516,7 @@ const TeacherAttendance = () => {
                     isHolidaySession ||
                     !sessionForm.lectureNumber ||
                     !sessionForm.subject ||
+                    !selectedClassSubjects.some((subjectName) => normalizeAttendanceText(subjectName) === normalizeAttendanceText(sessionForm.subject)) ||
                     selectedClassStudents.some((student) => !attendanceMap[String(student.id)])
                   }
                 />
@@ -615,6 +641,31 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   return [...classSet].sort(compareClassNames);
 };
 
+const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
+  if (!teacher) return {};
+
+  const teacherKeys = buildTeacherIdentityKeys(teacher);
+  return classTimetables.reduce((accumulator, record) => {
+    const template = readTimetableTemplate(record);
+    if (!record?.className || !template?.rows?.length) return accumulator;
+
+    const subjectSet = new Set();
+    template.rows.forEach((row) => {
+      (row.slots || []).forEach((slot) => {
+        if (!slotMatchesTeacher(slot, teacherKeys)) return;
+        const subjectName = formatAttendanceText(slot?.subjectName);
+        if (subjectName) subjectSet.add(subjectName);
+      });
+    });
+
+    if (subjectSet.size) {
+      accumulator[record.className] = [...subjectSet].sort((left, right) => left.localeCompare(right));
+    }
+
+    return accumulator;
+  }, {});
+};
+
 const buildTeacherIdentityKeys = (teacher) => {
   const fullName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
   return [
@@ -641,7 +692,7 @@ const readTimetableTemplate = (record) => {
   return null;
 };
 
-const getTimetableSubjectForSession = (template, dateValue, lectureNumber) => {
+const getTimetableSubjectForTeacherSession = (template, dateValue, lectureNumber, teacherKeys) => {
   if (!template?.rows?.length || !template?.lecturePlan?.length || !lectureNumber) return '';
 
   const selectedDay = getDayNameFromDate(dateValue);
@@ -651,7 +702,9 @@ const getTimetableSubjectForSession = (template, dateValue, lectureNumber) => {
   const lectureIndex = template.lecturePlan.findIndex((lecture) => String(lecture.lectureNumber) === String(lectureNumber));
   if (lectureIndex < 0) return '';
 
-  return formatAttendanceText(dayRow.slots?.[lectureIndex]?.subjectName);
+  const slot = dayRow.slots?.[lectureIndex];
+  if (!slotMatchesTeacher(slot, teacherKeys)) return '';
+  return formatAttendanceText(slot?.subjectName);
 };
 
 const getDayNameFromDate = (dateValue) => {

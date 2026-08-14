@@ -12,7 +12,8 @@ import {
   Users,
 } from 'lucide-react';
 import { db } from '../../utils/db';
-import { attendanceApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { attendanceApi, holidayApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 
 const AttendanceManagement = () => {
   const navigate = useNavigate();
@@ -22,7 +23,7 @@ const AttendanceManagement = () => {
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [teacherAttendanceRecords, setTeacherAttendanceRecords] = useState([]);
   const [classTimetables, setClassTimetables] = useState([]);
-  const [holidays, setHolidays] = useState(() => db.getAll('holiday_calendar'));
+  const [holidays, setHolidays] = useState([]);
   const [activeSection, setActiveSection] = useState(() => (session?.role === 'teacher' ? 'student' : ''));
   const [selectedClass, setSelectedClass] = useState('');
   const [classSearch, setClassSearch] = useState('');
@@ -36,18 +37,19 @@ const AttendanceManagement = () => {
   const [loadError, setLoadError] = useState('');
 
   const refreshData = async () => {
-    const [studentResponse, teacherResponse, timetableResponse, attendanceResponse] = await Promise.all([
+    const [studentResponse, teacherResponse, timetableResponse, attendanceResponse, holidayResponse] = await Promise.all([
       studentApi.getAll(),
       teacherApi.getAll(),
       timetableApi.getClassTimetables(),
       attendanceApi.getAll(),
+      holidayApi.getAll(),
     ]);
     setStudents(studentResponse);
     setTeachers(teacherResponse);
     setAttendanceRecords(attendanceResponse);
     setClassTimetables(timetableResponse);
     setTeacherAttendanceRecords(db.getAll('teacher_attendance_records'));
-    setHolidays(db.getAll('holiday_calendar'));
+    setHolidays(holidayResponse);
   };
 
   useEffect(() => {
@@ -201,7 +203,10 @@ const AttendanceManagement = () => {
     const holidayColumnMap = new Map();
     dayColumns.forEach((dayNumber) => {
       const dayDateValue = formatMonthDateKey(selectedYear, selectedMonthNumber, dayNumber);
-      const matchingHoliday = holidays.find((holiday) => String(holiday.holidayDate || '') === dayDateValue);
+      const matchingHoliday = holidays.find((holiday) => (
+        String(holiday.holidayDate || '') === dayDateValue &&
+        holidayAppliesToStudentClass(holiday, selectedClass)
+      ));
       if (matchingHoliday?.title) {
         holidayColumnMap.set(dayNumber, matchingHoliday.title);
         return;
@@ -344,7 +349,10 @@ const AttendanceManagement = () => {
 
     dayColumns.forEach((dayNumber) => {
       const dayDateValue = formatMonthDateKey(selectedYear, selectedMonthNumber, dayNumber);
-      const matchingHoliday = holidays.find((holiday) => String(holiday.holidayDate || '') === dayDateValue);
+      const matchingHoliday = holidays.find((holiday) => (
+        String(holiday.holidayDate || '') === dayDateValue &&
+        (holiday.audience === 'All' || holiday.audience === 'Teachers')
+      ));
       if (matchingHoliday?.title) {
         holidayColumnMap.set(dayNumber, matchingHoliday.title);
         return;

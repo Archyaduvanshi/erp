@@ -7,34 +7,16 @@ import {
   BookOpen,
   Bus,
   CalendarDays,
-  CheckCircle2,
   FileText,
   GraduationCap,
   Landmark,
   Library,
   LogOut,
   Megaphone,
-  Pin,
   Settings,
   Shield,
-  Sparkles,
   Users,
 } from 'lucide-react';
-
-const noticeFacilities = [
-  'Admissions',
-  'Attendance',
-  'Fees',
-  'Exams',
-  'Library',
-  'Transport',
-  'Hostel',
-  'Timetable',
-  'Salary',
-  'Holidays',
-  'Reports',
-  'Settings',
-];
 
 const Dashboard = () => {
   const [collegeData, setCollegeData] = useState(null);
@@ -134,8 +116,6 @@ const Dashboard = () => {
         </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-10 lg:grid-cols-3">
-          <NoticeCard instituteName={collegeData?.instituteName || 'Campus'} />
-
           <ModuleCard
             icon={<Users className="text-emerald-700" size={42} />}
             title="Student Management"
@@ -207,6 +187,13 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            icon={<Megaphone className="text-violet-700" size={42} />}
+            title="Notice Management"
+            desc="Create, schedule, pin, publish, and archive campus notices"
+            onClick={() => navigate('/college/notices')}
+          />
+
+          <ModuleCard
             icon={<GraduationCap className="text-cyan-700" size={42} />}
             title="Hostel Management"
             desc="Allocate rooms, manage residents, and attendance"
@@ -231,77 +218,20 @@ const Dashboard = () => {
             icon={<FileText className="text-slate-700" size={42} />}
             title="Reports"
             desc="View academic, financial, and institutional reports"
+            onClick={() => navigate('/college/reports')}
           />
 
           <ModuleCard
             icon={<Settings className="text-slate-700" size={42} />}
             title="Settings"
             desc="Configure institutional profile and platform preferences"
+            onClick={() => navigate('/college/settings')}
           />
         </div>
       </div>
     </div>
   );
 };
-
-const NoticeCard = ({ instituteName }) => (
-  <section className="group relative overflow-hidden rounded-[2.25rem] border border-emerald-100 bg-white p-6 text-left shadow-xl shadow-emerald-100/50 md:col-span-2 md:p-8 lg:col-span-3">
-    <div className="absolute right-0 top-0 h-40 w-40 rounded-bl-[4rem] bg-emerald-50" />
-    <div className="absolute bottom-0 left-0 h-28 w-56 rounded-tr-[4rem] bg-cyan-50" />
-
-    <div className="relative grid gap-8 lg:grid-cols-[0.95fr_1.35fr] lg:items-center">
-      <div>
-        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.22em] text-emerald-700">
-          <Megaphone size={14} />
-          Notice Board
-        </div>
-        <h2 className="mt-5 max-w-xl text-3xl font-black tracking-tighter text-slate-950 md:text-4xl">
-          Smart campus updates for every department.
-        </h2>
-        <p className="mt-4 max-w-xl text-sm font-medium leading-7 text-slate-500">
-          Keep important announcements, deadlines, events, and facility alerts visible for {instituteName}.
-        </p>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_0.82fr]">
-        <div className="rounded-[1.75rem] border border-slate-100 bg-slate-50 p-5">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white">
-              <Pin size={20} />
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Today Priority</p>
-              <h3 className="mt-2 text-lg font-black tracking-tight text-slate-900">Fee, attendance, exam, and facility notices in one place</h3>
-              <p className="mt-2 text-xs font-semibold leading-6 text-slate-500">
-                Use this board to highlight urgent circulars, student reminders, transport updates, hostel alerts, and library deadlines.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-[1.75rem] border border-emerald-100 bg-emerald-600 p-5 text-white shadow-lg shadow-emerald-100">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/15">
-              <Sparkles size={18} />
-            </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-100">Coverage</p>
-              <p className="text-xl font-black tracking-tight">All facilities</p>
-            </div>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-2">
-            {noticeFacilities.map((facility) => (
-              <span key={facility} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-white">
-                <CheckCircle2 size={12} />
-                {facility}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-);
 
 const ModuleCard = ({ icon, title, desc, onClick }) => (
   <button

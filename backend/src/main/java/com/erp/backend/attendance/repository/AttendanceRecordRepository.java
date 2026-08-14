@@ -13,6 +13,15 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
 
     List<AttendanceRecord> findAllByInstituteIdAndClassNameIgnoreCaseOrderByAttendanceDateDescCreatedAtDesc(Long instituteId, String className);
 
+    List<AttendanceRecord> findAllByInstituteIdAndClassNameIgnoreCaseAndAttendanceDateAndLectureNumberAndSubjectIgnoreCaseAndMarkedByIgnoreCase(
+            Long instituteId,
+            String className,
+            LocalDate attendanceDate,
+            String lectureNumber,
+            String subject,
+            String markedBy
+    );
+
     List<AttendanceRecord> findAllByInstituteIdAndClassNameIgnoreCaseAndAttendanceDateAndLectureNumber(
             Long instituteId,
             String className,

@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
   BadgeIndianRupee,
   CalendarClock,
+  ChevronDown,
   CreditCard,
   Download,
   FileText,
@@ -13,39 +14,45 @@ import {
   ReceiptText,
   Search,
   Trash2,
-  UserRound,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { isFacilityActive } from '../../utils/facilityUtils';
+import { feeApi, noticeApi, studentApi } from '../../utils/api';
+import { isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
 import {
   allocateOverallAmount,
   buildFeeRow,
-  buildOverallPaymentPreview,
   calculateTaxBreakdown,
   formatBillingType,
   formatCoveredMonths,
   formatCycleLabel,
+  formatFeeType,
+  formatMoney,
   getTodayKey,
   resolveBillingType,
   resolveCoverageLabel,
 } from '../../utils/feeUtils';
 
 const today = getTodayKey();
+const ALL_STUDENTS_CATEGORY = 'All Students';
 
 const initialStructureForm = {
   courseId: '',
-  category: '',
+  category: ALL_STUDENTS_CATEGORY,
+  feeType: 'college_fee',
+  facilityKey: '',
   feeComponent: '',
   amount: '',
-  cycleMonths: '1',
+  cycleMonths: '3',
   billingType: 'cycle_based',
+  dueDate: today,
 };
 
 const initialPaymentForm = {
+  className: '',
+  section: '',
   studentId: '',
   transactionId: '',
   gatewayRef: '',
-  mode: 'UPI',
+  mode: 'Cash',
   paymentStatus: 'Success',
   paymentTarget: 'due_auto',
   paidAmount: '',
@@ -55,22 +62,50 @@ const initialPaymentForm = {
 const FeeManagement = () => {
   const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState('home');
-  const [students, setStudents] = useState(() => db.getAll('students'));
-  const [structures, setStructures] = useState(() => db.getAll('fee_structures'));
-  const [payments, setPayments] = useState(() => db.getAll('fee_payments'));
+  const [students, setStudents] = useState([]);
+  const [structures, setStructures] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [notices, setNotices] = useState([]);
+  const [feeClasses, setFeeClasses] = useState([]);
   const [structureForm, setStructureForm] = useState(initialStructureForm);
   const [paymentForm, setPaymentForm] = useState(initialPaymentForm);
   const [selectedFeeClass, setSelectedFeeClass] = useState('');
-  const [pendingFeeComponents, setPendingFeeComponents] = useState([]);
+  const [categoryWiseFees, setCategoryWiseFees] = useState(false);
   const [structureSearch, setStructureSearch] = useState('');
+  const [manualClassName, setManualClassName] = useState('');
   const [structureCategoryFilter, setStructureCategoryFilter] = useState('');
   const [receiptSearch, setReceiptSearch] = useState('');
   const [dueSearch, setDueSearch] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
 
-  const refreshData = () => {
-    setStudents(db.getAll('students'));
-    setStructures(db.getAll('fee_structures'));
-    setPayments(db.getAll('fee_payments'));
+  useEffect(() => {
+    refreshData();
+  }, []);
+
+  const refreshData = async () => {
+    try {
+      const [studentResponse, structureResponse, paymentResponse, classResponse, noticeResponse] = await Promise.all([
+        studentApi.getAll(),
+        feeApi.getStructures(),
+        feeApi.getPayments(),
+        feeApi.getClasses(),
+        noticeApi.getAll(),
+      ]);
+      setStudents(studentResponse);
+      setStructures(structureResponse);
+      setPayments(paymentResponse);
+      setFeeClasses(classResponse);
+      setNotices(noticeResponse);
+      setLoadError('');
+    } catch (error) {
+      setStudents([]);
+      setStructures([]);
+      setPayments([]);
+      setFeeClasses([]);
+      setNotices([]);
+      setLoadError(error.message || 'Unable to load fee data from database.');
+    }
   };
 
   const studentOptions = useMemo(() => {
@@ -78,7 +113,8 @@ const FeeManagement = () => {
       .map((student) => ({
         id: student.id,
         name: `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Unnamed student',
-        className: student.assignedClass || 'Course pending',
+        className: getStudentClassName(student) || 'Course pending',
+        sectionName: getStudentSectionName(student),
         enrollmentNo: student.enrollmentNo || student.systemId || `Student ${student.id}`,
         category: student.admissionCategory || student.category || 'General',
         transportOptIn: student.transportOptIn,
@@ -93,8 +129,14 @@ const FeeManagement = () => {
   }, [students]);
 
   const courseOptions = useMemo(() => {
-    return [...new Set(students.map((student) => student.assignedClass).filter(Boolean))].sort(compareClassNames);
-  }, [students]);
+    return [
+      ...new Set([
+        ...feeClasses.map((className) => normalizeClassName(className)).filter(Boolean),
+        ...students.map((student) => getStudentClassName(student)).filter(Boolean),
+        ...structures.map((structure) => normalizeClassName(structure.courseId)).filter(Boolean),
+      ]),
+    ].sort(compareClassNames);
+  }, [feeClasses, students, structures]);
 
   const successfulPayments = useMemo(() => {
     return payments.filter((payment) => payment.paymentStatus === 'Success');
@@ -102,7 +144,9 @@ const FeeManagement = () => {
 
   const reportRows = useMemo(() => {
     return structures.flatMap((structure) => {
-      const matchingStudents = studentOptions.filter((student) => student.className === structure.courseId);
+      const matchingStudents = studentOptions
+        .filter((student) => student.className === normalizeClassName(structure.courseId))
+        .filter((student) => isStructureCategoryApplicable(structure, student));
       return matchingStudents.map((student) => {
         return {
           id: `${structure.id}-${student.id}`,
@@ -151,7 +195,7 @@ const FeeManagement = () => {
   const selectedClassCategoryOptions = useMemo(() => {
     return [...new Set(
       structures
-        .filter((structure) => structure.courseId === selectedFeeClass)
+        .filter((structure) => normalizeClassName(structure.courseId) === selectedFeeClass)
         .map((structure) => structure.category)
         .filter(Boolean),
     )].sort((a, b) => a.localeCompare(b));
@@ -159,7 +203,7 @@ const FeeManagement = () => {
 
   const selectedClassStructures = useMemo(() => {
     return structures
-      .filter((structure) => structure.courseId === selectedFeeClass)
+      .filter((structure) => normalizeClassName(structure.courseId) === selectedFeeClass)
       .filter((structure) => !structureCategoryFilter || structure.category === structureCategoryFilter)
       .sort((a, b) => String(a.feeComponent || '').localeCompare(String(b.feeComponent || '')));
   }, [selectedFeeClass, structureCategoryFilter, structures]);
@@ -182,6 +226,8 @@ const FeeManagement = () => {
     const query = dueSearch.trim().toLowerCase();
     return reportRows.filter((row) => {
       if (row.totalOutstanding <= 0) return false;
+      if (!isFeeStructureApplicableToStudent(row.structure, row.student)) return false;
+      if (row.billingType === 'monthly_active' && row.serviceMonthsCount <= 0) return false;
       if (!query) return true;
       return (
         row.student.name.toLowerCase().includes(query) ||
@@ -192,103 +238,127 @@ const FeeManagement = () => {
     });
   }, [dueSearch, reportRows]);
 
-  const totalConfigured = structures.reduce((sum, structure) => sum + (Number(structure.amount) || 0), 0);
-  const collectedAmount = successfulPayments.reduce((sum, payment) => sum + (Number(payment.paidAmount) || 0), 0);
-  const totalOutstanding = reportRows.reduce((sum, row) => sum + row.totalOutstanding, 0);
-  const defaulterCount = new Set(filteredDueRows.map((row) => row.student.id)).size;
-  const pendingFeeTotal = pendingFeeComponents.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-
   const selectedPaymentStudent = studentOptions.find((student) => String(student.id) === String(paymentForm.studentId));
+  const collectionClassOptions = useMemo(() => {
+    return [...new Set(studentOptions.map((student) => student.className).filter(Boolean))].sort(compareClassNames);
+  }, [studentOptions]);
+  const collectionSectionOptions = useMemo(() => {
+    if (!paymentForm.className) return [];
+    return [...new Set(
+      studentOptions
+        .filter((student) => student.className === paymentForm.className)
+        .map((student) => student.sectionName)
+        .filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b));
+  }, [paymentForm.className, studentOptions]);
+  const filteredCollectionStudents = useMemo(() => {
+    return studentOptions.filter((student) => {
+      if (!paymentForm.className || student.className !== paymentForm.className) return false;
+      if (collectionSectionOptions.length > 0 && student.sectionName !== paymentForm.section) return false;
+      return true;
+    });
+  }, [collectionSectionOptions.length, paymentForm.className, paymentForm.section, studentOptions]);
+  const canSelectCollectionStudent = Boolean(paymentForm.className) && (collectionSectionOptions.length === 0 || Boolean(paymentForm.section));
   const selectedPaymentRows = useMemo(() => {
     if (!selectedPaymentStudent) return [];
     return reportRows
       .filter((row) => String(row.student.id) === String(selectedPaymentStudent.id))
       .filter((row) => {
-        if (row.billingType !== 'monthly_active') return true;
-        const component = String(row.structure.feeComponent || '').toLowerCase();
-        const transportActive = isFacilityActive(selectedPaymentStudent, 'transport');
-        const hostelActive = isFacilityActive(selectedPaymentStudent, 'hostel');
-        const libraryActive = isFacilityActive(selectedPaymentStudent, 'library');
-        if (component.includes('transport')) return transportActive && row.serviceMonthsCount > 0;
-        if (component.includes('hostel')) return hostelActive && row.serviceMonthsCount > 0;
-        if (component.includes('library')) return libraryActive && row.serviceMonthsCount > 0;
-        return true;
+        if (!isFeeStructureApplicableToStudent(row.structure, selectedPaymentStudent)) return false;
+        return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
       });
   }, [reportRows, selectedPaymentStudent]);
   const selectedPaymentOutstandingTotal = useMemo(() => (
     selectedPaymentRows.reduce((sum, row) => sum + (Number(row.totalOutstanding) || 0), 0)
   ), [selectedPaymentRows]);
-  const paymentPreview = useMemo(() => {
-    if (!selectedPaymentStudent) return null;
-    return buildOverallPaymentPreview(paymentForm.paidAmount, selectedPaymentRows, paymentForm.paymentTarget);
-  }, [paymentForm.paidAmount, paymentForm.paymentTarget, selectedPaymentRows, selectedPaymentStudent]);
+  const selectedPaymentSummary = useMemo(() => {
+    const previousPending = selectedPaymentRows.reduce((sum, row) => sum + (Number(row.previousPendingAmount) || 0), 0);
+    const collegeFee = selectedPaymentRows
+      .filter((row) => row.structure?.feeType !== 'facility_fee')
+      .reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
+    const facilityFee = selectedPaymentRows
+      .filter((row) => row.structure?.feeType === 'facility_fee')
+      .reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
+    const paidAmount = Number(paymentForm.paidAmount) || 0;
+    return {
+      previousPending,
+      collegeFee,
+      facilityFee,
+      facilityRows: selectedPaymentRows.filter((row) => row.structure?.feeType === 'facility_fee'),
+      totalPayable: selectedPaymentOutstandingTotal,
+      paidAmount,
+      newPending: Math.max(selectedPaymentOutstandingTotal - paidAmount, 0),
+    };
+  }, [paymentForm.paidAmount, selectedPaymentOutstandingTotal, selectedPaymentRows]);
+  const selectedPaymentHistory = useMemo(() => {
+    if (!selectedPaymentStudent) return [];
+    return receiptRows
+      .filter((receipt) => String(receipt.studentId) === String(selectedPaymentStudent.id))
+      .map((receipt) => ({
+        ...receipt,
+        noticeSent: notices.some((notice) => (
+          String(notice.targetStudentId || '') === String(selectedPaymentStudent.id)
+          && String(notice.details || '').includes(receipt.receiptNumber)
+        )),
+      }));
+  }, [notices, receiptRows, selectedPaymentStudent]);
 
-  const handleAddPendingFeeComponent = (e) => {
+  const handleSaveFeeStructure = async (e) => {
     e.preventDefault();
-    const feeComponent = structureForm.feeComponent.trim();
+    const feeComponent = resolveStructureComponentName(structureForm);
+    const feeCategory = categoryWiseFees ? structureForm.category : ALL_STUDENTS_CATEGORY;
     const amount = Number(structureForm.amount) || 0;
-    const cycleMonths = Math.max(Number(structureForm.cycleMonths) || 1, 1);
+    const cycleMonths = Math.min(Math.max(Number(structureForm.cycleMonths) || 1, 1), 12);
     const billingType = resolveBillingType({ ...structureForm, feeComponent });
-    if (!selectedFeeClass || !structureForm.category || !feeComponent || !amount) return;
+    if (!selectedFeeClass || !feeCategory || !feeComponent || !amount) return;
 
-    setPendingFeeComponents((current) => [
-      ...current,
-      {
-        id: Date.now() + current.length,
+    try {
+      await feeApi.saveStructure({
+        courseId: selectedFeeClass,
+        category: feeCategory,
         feeComponent,
         amount,
-        category: structureForm.category,
         cycleMonths,
         billingType,
-      },
-    ]);
-    setStructureForm((current) => ({
-      ...current,
-      feeComponent: '',
-      amount: '',
-      cycleMonths: current.cycleMonths || '1',
-      billingType: current.billingType || 'cycle_based',
-    }));
+        feeType: structureForm.feeType || 'college_fee',
+        facilityKey: structureForm.feeType === 'facility_fee' ? structureForm.facilityKey : '',
+        dueDate: structureForm.dueDate || today,
+      });
+      setStructureForm((current) => ({
+        ...initialStructureForm,
+        courseId: selectedFeeClass,
+        category: categoryWiseFees ? current.category : ALL_STUDENTS_CATEGORY,
+        feeType: current.feeType,
+        facilityKey: current.facilityKey,
+        billingType: current.billingType,
+        cycleMonths: current.cycleMonths,
+        dueDate: current.dueDate || today,
+      }));
+      await refreshData();
+    } catch (error) {
+      setLoadError(error.message || 'Unable to save fee structure in database.');
+    }
   };
 
-  const handleRemovePendingFeeComponent = (componentId) => {
-    setPendingFeeComponents((current) => current.filter((item) => item.id !== componentId));
-  };
-
-  const handleSavePendingFeeComponents = () => {
-    if (!selectedFeeClass || pendingFeeComponents.length === 0) return;
-
-    const records = pendingFeeComponents.map((item, index) => ({
-      courseId: selectedFeeClass,
-      category: item.category,
-      feeComponent: item.feeComponent,
-      amount: Number(item.amount) || 0,
-      cycleMonths: Math.max(Number(item.cycleMonths) || 1, 1),
-      billingType: resolveBillingType(item),
-      dueDate: '',
-      id: Date.now() + index,
-      createdAt: new Date().toISOString(),
-    }));
-    replaceModuleRecords('fee_structures', [...db.getAll('fee_structures'), ...records]);
-    setPendingFeeComponents([]);
-    setStructureForm({ ...initialStructureForm, courseId: selectedFeeClass });
-    refreshData();
+  const handleAddManualClass = (e) => {
+    e.preventDefault();
+    const className = normalizeClassName(manualClassName);
+    if (!className) return;
+    setSelectedFeeClass(className);
+    setCategoryWiseFees(false);
+    setStructureCategoryFilter('');
+    setStructureForm({ ...initialStructureForm, courseId: className });
+    setManualClassName('');
   };
 
   const handleStudentSelect = (studentId) => {
+    setFeeSummaryOpen(false);
     const selectedStudent = studentOptions.find((student) => String(student.id) === studentId);
     const studentRows = reportRows
       .filter((row) => String(row.student.id) === String(studentId))
       .filter((row) => {
-        if (row.billingType !== 'monthly_active') return true;
-        const component = String(row.structure.feeComponent || '').toLowerCase();
-        const transportActive = isFacilityActive(selectedStudent, 'transport');
-        const hostelActive = isFacilityActive(selectedStudent, 'hostel');
-        const libraryActive = isFacilityActive(selectedStudent, 'library');
-        if (component.includes('transport')) return transportActive && row.serviceMonthsCount > 0;
-        if (component.includes('hostel')) return hostelActive && row.serviceMonthsCount > 0;
-        if (component.includes('library')) return libraryActive && row.serviceMonthsCount > 0;
-        return true;
+        if (!isFeeStructureApplicableToStudent(row.structure, selectedStudent)) return false;
+        return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
       });
     const studentOutstanding = studentRows.reduce((sum, row) => sum + (Number(row.totalOutstanding) || 0), 0);
     setPaymentForm((current) => ({
@@ -299,47 +369,123 @@ const FeeManagement = () => {
     }));
   };
 
-  const handleSavePayment = (e) => {
+  const handleCollectionClassSelect = (className) => {
+    setFeeSummaryOpen(false);
+    setPaymentForm((current) => ({
+      ...current,
+      className,
+      section: '',
+      studentId: '',
+      paymentTarget: 'due_auto',
+      paidAmount: '',
+      transactionId: '',
+      gatewayRef: '',
+    }));
+  };
+
+  const handleCollectionSectionSelect = (section) => {
+    setFeeSummaryOpen(false);
+    setPaymentForm((current) => ({
+      ...current,
+      section,
+      studentId: '',
+      paymentTarget: 'due_auto',
+      paidAmount: '',
+      transactionId: '',
+      gatewayRef: '',
+    }));
+  };
+
+  const handleSavePayment = async (e) => {
     e.preventDefault();
     const selectedStudent = studentOptions.find((student) => String(student.id) === String(paymentForm.studentId));
-    if (!selectedStudent || !paymentForm.transactionId.trim() || !paymentForm.paidAmount) return;
+    if (!selectedStudent || !paymentForm.paidAmount) return;
     const paidAmount = Number(paymentForm.paidAmount) || 0;
     if (paidAmount <= 0) return;
-    const allocations = allocateOverallAmount(paidAmount, selectedPaymentRows, paymentForm.paymentTarget);
+    const allocations = allocateOverallAmount(paidAmount, selectedPaymentRows, 'due_auto');
     if (allocations.length === 0) return;
     const currentDuePaid = allocations
       .filter((allocation) => allocation.kind === 'Current Due')
       .reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0);
     const balanceRemaining = Math.max(selectedPaymentOutstandingTotal - currentDuePaid, 0);
     const receiptNumber = `FEE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    const counterReference = receiptNumber;
+    const counterNote = paymentForm.mode === 'Cash' ? 'Collected at college counter' : 'Collected through digital mode';
 
-    db.save('fee_payments', {
-      ...paymentForm,
-      studentId: selectedStudent.id,
-      structureId: 'overall_total',
-      paidAmount,
-      allocations,
-      coveredMonths: [],
-      resolvedMonths: [],
-      coverageLabel: paymentForm.paymentTarget === 'advance_only'
-        ? 'Advance payment for upcoming cycle'
-        : 'Overall payment auto-adjusted',
-      activeFromMonth: '',
-      billedMonthsCount: allocations.reduce((sum, allocation) => sum + (allocation.coveredMonths?.length || 0), 0),
-      billingType: 'overall_payment',
-      receiptNumber,
-      taxBreakdown: calculateTaxBreakdown(paidAmount),
-      balanceRemaining,
-      downloadLink: `receipt-${receiptNumber}.txt`,
-    });
-    setPaymentForm(initialPaymentForm);
-    refreshData();
+    const { className, section, ...paymentPayload } = paymentForm;
+
+    try {
+      await feeApi.savePayment({
+        ...paymentPayload,
+        studentId: selectedStudent.id,
+        structureId: 'overall_total',
+        transactionId: counterReference,
+        gatewayRef: counterNote,
+        paidAmount,
+        allocations,
+        coveredMonths: [],
+        resolvedMonths: [],
+        coverageLabel: paymentForm.paymentTarget === 'advance_only'
+          ? 'Advance payment for upcoming cycle'
+          : 'Overall payment auto-adjusted',
+        activeFromMonth: '',
+        billedMonthsCount: allocations.reduce((sum, allocation) => sum + (allocation.coveredMonths?.length || 0), 0),
+        billingType: 'overall_payment',
+        receiptNumber,
+        taxBreakdown: calculateTaxBreakdown(paidAmount),
+        balanceRemaining,
+        downloadLink: `receipt-${receiptNumber}.txt`,
+      });
+      let noticeCreateError = '';
+      try {
+        await noticeApi.create(buildFeeCollectionNoticePayload({
+          student: selectedStudent,
+          receiptNumber,
+          paidAmount,
+          balanceRemaining,
+          mode: paymentForm.mode,
+          paymentDate: paymentForm.paymentDate || today,
+          summary: selectedPaymentSummary,
+          rows: selectedPaymentRows,
+        }));
+      } catch (noticeError) {
+        noticeCreateError = noticeError.message || 'Payment saved, but fee collection notice could not be created.';
+      }
+      setPaymentForm(initialPaymentForm);
+      await refreshData();
+      if (noticeCreateError) setLoadError(noticeCreateError);
+    } catch (error) {
+      setLoadError(error.message || 'Unable to save payment in database.');
+    }
   };
 
-  const handleDelete = (module, recordId, message) => {
+  const handleDelete = async (module, recordId, message) => {
     if (!window.confirm(message)) return;
-    replaceModuleRecords(module, db.getAll(module).filter((record) => record.id !== recordId));
-    refreshData();
+    try {
+      if (module === 'fee_structures') {
+        await feeApi.deleteStructure(recordId);
+      } else if (module === 'fee_payments') {
+        await feeApi.deletePayment(recordId);
+      }
+      await refreshData();
+    } catch (error) {
+      setLoadError(error.message || 'Unable to delete fee record from database.');
+    }
+  };
+
+  const handleBack = () => {
+    if (selectedFeeClass) {
+      setSelectedFeeClass('');
+      setCategoryWiseFees(false);
+      setStructureCategoryFilter('');
+      setStructureForm(initialStructureForm);
+      return;
+    }
+    if (activeSection !== 'home') {
+      setActiveSection('home');
+      return;
+    }
+    navigate('/college');
   };
 
   const handleDownloadReceipt = (receipt) => {
@@ -351,8 +497,8 @@ const FeeManagement = () => {
       `Billing Rule: ${formatBillingType(receipt.structure?.billingType, receipt.structure?.feeComponent)}`,
       `Cycle Window: ${resolveCoverageLabel(receipt)}`,
       `Covered Months: ${formatCoveredMonths(receipt.coveredMonths)}`,
-      `Transaction ID: ${receipt.transactionId}`,
-      `Gateway Ref: ${receipt.gatewayRef || '-'}`,
+      `${receipt.mode === 'Cash' ? 'Receipt / Voucher No.' : 'Transaction ID'}: ${receipt.transactionId}`,
+      `${receipt.mode === 'Cash' ? 'Counter Note' : 'Gateway Ref'}: ${receipt.gatewayRef || '-'}`,
       `Mode: ${receipt.mode}`,
       `Status: ${receipt.paymentStatus}`,
       `Paid Amount: Rs ${receipt.paidAmount}`,
@@ -383,7 +529,7 @@ const FeeManagement = () => {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/college')}
+              onClick={handleBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft size={14} />
@@ -398,60 +544,200 @@ const FeeManagement = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        <section className="overflow-hidden rounded-4xl bg-[linear-gradient(145deg,#064e3b_0%,#0f766e_48%,#111827_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(6,78,59,0.8)] lg:px-10 lg:py-10">
-          <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-emerald-200">Student Finance</p>
-              <h2 className="mt-4 max-w-3xl font-serif text-4xl font-black italic leading-none tracking-tight">
-                Configure fees, collect payments, issue receipts, and track dues.
-              </h2>
-              <p className="mt-5 max-w-2xl text-sm leading-7 text-emerald-50/80">
-                Manage course-wise fee components, payment modes, receipt proof, and outstanding balances for administrative follow-up.
-              </p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Configured Fees" value={`Rs ${totalConfigured}`} icon={Landmark} />
-              <MetricCard label="Collected" value={`Rs ${collectedAmount}`} icon={CreditCard} />
-              <MetricCard label="Outstanding" value={`Rs ${totalOutstanding}`} icon={IndianRupee} />
-              <MetricCard label="Defaulters" value={defaulterCount} icon={UserRound} />
-            </div>
+        {loadError ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {loadError}
           </div>
-        </section>
+        ) : null}
 
         {activeSection === 'home' ? (
-          <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
             <ActionCard icon={BadgeIndianRupee} title="Fee Structure Setup" text="Define cycle-based fees and monthly hostel, transport, or library service fees." onClick={() => setActiveSection('structures')} />
-            <ActionCard icon={CreditCard} title="Fee Collection" text="Record UPI, card, cash, or gateway payments." onClick={() => setActiveSection('payments')} />
+            <ActionCard icon={CreditCard} title="Fee Collection" text="Collect fee at the counter, with cash as the default mode and receipt-ready allocation." onClick={() => setActiveSection('payments')} />
             <ActionCard icon={ReceiptText} title="Receipt Generation" text="Review receipt number, tax, balance, and download proof." onClick={() => setActiveSection('receipts')} />
             <ActionCard icon={CalendarClock} title="Due Fee Reports" text="Find pending balances, late fines, and reminder counts." onClick={() => setActiveSection('dues')} />
           </section>
         ) : (
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-8">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">Fee Module Page</p>
               <h2 className="mt-2 font-serif text-3xl font-black italic tracking-tight text-slate-950">{sectionTitle(activeSection)}</h2>
             </div>
-            <button
-              type="button"
-              onClick={() => setActiveSection('home')}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
-            >
-              <ArrowLeft size={15} />
-              Back To Fee Cards
-            </button>
           </div>
         )}
 
         {activeSection === 'structures' ? (
-          <TwoColumnPage
-            left={
-              <Panel title="All Classes" description="Select a class to add and view its fee structure.">
+          selectedFeeClass ? (
+            <Panel
+              className="mt-8"
+              title={`${selectedFeeClass} Fee Structure`}
+              description="Save class-wise and category-wise monthly rates, then review saved structures in the table."
+            >
+              <div className="mt-8 space-y-8">
+                <form className="grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleSaveFeeStructure}>
+                  <InputField label="Class" value={selectedFeeClass} readOnly />
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Category Mode</label>
+                    <div className="grid grid-cols-2 gap-2 rounded-2xl border-2 border-slate-200 bg-slate-50 p-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCategoryWiseFees(false);
+                          setStructureForm({ ...structureForm, category: ALL_STUDENTS_CATEGORY });
+                        }}
+                        className={`rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-[0.12em] transition ${
+                          !categoryWiseFees ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:bg-white'
+                        }`}
+                      >
+                        Same For All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCategoryWiseFees(true);
+                          setStructureForm({
+                            ...structureForm,
+                            category: structureForm.category === ALL_STUDENTS_CATEGORY ? 'General' : structureForm.category,
+                          });
+                        }}
+                        className={`rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-[0.12em] transition ${
+                          categoryWiseFees ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:bg-white'
+                        }`}
+                      >
+                        Category Wise
+                      </button>
+                    </div>
+                  </div>
+                  {categoryWiseFees ? (
+                    <SelectField label="Category" value={structureForm.category} onChange={(e) => setStructureForm({ ...structureForm, category: e.target.value })} options={['General', 'OBC', 'SC', 'ST', 'EWS', 'Scholarship']} />
+                  ) : null}
+                  <SelectField
+                    label="Fee Type"
+                    value={structureForm.feeType}
+                    onChange={(e) => {
+                      const feeType = e.target.value;
+                      setStructureForm({
+                        ...structureForm,
+                        feeType,
+                        facilityKey: feeType === 'facility_fee' ? (structureForm.facilityKey || 'transport') : '',
+                        feeComponent: '',
+                        billingType: feeType === 'facility_fee'
+                          ? (structureForm.billingType === 'monthly_active' ? 'monthly_active' : 'active_cycle')
+                          : 'cycle_based',
+                      });
+                    }}
+                    options={['college_fee', 'facility_fee']}
+                    renderOptionLabel={(value) => formatFeeType(value)}
+                  />
+                  {structureForm.feeType === 'facility_fee' ? (
+                    <SelectField
+                      label="Facility"
+                      value={structureForm.facilityKey}
+                      onChange={(e) => setStructureForm({ ...structureForm, facilityKey: e.target.value, feeComponent: '' })}
+                      options={['transport', 'hostel', 'library', 'other']}
+                      renderOptionLabel={(value) => ({
+                        transport: 'Transport',
+                        hostel: 'Hostel',
+                        library: 'Library',
+                        other: 'Other Facility',
+                      }[value] || 'Select facility')}
+                    />
+                  ) : null}
+                  <SelectField
+                    label="Billing Rule"
+                    value={structureForm.billingType}
+                    onChange={(e) => {
+                      const billingType = e.target.value;
+                      setStructureForm({
+                        ...structureForm,
+                        billingType,
+                      });
+                    }}
+                    options={structureForm.feeType === 'facility_fee' ? ['monthly_active', 'active_cycle'] : ['cycle_based']}
+                    renderOptionLabel={(value) => {
+                      if (value === 'cycle_based') return 'Cycle Based Fee';
+                      if (value === 'monthly_active') return 'Monthly Active Service';
+                      if (value === 'active_cycle') return 'Active Facility Cycle';
+                      return 'Select billing rule';
+                    }}
+                  />
+                  <SelectField
+                    label="Billing Frequency"
+                    value={structureForm.cycleMonths}
+                    onChange={(e) => setStructureForm({ ...structureForm, cycleMonths: e.target.value })}
+                    options={['1', '3', '6', '12']}
+                    renderOptionLabel={(value) => ({
+                      1: 'Monthly Cycle',
+                      3: 'Every 3 Months',
+                      6: 'Every 6 Months',
+                      12: 'One Time In A Year',
+                    }[value] || `Every ${value} Months`)}
+                  />
+                  <InputField
+                    label="Amount Per Month"
+                    type="number"
+                    min="0"
+                    value={structureForm.amount}
+                    onChange={(e) => setStructureForm({ ...structureForm, amount: e.target.value })}
+                    placeholder={structureForm.feeType === 'facility_fee' ? '1200' : '5000'}
+                  />
+                  <InputField
+                    label="Due Date"
+                    type="date"
+                    value={structureForm.dueDate}
+                    onChange={(e) => setStructureForm({ ...structureForm, dueDate: e.target.value })}
+                  />
+                  <div className="md:col-span-2 xl:col-span-3">
+                    <PrimaryButton type="submit" icon={BadgeIndianRupee} label="Save Fee Setup" />
+                  </div>
+                </form>
+
+                <div>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h4 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Saved Fees Structure</h4>
+                      <p className="mt-1 text-sm leading-7 text-slate-500">Rows below are saved for this class, not separate sections.</p>
+                    </div>
+                    <div className="w-full sm:w-64">
+                      <SelectField
+                        label="Filter By Category"
+                        value={structureCategoryFilter}
+                        onChange={(e) => setStructureCategoryFilter(e.target.value)}
+                        options={['', ...selectedClassCategoryOptions]}
+                        renderOptionLabel={(value) => value || 'All Categories'}
+                      />
+                    </div>
+                  </div>
+
+                  <FeeStructureTable
+                    rows={selectedClassStructures}
+                    onDelete={(structure) => handleDelete('fee_structures', structure.id, 'Delete this fee structure?')}
+                  />
+                </div>
+              </div>
+            </Panel>
+          ) : (
+            <Panel className="mt-8" title="Select Class" description="Choose the class first. Fees are maintained class-wise, not section-wise.">
                 <div className="mt-6">
                   <SearchInput value={structureSearch} onChange={setStructureSearch} placeholder="Search class..." />
                 </div>
+                <form className="mt-4 flex flex-col gap-3 rounded-[1.4rem] border border-emerald-100 bg-emerald-50/60 p-4 sm:flex-row" onSubmit={handleAddManualClass}>
+                  <input
+                    value={manualClassName}
+                    onChange={(e) => setManualClassName(e.target.value)}
+                    placeholder="Add class/course manually"
+                    className="min-w-0 flex-1 rounded-2xl border-2 border-emerald-100 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                  />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white transition hover:bg-slate-950"
+                  >
+                    Add Class
+                  </button>
+                </form>
                 <div className="mt-6 grid gap-3">
-                  {filteredFeeClasses.map((className) => {
-                    const classStructures = structures.filter((structure) => structure.courseId === className);
+                  {filteredFeeClasses.length > 0 ? filteredFeeClasses.map((className) => {
+                    const classStructures = structures.filter((structure) => normalizeClassName(structure.courseId) === className);
                     const classTotal = classStructures.reduce((sum, structure) => sum + (Number(structure.amount) || 0), 0);
                     return (
                       <button
@@ -459,9 +745,9 @@ const FeeManagement = () => {
                         type="button"
                         onClick={() => {
                           setSelectedFeeClass(className);
+                          setCategoryWiseFees(false);
                           setStructureCategoryFilter('');
                           setStructureForm({ ...initialStructureForm, courseId: className });
-                          setPendingFeeComponents([]);
                         }}
                         className={`flex items-center justify-between gap-4 rounded-[1.4rem] border p-4 text-left transition hover:border-emerald-300 hover:bg-emerald-50/60 ${
                           selectedFeeClass === className ? 'border-emerald-400 bg-emerald-50 ring-4 ring-emerald-100' : 'border-slate-200 bg-slate-50'
@@ -478,232 +764,136 @@ const FeeManagement = () => {
                         </div>
                       </button>
                     );
-                  })}
+                  }) : (
+                    <div className="rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
+                      <p className="text-sm font-semibold text-slate-500">
+                        No classes found. Add a class/course above, then create its fee structure.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </Panel>
-            }
-            right={
-              <Panel
-                title={selectedFeeClass || 'Select A Class'}
-                description="Add the fee components for the selected class and review the total fee."
-              >
-                {selectedFeeClass ? (
-                  <div className="mt-8 space-y-8">
-                    <form className="grid gap-5 md:grid-cols-2" onSubmit={handleAddPendingFeeComponent}>
-                      <InputField label="Class" value={selectedFeeClass} readOnly />
-                      <SelectField label="Category" value={structureForm.category} onChange={(e) => setStructureForm({ ...structureForm, category: e.target.value })} options={['', 'General', 'OBC', 'SC', 'ST', 'EWS', 'Scholarship']} />
-                      <InputField label="Fee Component" value={structureForm.feeComponent} onChange={(e) => setStructureForm({ ...structureForm, feeComponent: e.target.value })} placeholder="Tuition / Library / Lab / Custom Fee" />
-                      <SelectField
-                        label="Billing Rule"
-                        value={structureForm.billingType}
-                        onChange={(e) => setStructureForm({ ...structureForm, billingType: e.target.value })}
-                        options={['cycle_based', 'monthly_active']}
-                        renderOptionLabel={(value) => {
-                          if (value === 'cycle_based') return 'Cycle Based Fee';
-                          if (value === 'monthly_active') return 'Monthly Active Service';
-                          return 'Select billing rule';
-                        }}
-                      />
-                      <InputField
-                        label="Month Cycle"
-                        type="number"
-                        min="1"
-                        max="12"
-                        value={structureForm.cycleMonths}
-                        onChange={(e) => setStructureForm({ ...structureForm, cycleMonths: e.target.value })}
-                        placeholder="3"
-                      />
-                      <InputField
-                        label={structureForm.billingType === 'monthly_active' ? 'Amount Per Month' : 'Amount For This Cycle'}
-                        type="number"
-                        min="0"
-                        value={structureForm.amount}
-                        onChange={(e) => setStructureForm({ ...structureForm, amount: e.target.value })}
-                        placeholder={structureForm.billingType === 'monthly_active' ? '3500' : '25000'}
-                      />
-                      <div className="md:col-span-2">
-                        <PrimaryButton type="submit" icon={BadgeIndianRupee} label="Add Fee Component" />
-                      </div>
-                    </form>
-                    <p className="-mt-2 text-sm leading-7 text-slate-500">
-                      Use `Cycle Based Fee` for tuition, lab, and other college charges. Use `Monthly Active Service` for hostel, transport, or library so only active months inside the April to March cycle are billed.
-                    </p>
-
-                    <div className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <h4 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Added Components</h4>
-                        <span className="rounded-2xl bg-white px-4 py-2 text-sm font-black text-emerald-800 shadow-sm">Total Rs {pendingFeeTotal}</span>
-                      </div>
-
-                      {pendingFeeComponents.length > 0 ? (
-                        <div className="mt-5 grid gap-3">
-                          {pendingFeeComponents.map((item) => (
-                            <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-sm">
-                              <div>
-                                <h5 className="font-black text-slate-950">{item.feeComponent}</h5>
-                                <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                                  {item.category} | {formatBillingType(item.billingType, item.feeComponent)} | {formatCycleLabel(item.cycleMonths)}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-sm font-black text-slate-800">Rs {item.amount}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemovePendingFeeComponent(item.id)}
-                                  className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                                >
-                                  <Trash2 size={18} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                          <PrimaryButton type="button" icon={BadgeIndianRupee} label="Save All Added Components" onClick={handleSavePendingFeeComponents} />
-                        </div>
-                      ) : (
-                        <div className="mt-5 rounded-2xl bg-white px-5 py-8 text-center text-sm font-semibold text-slate-500">No components added yet.</div>
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <h4 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Fees Of This Class</h4>
-                          <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                            {structureCategoryFilter ? `Showing ${structureCategoryFilter} components` : 'Showing all categories'}
-                          </p>
-                        </div>
-                        <span className="rounded-2xl bg-emerald-100 px-4 py-2 text-sm font-black text-emerald-800">
-                          Total Rs {selectedClassStructures.reduce((sum, structure) => sum + (Number(structure.amount) || 0), 0)}
-                        </span>
-                      </div>
-                      <div className="mt-5 max-w-xs">
-                        <SelectField
-                          label="Filter By Category"
-                          value={structureCategoryFilter}
-                          onChange={(e) => setStructureCategoryFilter(e.target.value)}
-                          options={['', ...selectedClassCategoryOptions]}
-                          renderOptionLabel={(value) => value || 'All Categories'}
-                        />
-                      </div>
-                      <div className="mt-5 grid gap-4">
-                        {selectedClassStructures.length > 0 ? (
-                          selectedClassStructures.map((structure) => (
-                            <RecordCard key={structure.id} icon={BadgeIndianRupee} title={structure.feeComponent} subtitle={structure.category}>
-                              <InfoPill icon={IndianRupee} text={resolveAmountLabel(structure)} />
-                              <InfoPill icon={CalendarClock} text={formatCycleLabel(structure.cycleMonths)} />
-                              <InfoPill icon={FileText} text={formatBillingType(structure.billingType, structure.feeComponent)} />
-                              <button onClick={() => handleDelete('fee_structures', structure.id, 'Delete this fee structure?')} className="ml-auto text-slate-400 transition hover:text-rose-600">
-                                <Trash2 size={18} />
-                              </button>
-                            </RecordCard>
-                          ))
-                        ) : (
-                          <div className="rounded-[1.8rem] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center">
-                            <h4 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">
-                              {structureCategoryFilter ? 'No fees found for this category' : 'No fees added'}
-                            </h4>
-                            <p className="mt-2 text-sm leading-7 text-slate-500">
-                              {structureCategoryFilter
-                                ? `No fee components are available under ${structureCategoryFilter} for ${selectedFeeClass}.`
-                                : `Add the first fee component for ${selectedFeeClass}.`}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-8 rounded-4xl border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center">
-                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
-                      <BadgeIndianRupee size={34} />
-                    </div>
-                    <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">Choose a class</h4>
-                    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">Click a class from the list to add and view that class fee structure.</p>
-                  </div>
-                )}
-              </Panel>
-            }
-          />
+            </Panel>
+          )
         ) : null}
 
         {activeSection === 'payments' ? (
-          <TwoColumnPage
-            left={
-              <Panel title="Collect Fee Payment" description="Capture transaction ID, gateway reference, mode, status, and paid amount.">
+          <Panel className="mt-8" title="Counter Fee Collection" description="Cash counter ke liye student select karo, payable amount verify karo, cash receive karo, aur receipt save karo.">
                 <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSavePayment}>
-                  <SelectField label="Student" value={paymentForm.studentId} onChange={(e) => handleStudentSelect(e.target.value)} options={['', ...studentOptions.map((student) => String(student.id))]} renderOptionLabel={(value) => studentLabel(value, studentOptions)} />
-                  {paymentPreview ? (
+                  <SelectField
+                    label="Class"
+                    value={paymentForm.className}
+                    onChange={(e) => handleCollectionClassSelect(e.target.value)}
+                    options={['', ...collectionClassOptions]}
+                    renderOptionLabel={(value) => value || 'Select class'}
+                  />
+                  <SelectField
+                    label="Section"
+                    value={paymentForm.section}
+                    onChange={(e) => handleCollectionSectionSelect(e.target.value)}
+                    options={['', ...collectionSectionOptions]}
+                    disabled={!paymentForm.className || collectionSectionOptions.length === 0}
+                    renderOptionLabel={(value) => {
+                      if (value) return value;
+                      if (!paymentForm.className) return 'Select class first';
+                      return collectionSectionOptions.length ? 'Select section' : 'No section found';
+                    }}
+                  />
+                  <div className="md:col-span-2">
+                    <SelectField
+                      label="Student Name"
+                      value={paymentForm.studentId}
+                      onChange={(e) => handleStudentSelect(e.target.value)}
+                      options={['', ...filteredCollectionStudents.map((student) => String(student.id))]}
+                      disabled={!canSelectCollectionStudent}
+                      renderOptionLabel={(value) => {
+                        if (!value && !paymentForm.className) return 'Select class first';
+                        if (!value && collectionSectionOptions.length > 0 && !paymentForm.section) return 'Select section first';
+                        return studentLabel(value, filteredCollectionStudents);
+                      }}
+                    />
+                  </div>
+                  {selectedPaymentStudent ? (
                     <div className="md:col-span-2 rounded-[1.8rem] border border-emerald-100 bg-emerald-50/70 p-4">
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <InfoPill icon={IndianRupee} text={`Current pending Rs ${selectedPaymentOutstandingTotal}`} />
-                        <InfoPill icon={CreditCard} text={`Entered Rs ${Number(paymentForm.paidAmount) || 0}`} />
-                        <InfoPill icon={ReceiptText} text={`Advance Rs ${paymentPreview.advanceAmount}`} />
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <InvoiceStat label="Previous Pending" value={formatMoney(selectedPaymentSummary.previousPending)} />
+                        <InvoiceStat label="College Fee" value={formatMoney(selectedPaymentSummary.collegeFee)} />
+                        <InvoiceStat label="Facilities" value={formatMoney(selectedPaymentSummary.facilityFee)} />
+                        <InvoiceStat label="Total Payable" value={formatMoney(selectedPaymentSummary.totalPayable)} strong />
                       </div>
-                      <p className="mt-4 text-sm leading-6 text-slate-600">
-                        Student ko fee component choose nahi karna padega. Amount automatically current due me adjust hoga, aur agar aap `Advance Next Cycle` choose karte hain to pura amount upcoming cycle ke advance me save hoga.
-                      </p>
-                      {paymentPreview.allocations.length ? (
-                        <div className="mt-5 grid gap-3">
-                          {paymentPreview.allocations.map((allocation, index) => (
-                            <div key={`${allocation.structureId}-${allocation.kind}-${index}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                  <p className="text-sm font-black text-slate-900">{allocation.feeComponent}</p>
-                                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">{allocation.kind}</p>
-                                </div>
-                                <div className="text-right">
-                                  <p className="text-sm font-black text-slate-950">Rs {allocation.amount}</p>
-                                  <p className="text-xs font-semibold text-slate-500">{allocation.note}</p>
-                                </div>
+                      <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <button
+                          type="button"
+                          onClick={() => setFeeSummaryOpen((open) => !open)}
+                          className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition hover:bg-slate-50"
+                        >
+                          <div>
+                            <h4 className="text-sm font-black text-slate-950">Simple Fee Summary</h4>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">Click to view cycle and facility usage.</p>
+                          </div>
+                          <ChevronDown className={`shrink-0 text-slate-400 transition ${feeSummaryOpen ? 'rotate-180 text-emerald-700' : ''}`} size={18} />
+                        </button>
+                        <div className="grid gap-2 px-4 pb-4">
+                          <SummaryLine label="College Fees" value={formatMoney(selectedPaymentSummary.collegeFee)} />
+                          {selectedPaymentSummary.facilityRows.map((row) => (
+                            <SummaryLine key={row.id} label={`${row.structure.feeComponent} Facility`} value={formatMoney(row.currentCycleDueAmount)} />
+                          ))}
+                          {selectedPaymentSummary.facilityRows.length === 0 ? (
+                            <SummaryLine label="Facility Fees" value={formatMoney(0)} />
+                          ) : null}
+                          <SummaryLine label="Previous Pending" value={formatMoney(selectedPaymentSummary.previousPending)} tone="danger" />
+                        </div>
+                        <div className={`grid transition-all duration-300 ease-out ${feeSummaryOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+                          <div className="overflow-hidden">
+                            <div className="mx-4 mb-4 mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <h5 className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Cycle Details</h5>
+                              <div className="mt-3 grid gap-2">
+                                <SummaryDetailLine label="College Fee" meta={resolveCycleDetailMeta(selectedPaymentSummary.collegeFee, selectedPaymentRows)} value={formatMoney(selectedPaymentSummary.collegeFee)} />
+                                {selectedPaymentSummary.facilityRows.map((row) => (
+                                  <SummaryDetailLine
+                                    key={row.id}
+                                    label={row.structure.feeComponent}
+                                    meta={`${row.serviceMonthsCount || row.currentCycleMonths?.length || 0} month${(row.serviceMonthsCount || row.currentCycleMonths?.length || 0) === 1 ? '' : 's'} used in ${row.currentCycleLabel}`}
+                                    value={formatMoney(row.currentCycleDueAmount)}
+                                  />
+                                ))}
+                                {selectedPaymentSummary.facilityRows.length === 0 ? (
+                                  <SummaryDetailLine label="Facilities" meta="No active facility usage in this cycle" value={formatMoney(0)} />
+                                ) : null}
                               </div>
                             </div>
-                          ))}
+                          </div>
                         </div>
-                      ) : (
-                        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-3 text-sm text-slate-500">
-                          Amount enter karne ke baad yahan automatic allocation preview dikhega.
-                        </div>
-                      )}
+                      </div>
                     </div>
                   ) : null}
-                  <InputField label="Transaction ID" value={paymentForm.transactionId} onChange={(e) => setPaymentForm({ ...paymentForm, transactionId: e.target.value })} placeholder="TXN-2026-001" />
-                  <InputField label="Payment Gateway Ref" value={paymentForm.gatewayRef} onChange={(e) => setPaymentForm({ ...paymentForm, gatewayRef: e.target.value })} placeholder="razorpay_abc123" />
-                  <SelectField label="Mode" value={paymentForm.mode} onChange={(e) => setPaymentForm({ ...paymentForm, mode: e.target.value })} options={['UPI', 'Card', 'Cash', 'Net Banking', 'Cheque']} />
-                  <SelectField label="Payment Status" value={paymentForm.paymentStatus} onChange={(e) => setPaymentForm({ ...paymentForm, paymentStatus: e.target.value })} options={['Success', 'Pending', 'Failed']} />
                   <SelectField
-                    label="Payment For"
-                    value={paymentForm.paymentTarget}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, paymentTarget: e.target.value })}
-                    options={['due_auto', 'advance_only']}
-                    renderOptionLabel={(value) => (
-                      {
-                        due_auto: 'Adjust In Pending Total',
-                        advance_only: 'Advance Next Cycle',
-                      }[value] || value
-                    )}
+                    label="Collection Mode"
+                    value={paymentForm.mode}
+                    onChange={(e) => setPaymentForm((current) => ({
+                      ...current,
+                      mode: e.target.value,
+                    }))}
+                    options={['Cash', 'UPI', 'Card', 'Net Banking', 'Cheque']}
                   />
-                  <InputField label="Paid Amount" type="number" min="0" value={paymentForm.paidAmount} onChange={(e) => setPaymentForm({ ...paymentForm, paidAmount: e.target.value })} placeholder="25000" />
-                  <InputField label="Payment Date" type="date" value={paymentForm.paymentDate} onChange={(e) => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })} />
+                  <InputField
+                    label="Amount To Collect"
+                    type="number"
+                    min="0"
+                    value={paymentForm.paidAmount}
+                    onChange={(e) => setPaymentForm((current) => ({
+                      ...current,
+                      paidAmount: e.target.value,
+                    }))}
+                    placeholder="25000"
+                  />
                   <div className="md:col-span-2">
-                    <PrimaryButton type="submit" icon={CreditCard} label="Save Payment And Receipt" />
+                    <PrimaryButton type="submit" icon={CreditCard} label="Tap To Collect" />
                   </div>
                 </form>
+                {selectedPaymentStudent ? (
+                  <PaymentHistoryTable rows={selectedPaymentHistory} />
+                ) : null}
               </Panel>
-            }
-            right={
-              <Panel title="Recent Payments" description="Latest financial transactions recorded for students.">
-                <div className="mt-6 grid gap-4">
-                  {receiptRows.slice(0, 8).map((receipt) => (
-                    <RecordCard key={receipt.id} icon={CreditCard} title={receipt.student?.name || 'Student pending'} subtitle={`${receipt.transactionId} | ${receipt.mode} | ${receipt.paymentStatus}`}>
-                      <InfoPill icon={IndianRupee} text={`Rs ${receipt.paidAmount}`} />
-                      <InfoPill icon={CalendarClock} text={resolveCoverageLabel(receipt)} />
-                      <InfoPill icon={ReceiptText} text={receipt.receiptNumber} />
-                    </RecordCard>
-                  ))}
-                </div>
-              </Panel>
-            }
-          />
         ) : null}
 
         {activeSection === 'receipts' ? (
@@ -749,10 +939,43 @@ const FeeManagement = () => {
   );
 };
 
-const replaceModuleRecords = (module, records) => {
-  const tenantId = db.getTenantId();
-  if (!tenantId) return;
-  localStorage.setItem(`${tenantId}_${module}`, JSON.stringify(records));
+const getStudentClassName = (student = {}) => (
+  normalizeClassName(student.assignedClass || student.className || '')
+);
+
+const getStudentSectionName = (student = {}) => {
+  if (student.section) return String(student.section).trim();
+  const assignedClassParts = String(student.assignedClass || '').split('/');
+  return assignedClassParts[1]?.trim() || '';
+};
+
+const normalizeClassName = (className = '') => String(className)
+  .split('/')
+  .at(0)
+  ?.replace(/\s+-\s+section\s+.+$/i, '')
+  .replace(/\s+section\s+.+$/i, '')
+  .trim() || '';
+
+const normalizeCategory = (category = '') => String(category || 'General').trim().toLowerCase();
+
+const isAllStudentsCategory = (category = '') => {
+  const normalizedCategory = normalizeCategory(category);
+  return !normalizedCategory || normalizedCategory === normalizeCategory(ALL_STUDENTS_CATEGORY) || normalizedCategory === 'all';
+};
+
+const isStructureCategoryApplicable = (structure = {}, student = {}) => {
+  if (isAllStudentsCategory(structure.category)) return true;
+  return normalizeCategory(structure.category) === normalizeCategory(student.category);
+};
+
+const resolveStructureComponentName = (structure = {}) => {
+  if (structure.feeType !== 'facility_fee') return 'College Fee';
+  return ({
+    transport: 'Transport',
+    hostel: 'Hostel',
+    library: 'Library',
+    other: 'Other Facility',
+  }[structure.facilityKey] || 'Facility Fee');
 };
 
 const compareClassNames = (a, b) => {
@@ -779,7 +1002,7 @@ const getClassSortValue = (className) => {
 
 const sectionTitle = (section) => ({
   structures: 'Fee Structure Setup',
-  payments: 'Fee Collection And Online Payment',
+  payments: 'Fee Counter Collection',
   receipts: 'Receipt Generation',
   dues: 'Due Fee Reports',
 }[section] || 'Fee Management');
@@ -798,22 +1021,68 @@ const structureLabel = (value, structures) => {
 
 const resolveAmountLabel = (structure) => {
   const amount = Number(structure.amount) || 0;
-  return resolveBillingType(structure) === 'monthly_active' ? `Rs ${amount} / month` : `Rs ${amount} / cycle`;
+  if (resolveBillingType(structure) === 'monthly_active') return `${formatMoney(amount)} / month`;
+  return `${formatMoney(amount)} / month, collected ${formatCycleLabel(structure.cycleMonths).toLowerCase()}`;
 };
 
-const MetricCard = ({ label, value, icon }) => (
-  <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-50/80">{label}</p>
-        <p className="mt-3 text-3xl font-black tracking-tight text-white">{value}</p>
-      </div>
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200/20 bg-emerald-200/10 text-emerald-50">
-        {React.createElement(icon, { size: 20 })}
-      </div>
-    </div>
-  </div>
-);
+const resolveCycleDetailMeta = (amount, rows = []) => {
+  if (!amount) return 'No college fee due in this cycle';
+  const collegeRow = rows.find((row) => row.structure?.feeType !== 'facility_fee');
+  return collegeRow?.currentCycleLabel || 'Current cycle';
+};
+
+const buildFeeCollectionNoticePayload = ({
+  student,
+  receiptNumber,
+  paidAmount,
+  balanceRemaining,
+  mode,
+  paymentDate,
+  summary,
+  rows,
+}) => {
+  const studentName = student?.name || student?.enrollmentNo || 'Student';
+  const cycleLabel = resolveCycleDetailMeta(summary.collegeFee, rows);
+  const cycleFee = (Number(summary.collegeFee) || 0) + (Number(summary.facilityFee) || 0);
+  const facilityLines = summary.facilityRows.length
+    ? summary.facilityRows.map((row) => {
+        const monthsUsed = row.serviceMonthsCount || row.currentCycleMonths?.length || 0;
+        return `- ${row.structure.feeComponent}: ${formatMoney(row.currentCycleDueAmount)} (${monthsUsed} month${monthsUsed === 1 ? '' : 's'} used)`;
+      })
+    : ['- No facility fee charged in this cycle'];
+
+  return {
+    title: `Fee received: ${formatMoney(paidAmount)}`,
+    category: 'Fee',
+    audience: 'Students',
+    targetClasses: [student.className || 'All'],
+    targetStudentId: student.id,
+    priority: balanceRemaining > 0 ? 'High' : 'Normal',
+    publishDate: paymentDate || getTodayKey(),
+    expireDate: null,
+    status: 'Published',
+    isPinned: false,
+    summary: `${studentName}, your fee payment of ${formatMoney(paidAmount)} has been received. Pending balance: ${formatMoney(balanceRemaining)}.`,
+    details: [
+      `Receipt No.: ${receiptNumber}`,
+      `Student: ${studentName}`,
+      `Class: ${student.className || '-'}`,
+      `Section: ${student.sectionName || '-'}`,
+      `Payment Date: ${paymentDate || getTodayKey()}`,
+      `Payment Mode: ${mode || 'Cash'}`,
+      '',
+      `Month/Cycle: ${cycleLabel}`,
+      `Cycle Fee: ${formatMoney(cycleFee)}`,
+      `College Fee: ${formatMoney(summary.collegeFee)}`,
+      `Facilities Fee: ${formatMoney(summary.facilityFee)}`,
+      ...facilityLines,
+      '',
+      `Previous Pending: ${formatMoney(summary.previousPending)}`,
+      `Amount Deposited: ${formatMoney(paidAmount)}`,
+      `Remaining Pending: ${formatMoney(balanceRemaining)}`,
+    ].join('\n'),
+  };
+};
 
 const ActionCard = ({ icon, title, text, onClick }) => (
   <button
@@ -920,6 +1189,143 @@ const InfoPill = ({ icon, text }) => (
   <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
     {React.createElement(icon, { size: 15, className: 'text-emerald-700' })}
     <span>{text}</span>
+  </div>
+);
+
+const FeeStructureTable = ({ rows, onDelete }) => (
+  <div className="mt-5 overflow-hidden rounded-[1.4rem] border border-slate-200 bg-white">
+    {rows.length ? (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Category</th>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Type</th>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Fee</th>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Monthly Amount</th>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Cycle</th>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Billing</th>
+              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Due Date</th>
+              <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((structure) => (
+              <tr key={structure.id} className="hover:bg-emerald-50/40">
+                <td className="px-4 py-4 font-bold text-slate-900">{structure.category || '-'}</td>
+                <td className="px-4 py-4 text-slate-600">{formatFeeType(structure.feeType)}</td>
+                <td className="px-4 py-4 font-bold text-slate-900">{structure.feeComponent || '-'}</td>
+                <td className="px-4 py-4 font-black text-slate-950">{formatMoney(structure.amount)}</td>
+                <td className="px-4 py-4 text-slate-600">{formatCycleLabel(structure.cycleMonths)}</td>
+                <td className="px-4 py-4 text-slate-600">{formatBillingType(structure.billingType, structure.feeComponent)}</td>
+                <td className="px-4 py-4 text-slate-600">{structure.dueDate || '-'}</td>
+                <td className="px-4 py-4 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(structure)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    aria-label="Delete fee structure"
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="px-6 py-12 text-center">
+        <h4 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">No fees added</h4>
+        <p className="mt-2 text-sm leading-7 text-slate-500">Save the first fee setup for this class.</p>
+      </div>
+    )}
+  </div>
+);
+
+const InvoiceStat = ({ label, value, strong = false, tone = 'default' }) => {
+  const toneClass = {
+    danger: 'border-rose-200 bg-rose-50 text-rose-700',
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    default: 'border-slate-200 bg-white text-slate-950',
+  }[tone] || 'border-slate-200 bg-white text-slate-950';
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className={`${strong ? 'text-2xl' : 'text-xl'} mt-1 font-black tracking-tight`}>{value}</p>
+    </div>
+  );
+};
+
+const SummaryLine = ({ label, value, strong = false, tone = 'default' }) => {
+  const toneClass = {
+    danger: 'text-rose-600',
+    default: 'text-slate-950',
+  }[tone] || 'text-slate-950';
+
+  return (
+    <div className={`flex items-center justify-between gap-4 rounded-2xl px-4 py-3 ${strong ? 'bg-slate-950 text-white' : 'bg-slate-50'}`}>
+      <span className={`text-sm ${strong ? 'font-black' : 'font-semibold text-slate-600'}`}>{label}</span>
+      <span className={`text-base font-black ${strong ? 'text-white' : toneClass}`}>{value}</span>
+    </div>
+  );
+};
+
+const SummaryDetailLine = ({ label, meta, value }) => (
+  <div className="flex flex-col gap-2 rounded-2xl bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <p className="text-sm font-black text-slate-900">{label}</p>
+      <p className="mt-1 text-xs font-semibold text-slate-500">{meta}</p>
+    </div>
+    <p className="text-sm font-black text-slate-950">{value}</p>
+  </div>
+);
+
+const PaymentHistoryTable = ({ rows }) => (
+  <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <h4 className="text-sm font-black text-slate-950">Payment History</h4>
+      <p className="mt-1 text-xs font-semibold text-slate-500">Student ne kab-kab fees jama ki, mode chahe counter cash/card ho ya online.</p>
+    </div>
+    {rows.length ? (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+          <thead className="bg-white">
+            <tr>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Date</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Receipt</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Mode</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Status</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Notice</th>
+              <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Amount</th>
+              <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Balance</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((receipt) => (
+              <tr key={receipt.id} className="hover:bg-emerald-50/40">
+                <td className="px-4 py-4 font-semibold text-slate-700">{receipt.paymentDate || '-'}</td>
+                <td className="px-4 py-4 font-black text-slate-900">{receipt.receiptNumber || receipt.transactionId || '-'}</td>
+                <td className="px-4 py-4 text-slate-600">{receipt.mode || '-'}</td>
+                <td className="px-4 py-4 text-slate-600">{receipt.paymentStatus || '-'}</td>
+                <td className="px-4 py-4">
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${receipt.noticeSent ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {receipt.noticeSent ? 'Notice Sent' : 'Pending'}
+                  </span>
+                </td>
+                <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(receipt.paidAmount)}</td>
+                <td className="px-4 py-4 text-right font-semibold text-slate-600">{formatMoney(receipt.balanceRemaining)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="px-4 py-8 text-center text-sm font-semibold text-slate-500">
+        Is student ki payment history abhi empty hai.
+      </div>
+    )}
   </div>
 );
 

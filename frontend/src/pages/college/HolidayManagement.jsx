@@ -9,14 +9,18 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { db } from '../../utils/db';
+import { holidayApi, studentApi } from '../../utils/api';
 
-const today = new Date().toISOString().split('T')[0];
+const today = getLocalDateKey();
+const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
+const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
 
 const initialHolidayForm = {
   title: '',
   holidayDate: today,
   holidayType: 'Public Holiday',
+  audience: 'All',
+  targetClasses: ['All'],
   notes: '',
 };
 
@@ -24,9 +28,11 @@ const HolidayManagement = () => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
   const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
-  const [holidays, setHolidays] = useState(() => db.getAll('holiday_calendar'));
+  const [holidays, setHolidays] = useState([]);
+  const [students, setStudents] = useState([]);
   const [holidayForm, setHolidayForm] = useState(initialHolidayForm);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (!session || session.role !== 'admin' || !collegeId) {
@@ -37,9 +43,30 @@ const HolidayManagement = () => {
     refreshData();
   }, [collegeId, navigate, session]);
 
-  const refreshData = () => {
-    setHolidays(db.getAll('holiday_calendar'));
+  const refreshData = async () => {
+    try {
+      const [holidayRecords, studentRecords] = await Promise.all([
+        holidayApi.getAll(),
+        studentApi.getAll(),
+      ]);
+      setHolidays(holidayRecords);
+      setStudents(studentRecords);
+      setLoadError('');
+    } catch (error) {
+      setHolidays([]);
+      setStudents([]);
+      setLoadError(error.message || 'Unable to load holidays.');
+    }
   };
+
+  const classOptions = useMemo(() => {
+    const classSet = new Set();
+    students.forEach((student) => {
+      const className = getStudentBaseClass(student);
+      if (className) classSet.add(className);
+    });
+    return [...classSet].sort((first, second) => first.localeCompare(second));
+  }, [students]);
 
   const filteredHolidays = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -50,18 +77,24 @@ const HolidayManagement = () => {
         return (
           String(holiday.title || '').toLowerCase().includes(query) ||
           String(holiday.holidayType || '').toLowerCase().includes(query) ||
+          String(holiday.audience || '').toLowerCase().includes(query) ||
           String(holiday.notes || '').toLowerCase().includes(query) ||
           String(holiday.holidayDate || '').toLowerCase().includes(query)
         );
       })
-      .sort((a, b) => new Date(a.holidayDate).getTime() - new Date(b.holidayDate).getTime());
+      .sort((a, b) => {
+        const dateA = getHolidaySortTime(a);
+        const dateB = getHolidaySortTime(b);
+        if (dateA !== dateB) return dateB - dateA;
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
   }, [holidays, searchTerm]);
 
   const upcomingHolidays = filteredHolidays.filter((holiday) => holiday.holidayDate >= today);
   const pastHolidays = filteredHolidays.filter((holiday) => holiday.holidayDate < today);
   const nextHoliday = upcomingHolidays[0] || null;
 
-  const handleSaveHoliday = (e) => {
+  const handleSaveHoliday = async (e) => {
     e.preventDefault();
 
     const title = holidayForm.title.trim();
@@ -70,27 +103,68 @@ const HolidayManagement = () => {
 
     if (!title || !holidayDate) return;
 
-    db.save('holiday_calendar', {
-      title,
-      holidayDate,
-      holidayType: holidayForm.holidayType,
-      notes,
-    });
+    try {
+      await holidayApi.create({
+        title,
+        holidayDate,
+        holidayType: holidayForm.holidayType,
+        audience: holidayForm.audience,
+        targetClasses: holidayForm.audience === 'Students' ? holidayForm.targetClasses : ['All'],
+        notes,
+      });
 
-    setHolidayForm({
-      ...initialHolidayForm,
-      holidayDate,
-    });
-    refreshData();
+      notifyHolidayNoticeUpdate();
+      setHolidayForm({
+        ...initialHolidayForm,
+        holidayDate,
+      });
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to save holiday.');
+    }
   };
 
-  const handleDeleteHoliday = (holidayId) => {
+  const handleDeleteHoliday = async (holidayId) => {
     if (!window.confirm('Delete this holiday entry?')) return;
-    db.replaceAll(
-      'holiday_calendar',
-      db.getAll('holiday_calendar').filter((holiday) => String(holiday.id) !== String(holidayId)),
-    );
-    refreshData();
+    try {
+      await holidayApi.delete(holidayId);
+      notifyHolidayNoticeUpdate();
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to delete holiday.');
+    }
+  };
+
+  const handleAudienceChange = (audience) => {
+    setHolidayForm((current) => ({
+      ...current,
+      audience,
+      targetClasses: ['All'],
+    }));
+  };
+
+  const handleTargetClassToggle = (className) => {
+    setHolidayForm((current) => {
+      if (className === 'All') {
+        return {
+          ...current,
+          targetClasses: ['All'],
+        };
+      }
+
+      const currentClasses = current.targetClasses.filter((value) => value !== 'All');
+      const isSelected = currentClasses.includes(className);
+      const nextClasses = isSelected
+        ? currentClasses.filter((value) => value !== className)
+        : [...currentClasses, className];
+
+      return {
+        ...current,
+        targetClasses: nextClasses.length ? nextClasses : ['All'],
+      };
+    });
   };
 
   return (
@@ -114,6 +188,11 @@ const HolidayManagement = () => {
       </div>
 
       <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
+        {loadError ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {loadError}
+          </div>
+        ) : null}
         <section className="overflow-hidden rounded-4xl border border-orange-200/70 bg-[linear-gradient(140deg,#9a3412_0%,#ea580c_52%,#fb923c_100%)] text-white shadow-[0_30px_80px_-40px_rgba(154,52,18,0.85)]">
           <div className="grid gap-8 px-7 py-8 lg:grid-cols-[1.3fr_1fr] lg:px-10 lg:py-10">
             <div>
@@ -163,7 +242,7 @@ const HolidayManagement = () => {
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div>
                   <label className="mb-2 block text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
                     Holiday Date
@@ -192,7 +271,45 @@ const HolidayManagement = () => {
                     <option>Emergency Closure</option>
                   </select>
                 </div>
+
+                <div>
+                  <label className="mb-2 block text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                    Send Notice To
+                  </label>
+                  <select
+                    value={holidayForm.audience}
+                    onChange={(e) => handleAudienceChange(e.target.value)}
+                    className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-100"
+                  >
+                    <option>All</option>
+                    <option>Students</option>
+                    <option>Teachers</option>
+                  </select>
+                </div>
               </div>
+
+              {holidayForm.audience === 'Students' ? (
+                <div>
+                  <label className="mb-2 block text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                    Class Name
+                  </label>
+                  <div className="grid gap-3 rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-900 focus-within:border-orange-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-orange-100 md:grid-cols-2 lg:grid-cols-3">
+                    <ClassCheckOption
+                      label="All"
+                      checked={holidayForm.targetClasses.includes('All')}
+                      onChange={() => handleTargetClassToggle('All')}
+                    />
+                    {classOptions.map((className) => (
+                      <ClassCheckOption
+                        key={className}
+                        label={className}
+                        checked={!holidayForm.targetClasses.includes('All') && holidayForm.targetClasses.includes(className)}
+                        onChange={() => handleTargetClassToggle(className)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div>
                 <label className="mb-2 block text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
@@ -258,6 +375,12 @@ const HolidayManagement = () => {
                           Type
                         </th>
                         <th className="border-b border-r border-slate-200 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                          Notice Sent To
+                        </th>
+                        <th className="border-b border-r border-slate-200 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                          Classes
+                        </th>
+                        <th className="border-b border-r border-slate-200 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
                           Status
                         </th>
                         <th className="border-b border-r border-slate-200 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
@@ -285,6 +408,12 @@ const HolidayManagement = () => {
                           </td>
                           <td className="border-b border-r border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">
                             {holiday.holidayType || 'Holiday'}
+                          </td>
+                          <td className="border-b border-r border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">
+                            {holiday.audience || 'All'}
+                          </td>
+                          <td className="border-b border-r border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">
+                            {getHolidayClassLabel(holiday)}
                           </td>
                           <td className="border-b border-r border-slate-200 px-4 py-3">
                             <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
@@ -339,6 +468,31 @@ const HolidayStat = ({ label, value, icon: Icon }) => (
   </div>
 );
 
+const ClassCheckOption = ({ label, checked, onChange }) => (
+  <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 transition hover:border-orange-200 hover:bg-orange-50">
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      className="h-4 w-4 rounded border-slate-300 text-orange-600 accent-orange-600 focus:ring-orange-500"
+    />
+    <span className="text-sm font-bold text-slate-700">{label}</span>
+  </label>
+);
+
+function getLocalDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getStudentBaseClass(student) {
+  const className = String(student.className || '').trim();
+  if (className) return className;
+  return String(student.assignedClass || '').split('/')[0]?.trim() || '';
+}
+
 function formatLongDate(value) {
   if (!value) return 'Date not available';
   const parsedDate = new Date(`${value}T00:00:00`);
@@ -359,6 +513,27 @@ function formatShortDate(value) {
     day: 'numeric',
     month: 'short',
   });
+}
+
+function getHolidayClassLabel(holiday) {
+  if (holiday.audience !== 'Students') return 'All';
+  if (Array.isArray(holiday.targetClasses) && holiday.targetClasses.length) {
+    return holiday.targetClasses.join(', ');
+  }
+  if (holiday.targetClasses) return String(holiday.targetClasses);
+  return 'All';
+}
+
+function getHolidaySortTime(holiday) {
+  const dateValue = holiday.updatedAt || holiday.createdAt || holiday.holidayDate || 0;
+  const parsedTime = new Date(dateValue).getTime();
+  return Number.isNaN(parsedTime) ? 0 : parsedTime;
+}
+
+function notifyHolidayNoticeUpdate() {
+  const eventValue = String(Date.now());
+  localStorage.setItem(HOLIDAY_NOTICE_STORAGE_KEY, eventValue);
+  window.dispatchEvent(new CustomEvent(HOLIDAY_NOTICE_EVENT, { detail: eventValue }));
 }
 
 export default HolidayManagement;

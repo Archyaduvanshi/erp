@@ -234,6 +234,37 @@ export const courseBookApi = {
     })),
 };
 
+export const feeApi = {
+  getClasses: () => request('/fees/classes', withInstituteHeaders()),
+
+  getStructures: () => request('/fees/structures', withInstituteHeaders()),
+
+  saveStructure: (payload) =>
+    request('/fees/structures', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  deleteStructure: (id) =>
+    request(`/fees/structures/${id}`, withInstituteHeaders({
+      method: 'DELETE',
+    })),
+
+  getPayments: (studentId) =>
+    request(`/fees/payments${studentId ? `?studentId=${encodeURIComponent(studentId)}` : ''}`, withInstituteHeaders()),
+
+  savePayment: (payload) =>
+    request('/fees/payments', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  deletePayment: (id) =>
+    request(`/fees/payments/${id}`, withInstituteHeaders({
+      method: 'DELETE',
+    })),
+};
+
 export const timetableApi = {
   getClassTimetables: () => request('/timetables/classes', withInstituteHeaders()),
 
@@ -260,6 +291,19 @@ export const timetableApi = {
     request(`/timetables/template-drafts/${id}`, withInstituteHeaders({
       method: 'DELETE',
     })),
+};
+
+export const uploadApi = {
+  uploadFile: (file, folder = '/erp/uploads') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('folder', folder);
+
+    return request('/uploads/imagekit', withInstituteHeaders({
+      method: 'POST',
+      body: formData,
+    }));
+  },
 };
 
 export const examApi = {
@@ -315,6 +359,66 @@ export const attendanceApi = {
 
   deleteRecord: (id) =>
     request(`/attendance/${id}`, withInstituteHeaders({
+      method: 'DELETE',
+    })),
+};
+
+export const marksApi = {
+  getAll: (className, subjectName) => {
+    const params = new URLSearchParams();
+    if (className) params.set('className', className);
+    if (subjectName) params.set('subjectName', subjectName);
+    const query = params.toString();
+    return request(`/marks${query ? `?${query}` : ''}`, withInstituteHeaders());
+  },
+
+  saveRegister: (payload) =>
+    request('/marks/register', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  getExamRenames: () => request('/marks/exam-renames', withInstituteHeaders()),
+
+  renameExam: (payload) =>
+    request('/marks/exam-renames', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+};
+
+export const noticeApi = {
+  getAll: () => request('/notices', withInstituteHeaders()),
+
+  create: (payload) =>
+    request('/notices', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  update: (id, payload) =>
+    request(`/notices/${id}`, withInstituteHeaders({
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })),
+
+  delete: (id) =>
+    request(`/notices/${id}`, withInstituteHeaders({
+      method: 'DELETE',
+    })),
+};
+
+export const holidayApi = {
+  getAll: () => request('/holidays', withInstituteHeaders()),
+
+  create: (payload) =>
+    request('/holidays', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  delete: (id) =>
+    request(`/holidays/${id}`, withInstituteHeaders({
       method: 'DELETE',
     })),
 };

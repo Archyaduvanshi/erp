@@ -6,16 +6,23 @@ import {
   BookOpen,
   CalendarDays,
   CheckCircle2,
+  ClipboardPenLine,
   FileText,
   GraduationCap,
   LogOut,
+  Megaphone,
+  Pin,
   Settings,
   Shield,
   UserRound,
 } from 'lucide-react';
 import { db } from '../../utils/db';
-import { attendanceApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { attendanceApi, holidayApi, noticeApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
 import { getCurrentMonthSalaryStatus, normalizeTeacherSalary } from '../../utils/salaryUtils';
+import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
+
+const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
+const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
 
 const TeacherDashboard = () => {
   const navigate = useNavigate();
@@ -25,6 +32,8 @@ const TeacherDashboard = () => {
   const [classTimetables, setClassTimetables] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [examSlots] = useState(() => db.getAll('timetable_exam_slots'));
+  const [notices, setNotices] = useState([]);
+  const [holidays, setHolidays] = useState([]);
   const [loadError, setLoadError] = useState('');
 
   const teacher = useMemo(() => {
@@ -38,6 +47,7 @@ const TeacherDashboard = () => {
     : 'Teacher';
 
   const teachingClasses = useMemo(() => deriveTeacherClassesFromTimetables(classTimetables, teacher), [classTimetables, teacher]);
+  const teacherSubjectsByClass = useMemo(() => deriveTeacherSubjectsByClass(classTimetables, teacher), [classTimetables, teacher]);
 
   const assignedStudents = useMemo(() => {
     if (!teachingClasses.length) return [];
@@ -45,9 +55,14 @@ const TeacherDashboard = () => {
   }, [students, teachingClasses]);
 
   const teacherAttendance = useMemo(() => {
-    if (!teacherName) return [];
-    return attendanceRecords.filter((record) => record.markedBy === teacherName);
-  }, [attendanceRecords, teacherName]);
+    if (!teachingClasses.length) return [];
+    return attendanceRecords
+      .filter((record) => teachingClasses.includes(record.className))
+      .filter((record) => {
+        const allowedSubjects = teacherSubjectsByClass[record.className] || [];
+        return allowedSubjects.some((subjectName) => normalizeTeacherValue(subjectName) === normalizeTeacherValue(record.subject));
+      });
+  }, [attendanceRecords, teacherSubjectsByClass, teachingClasses]);
 
   const teacherExamDuty = useMemo(() => {
     if (!teacherName) return [];
@@ -58,6 +73,7 @@ const TeacherDashboard = () => {
   const todayAttendanceCount = teacherAttendance.filter((record) => record.date === today).length;
   const upcomingExamCount = teacherExamDuty.filter((slot) => slot.examDate >= today).length;
   const currentSalaryStatus = getCurrentMonthSalaryStatus(teacher);
+  const portalNotices = useMemo(() => getPortalNotices(notices, 'teacher', '', holidays), [holidays, notices]);
 
   const handleLogout = () => {
     localStorage.removeItem('active_session');
@@ -74,22 +90,28 @@ const TeacherDashboard = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse] = await Promise.all([
+        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse, noticeResponse, holidayResponse] = await Promise.all([
           teacherApi.getAll(),
           studentApi.getAll(),
           timetableApi.getClassTimetables(),
           attendanceApi.getAll(),
+          noticeApi.getAll(),
+          holidayApi.getAll(),
         ]);
         setTeachers(teacherResponse);
         setStudents(studentResponse);
         setClassTimetables(timetableResponse);
         setAttendanceRecords(attendanceResponse);
+        setNotices(noticeResponse);
+        setHolidays(holidayResponse);
         setLoadError('');
       } catch (error) {
         setTeachers([]);
         setStudents([]);
         setClassTimetables([]);
         setAttendanceRecords([]);
+        setNotices([]);
+        setHolidays([]);
         setLoadError(error.message || 'Unable to load dashboard data.');
       }
     };
@@ -97,6 +119,36 @@ const TeacherDashboard = () => {
     if (session?.role === 'teacher') {
       loadData();
     }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || session.role !== 'teacher') return undefined;
+
+    let isMounted = true;
+    const refreshHolidays = async () => {
+      try {
+        const holidayResponse = await holidayApi.getAll();
+        if (isMounted) setHolidays(holidayResponse);
+      } catch {
+        // Keep the last good holiday list if a background refresh fails.
+      }
+    };
+    const handleStorage = (event) => {
+      if (event.key === HOLIDAY_NOTICE_STORAGE_KEY) refreshHolidays();
+    };
+
+    window.addEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('focus', refreshHolidays);
+    const intervalId = window.setInterval(refreshHolidays, 10000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', refreshHolidays);
+      window.clearInterval(intervalId);
+    };
   }, [session]);
 
   if (!session || session.role !== 'teacher') return null;
@@ -170,11 +222,16 @@ const TeacherDashboard = () => {
               <MetricCard label="Exam Duty" value={upcomingExamCount} icon={Shield} />
               <MetricCard label="Students In Class" value={assignedStudents.length} icon={CalendarDays} />
               <MetricCard label="Salary This Month" value={currentSalaryStatus?.isPaid ? 'Paid' : 'Pending'} icon={Banknote} />
+              <MetricCard label="Notices" value={portalNotices.length} icon={Megaphone} />
             </div>
           </div>
         </section>
 
         <section className="mb-12 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-10 lg:grid-cols-3">
+          <NoticeSummaryCard
+            notices={portalNotices}
+            onClick={() => navigate('/teacher/notices')}
+          />
           <ModuleCard
             icon={<CalendarDays className="text-emerald-700" size={42} />}
             title="Attendance"
@@ -192,6 +249,12 @@ const TeacherDashboard = () => {
             title="Examinations"
             desc="Review exam duty, datesheets, question papers, and classroom invigilation work."
             onClick={() => navigate('/teacher/examinations')}
+          />
+          <ModuleCard
+            icon={<ClipboardPenLine className="text-amber-700" size={42} />}
+            title="Marks"
+            desc="Open your assigned classes, choose a subject, and upload marks for conducted exams."
+            onClick={() => navigate('/teacher/marks')}
           />
           <ModuleCard
             icon={<UserRound className="text-teal-700" size={42} />}
@@ -225,6 +288,28 @@ const MetricCard = ({ label, value, icon }) => (
   </div>
 );
 
+const NoticeSummaryCard = ({ notices, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="group flex w-full flex-col rounded-4xl border border-emerald-100 bg-white p-8 text-left shadow-xl shadow-emerald-100/50 transition-all duration-300 hover:-translate-y-3 hover:scale-105 hover:shadow-2xl md:rounded-[2.5rem] md:p-10"
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700 transition group-hover:bg-emerald-600 group-hover:text-white">
+        <Megaphone size={26} />
+      </div>
+      <span className="rounded-full bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white">
+        {notices.length} Live
+      </span>
+    </div>
+    <h3 className="mt-6 text-2xl font-black tracking-tight text-slate-900">Notice</h3>
+    <p className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-600">
+      {notices[0]?.title || 'College se published notice aate hi yahan show hoga.'}
+    </p>
+    <span className="mt-6 text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">Open Notice Board</span>
+  </button>
+);
+
 const ModuleCard = ({ icon, title, desc, onClick }) => (
   <button
     onClick={onClick}
@@ -256,6 +341,31 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   });
 
   return [...classSet];
+};
+
+const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
+  if (!teacher) return {};
+
+  const teacherKeys = buildTeacherIdentityKeys(teacher);
+  return classTimetables.reduce((accumulator, record) => {
+    const template = readTeacherTimetableTemplate(record);
+    if (!record?.className || !template?.rows?.length) return accumulator;
+
+    const subjectSet = new Set();
+    template.rows.forEach((row) => {
+      (row.slots || []).forEach((slot) => {
+        if (!slotMatchesTeacher(slot, teacherKeys)) return;
+        const subjectName = String(slot?.subjectName || '').trim();
+        if (subjectName) subjectSet.add(subjectName);
+      });
+    });
+
+    if (subjectSet.size) {
+      accumulator[record.className] = [...subjectSet].sort((left, right) => left.localeCompare(right));
+    }
+
+    return accumulator;
+  }, {});
 };
 
 const readTeacherTimetableTemplate = (record) => {
@@ -367,5 +477,7 @@ const slotMatchesTeacher = (slot, teacherKeys) => {
   const teacherValue = String(slot?.teacherName || '').trim().toLowerCase();
   return Boolean(teacherValue) && teacherKeys.some((key) => key === teacherValue);
 };
+
+const normalizeTeacherValue = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 export default TeacherDashboard;

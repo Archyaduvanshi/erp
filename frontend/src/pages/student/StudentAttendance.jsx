@@ -7,15 +7,15 @@ import {
   Clock3,
   Search,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { attendanceApi, studentApi } from '../../utils/api';
+import { attendanceApi, holidayApi, studentApi } from '../../utils/api';
+import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 
 const StudentAttendance = () => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
   const [student, setStudent] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [holidays, setHolidays] = useState(() => db.getAll('holiday_calendar'));
+  const [holidays, setHolidays] = useState([]);
   const [searchValue, setSearchValue] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [loadError, setLoadError] = useState('');
@@ -142,17 +142,22 @@ const StudentAttendance = () => {
 
     const loadData = async () => {
       try {
-        const [studentResponse, attendanceResponse] = await Promise.all([
+        const [studentResponse, attendanceResponse, holidayResponse] = await Promise.all([
           studentApi.getById(session.studentId),
           attendanceApi.getAll(),
+          holidayApi.getAll(),
         ]);
         setStudent(studentResponse);
         setAttendanceRecords(attendanceResponse);
-        setHolidays(db.getAll('holiday_calendar'));
+        setHolidays(holidayResponse.filter((holiday) => holidayAppliesToStudentClass(
+          holiday,
+          studentResponse.assignedClass || studentResponse.className,
+        )));
         setLoadError('');
       } catch (error) {
         setStudent(null);
         setAttendanceRecords([]);
+        setHolidays([]);
         setLoadError(error.message || 'Unable to load attendance data.');
       }
     };

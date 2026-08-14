@@ -1,8 +1,9 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import './index.css';
 
 import LandingPage from './components/LandingPage';
+import ComingSoonPage from './components/ComingSoonPage';
 import RegisterInstitute from './pages/RegisterInstitute';
 import Dashboard from './pages/college/Dashboard';
 import Login from './pages/Login';
@@ -21,6 +22,7 @@ import TeacherManagement from './pages/college/TeacherManagement';
 import TeacherDashboard from './pages/teacher/TeacherDashboard';
 import TeacherAttendance from './pages/teacher/Attendance';
 import TeacherExaminations from './pages/teacher/Examinations';
+import TeacherMarks from './pages/teacher/Marks';
 import TeacherProfile from './pages/teacher/TeacherProfile';
 import TeacherSalary from './pages/teacher/TeacherSalary';
 import TeacherTimetable from './pages/teacher/Timetable';
@@ -33,6 +35,8 @@ import FeeManagement from './pages/college/FeeManagement';
 import TimetableManagement from './pages/college/TimetableManagement';
 import SalaryManagement from './pages/college/SalaryManagement';
 import HolidayManagement from './pages/college/HolidayManagement';
+import NoticeManagement from './pages/college/NoticeManagement';
+import PortalNotices from './pages/portal/PortalNotices';
 
 function App() {
   return (
@@ -58,6 +62,10 @@ function App() {
         <Route path="/college/salary/:teacherId" element={<SalaryManagement />} />
         <Route path="/college/timetable" element={<TimetableManagement />} />
         <Route path="/college/holidays" element={<HolidayManagement />} />
+        <Route path="/college/notices" element={<NoticeManagement />} />
+        <Route path="/college/reports" element={<ComingSoonPage />} />
+        <Route path="/college/settings" element={<ComingSoonPage />} />
+        <Route path="/college/*" element={<ComingSoonPage />} />
         <Route path="/student" element={<StudentDashboard />} />
         <Route path="/student/attendance" element={<StudentAttendance />} />
         <Route path="/student/examinations" element={<StudentExaminations />} />
@@ -67,15 +75,23 @@ function App() {
         <Route path="/student/profile" element={<StudentProfile />} />
         <Route path="/student/timetable" element={<StudentTimetable />} />
         <Route path="/student/transport" element={<StudentTransport />} />
+        <Route path="/student/notices" element={<PortalNotices role="student" />} />
+        <Route path="/student/*" element={<ComingSoonPage />} />
         <Route path="/teacher" element={<TeacherDashboard />} />
         <Route path="/teacher/attendance" element={<TeacherAttendance />} />
         <Route path="/teacher/examinations" element={<TeacherExaminations />} />
+        <Route path="/teacher/marks" element={<TeacherMarks />} />
+        <Route path="/teacher/mark" element={<TeacherMarks />} />
+        <Route path="/teacher/jmarks" element={<TeacherMarks />} />
+        <Route path="/teacher/Marks" element={<TeacherMarks />} />
         <Route path="/teacher/profile" element={<TeacherProfile />} />
         <Route path="/teacher/salary" element={<TeacherSalary />} />
         <Route path="/teacher/timetable" element={<TeacherTimetable />} />
+        <Route path="/teacher/notices" element={<PortalNotices role="teacher" />} />
+        <Route path="/teacher/*" element={<ComingSoonPage />} />
 
-        {/* Fallback Redirect */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Fallback for modules that are not wired yet */}
+        <Route path="*" element={<ComingSoonPage backTo="/" backLabel="Back To Home" />} />
       </Routes>
     </Router>
   );

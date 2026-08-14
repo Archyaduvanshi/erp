@@ -15,7 +15,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { examApi, studentApi, teacherApi } from '../../utils/api';
+import { examApi, studentApi, teacherApi, uploadApi } from '../../utils/api';
 
 const initialDateSheetForm = {
   className: '',
@@ -229,20 +229,22 @@ const ExaminationManagement = () => {
     }, {})
   ), [filteredDateSheets]);
 
-  const handleDateSheetBrowse = (e) => {
+  const handleDateSheetBrowse = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
+    try {
+      const uploadedFile = await uploadApi.uploadFile(file, '/erp/examinations/date-sheets');
       setDateSheetForm((current) => ({
         ...current,
-        fileName: file.name,
-        fileData: String(reader.result || ''),
-        fileType: file.type || 'application/octet-stream',
+        fileName: uploadedFile.name || file.name,
+        fileData: uploadedFile.url,
+        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
       }));
-    };
-    reader.readAsDataURL(file);
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to upload date sheet to ImageKit.');
+    }
   };
 
   const handleOpenDateSheetClass = (className) => {
