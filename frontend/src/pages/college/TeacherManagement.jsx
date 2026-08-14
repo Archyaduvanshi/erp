@@ -77,6 +77,8 @@ const TeacherManagement = () => {
   const [formError, setFormError] = useState('');
   const [pendingDocument, setPendingDocument] = useState(null);
   const [pendingDetailDocument, setPendingDetailDocument] = useState(null);
+  const [pendingPhotoFile, setPendingPhotoFile] = useState(null);
+  const [pendingDetailPhotoFile, setPendingDetailPhotoFile] = useState(null);
 
   useEffect(() => {
     const loadTeachers = async () => {
@@ -99,7 +101,7 @@ const TeacherManagement = () => {
 
   const handleDocumentAdd = () => {
     const resolvedDocumentType = formData.documentType === 'Other' ? formData.otherDocumentName.trim() : formData.documentType;
-    if (!resolvedDocumentType || !pendingDocument?.fileData) return;
+    if (!resolvedDocumentType || !pendingDocument?.rawFile) return;
 
     const nextDocument = {
       id: Date.now(),
@@ -107,8 +109,9 @@ const TeacherManagement = () => {
       fileUploadPath: pendingDocument.fileName,
       fileName: pendingDocument.fileName,
       fileType: pendingDocument.fileType,
-      fileData: pendingDocument.fileData,
+      fileData: '',
       fileSize: pendingDocument.fileSize,
+      rawFile: pendingDocument.rawFile,
     };
 
     setFormData({
@@ -128,43 +131,34 @@ const TeacherManagement = () => {
     });
   };
 
-  const handleDocumentBrowse = async (e) => {
+  const handleDocumentBrowse = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/teachers/documents');
-
-      setFormData({
-        ...formData,
-        fileUploadPath: uploadedFile.filePath || file.name,
-      });
-      setPendingDocument({
-        fileName: uploadedFile.name || file.name,
-        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
-        fileData: uploadedFile.url,
-        fileSize: uploadedFile.size || file.size,
-      });
-      setFormError('');
-    } catch (error) {
-      setFormError(error.message || 'Unable to upload document to ImageKit.');
-    }
+    setFormData({
+      ...formData,
+      fileUploadPath: file.name,
+    });
+    setPendingDocument({
+      fileName: file.name,
+      fileType: file.type || 'application/octet-stream',
+      fileData: '',
+      fileSize: file.size,
+      rawFile: file,
+    });
+    setFormError('');
   };
 
-  const handlePhotoBrowse = async (e) => {
+  const handlePhotoBrowse = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/teachers/photos');
-      setFormError('');
-      setFormData((current) => ({
-        ...current,
-        photoUrl: uploadedFile.url,
-      }));
-    } catch (error) {
-      setFormError(error.message || 'Unable to upload photo to ImageKit.');
-    }
+    setPendingPhotoFile(file);
+    setFormError('');
+    setFormData((current) => ({
+      ...current,
+      photoUrl: URL.createObjectURL(file),
+    }));
   };
 
   const handleSave = (e) => {
@@ -199,38 +193,48 @@ const TeacherManagement = () => {
   const handleConfirmSave = async () => {
     setIsSaving(true);
 
-    const resolvedEmployeeId = formData.employeeId || buildDraftEmployeeId(session?.instituteName, teachers.length + 1);
-    const resolvedTeacherId = `TCH-${resolvedEmployeeId}`;
-    const resolvedPortalPassword = formData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(formData);
-    const qrPayload = buildTeacherQrPayload({
-      ...formData,
-      employeeId: resolvedEmployeeId,
-      teacherSystemId: resolvedTeacherId,
-      teacherPortalPassword: resolvedPortalPassword,
-      joiningDate: formData.joiningDate || getToday(),
-    });
-    const resolvedQrCodeData = JSON.stringify(qrPayload);
-
-    const newTeacher = {
-      ...formData,
-      employeeId: resolvedEmployeeId,
-      salary: formData.salary ? String(formData.salary) : '',
-      joiningDate: formData.joiningDate || getToday(),
-      paymentHistory: [],
-      teacherPortalPassword: resolvedPortalPassword,
-      teacherSystemId: resolvedTeacherId,
-      qrCodeData: resolvedQrCodeData,
-      status: 'Active',
-      attendanceStatus: 'Present',
-    };
-
     try {
+      const pendingFormData = prepareTeacherFormDataForSave(formData);
+      const resolvedEmployeeId = pendingFormData.employeeId || buildDraftEmployeeId(session?.instituteName, teachers.length + 1);
+      const resolvedTeacherId = `TCH-${resolvedEmployeeId}`;
+      const resolvedPortalPassword = pendingFormData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(pendingFormData);
+      const qrPayload = buildTeacherQrPayload({
+        ...pendingFormData,
+        employeeId: resolvedEmployeeId,
+        teacherSystemId: resolvedTeacherId,
+        teacherPortalPassword: resolvedPortalPassword,
+        joiningDate: pendingFormData.joiningDate || getToday(),
+      });
+      const resolvedQrCodeData = JSON.stringify(qrPayload);
+
+      const newTeacher = {
+        ...pendingFormData,
+        employeeId: resolvedEmployeeId,
+        salary: pendingFormData.salary ? String(pendingFormData.salary) : '',
+        joiningDate: pendingFormData.joiningDate || getToday(),
+        paymentHistory: [],
+        teacherPortalPassword: resolvedPortalPassword,
+        teacherSystemId: resolvedTeacherId,
+        qrCodeData: resolvedQrCodeData,
+        status: 'Active',
+        attendanceStatus: 'Present',
+      };
       const createdTeacher = await teacherApi.create(newTeacher);
-      const savedTeacher = await teacherApi.getById(createdTeacher.id);
+      const uploadedFormData = await uploadTeacherAssets({
+        ...newTeacher,
+        documents: formData.documents,
+      }, pendingPhotoFile);
+      const savedTeacher = await teacherApi.update(createdTeacher.id, {
+        ...newTeacher,
+        ...uploadedFormData,
+        employeeId: createdTeacher.employeeId,
+        teacherSystemId: createdTeacher.teacherSystemId,
+      });
       const updatedTeachers = [savedTeacher, ...teachers];
       setTeachers(updatedTeachers);
       setGeneratedTeacher(savedTeacher);
       setFormData(createInitialFormData());
+      setPendingPhotoFile(null);
       setCurrentStep(1);
       setIsConfirmModalOpen(false);
       setLoadError('');
@@ -276,7 +280,7 @@ const TeacherManagement = () => {
     const resolvedDocumentType = detailFormData.documentType === 'Other'
       ? detailFormData.otherDocumentName.trim()
       : detailFormData.documentType;
-    if (!resolvedDocumentType || !pendingDetailDocument?.fileData) return;
+    if (!resolvedDocumentType || !(pendingDetailDocument?.fileData || pendingDetailDocument?.rawFile)) return;
 
     setDetailFormData((current) => ({
       ...current,
@@ -290,6 +294,7 @@ const TeacherManagement = () => {
           fileType: pendingDetailDocument.fileType,
           fileData: pendingDetailDocument.fileData,
           fileSize: pendingDetailDocument.fileSize,
+          rawFile: pendingDetailDocument.rawFile,
         },
       ],
       documentType: '',
@@ -306,43 +311,34 @@ const TeacherManagement = () => {
     }));
   };
 
-  const handleDetailDocumentBrowse = async (e) => {
+  const handleDetailDocumentBrowse = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/teachers/documents');
-
-      setDetailFormData((current) => ({
-        ...current,
-        fileUploadPath: uploadedFile.filePath || file.name,
-      }));
-      setPendingDetailDocument({
-        fileName: uploadedFile.name || file.name,
-        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
-        fileData: uploadedFile.url,
-        fileSize: uploadedFile.size || file.size,
-      });
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to upload document to ImageKit.');
-    }
+    setDetailFormData((current) => ({
+      ...current,
+      fileUploadPath: file.name,
+    }));
+    setPendingDetailDocument({
+      fileName: file.name,
+      fileType: file.type || 'application/octet-stream',
+      fileData: '',
+      fileSize: file.size,
+      rawFile: file,
+    });
+    setLoadError('');
   };
 
-  const handleDetailPhotoBrowse = async (e) => {
+  const handleDetailPhotoBrowse = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/teachers/photos');
-      setDetailFormData((current) => ({
-        ...current,
-        photoUrl: uploadedFile.url || current.photoUrl,
-      }));
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to upload photo to ImageKit.');
-    }
+    setPendingDetailPhotoFile(file);
+    setDetailFormData((current) => ({
+      ...current,
+      photoUrl: URL.createObjectURL(file),
+    }));
+    setLoadError('');
   };
 
   const handleUpdateTeacher = async () => {
@@ -353,36 +349,46 @@ const TeacherManagement = () => {
     }
 
     setIsUpdatingTeacher(true);
-    const resolvedPortalPassword = detailFormData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(detailFormData);
-    const qrPayload = buildTeacherQrPayload({
-      ...detailFormData,
-      teacherSystemId: selectedTeacher.teacherSystemId,
-      employeeId: selectedTeacher.employeeId,
-      teacherPortalPassword: resolvedPortalPassword,
-      joiningDate: detailFormData.joiningDate || getToday(),
-    });
-
-    const payload = {
-      ...detailFormData,
-      employeeId: selectedTeacher.employeeId,
-      salary: detailFormData.salary ? String(detailFormData.salary) : '',
-      joiningDate: detailFormData.joiningDate || getToday(),
-      paymentHistory: selectedTeacher.paymentHistory || [],
-      teacherPortalPassword: resolvedPortalPassword,
-      teacherSystemId: selectedTeacher.teacherSystemId,
-      qrCodeData: JSON.stringify(qrPayload),
-      status: selectedTeacher.status || 'Active',
-      attendanceStatus: selectedTeacher.attendanceStatus || 'Present',
-      cardExpiryDate: detailFormData.cardExpiryDate,
-    };
-
     try {
+      const pendingDetailFormData = prepareTeacherFormDataForSave(detailFormData);
+      const resolvedPortalPassword = pendingDetailFormData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(pendingDetailFormData);
+      const qrPayload = buildTeacherQrPayload({
+        ...pendingDetailFormData,
+        teacherSystemId: selectedTeacher.teacherSystemId,
+        employeeId: selectedTeacher.employeeId,
+        teacherPortalPassword: resolvedPortalPassword,
+        joiningDate: pendingDetailFormData.joiningDate || getToday(),
+      });
+
+      const payload = {
+        ...pendingDetailFormData,
+        employeeId: selectedTeacher.employeeId,
+        salary: pendingDetailFormData.salary ? String(pendingDetailFormData.salary) : '',
+        joiningDate: pendingDetailFormData.joiningDate || getToday(),
+        paymentHistory: selectedTeacher.paymentHistory || [],
+        teacherPortalPassword: resolvedPortalPassword,
+        teacherSystemId: selectedTeacher.teacherSystemId,
+        qrCodeData: JSON.stringify(qrPayload),
+        status: selectedTeacher.status || 'Active',
+        attendanceStatus: selectedTeacher.attendanceStatus || 'Present',
+        cardExpiryDate: pendingDetailFormData.cardExpiryDate,
+      };
       const updatedTeacher = await teacherApi.update(selectedTeacher.id, payload);
-      const refreshedTeacher = await teacherApi.getById(updatedTeacher.id);
+      const uploadedDetailFormData = await uploadTeacherAssets({
+        ...payload,
+        documents: detailFormData.documents,
+      }, pendingDetailPhotoFile);
+      const refreshedTeacher = await teacherApi.update(updatedTeacher.id, {
+        ...payload,
+        ...uploadedDetailFormData,
+        employeeId: updatedTeacher.employeeId,
+        teacherSystemId: updatedTeacher.teacherSystemId,
+      });
       const updatedTeachers = teachers.map((teacher) => (teacher.id === refreshedTeacher.id ? refreshedTeacher : teacher));
       setTeachers(updatedTeachers);
       setSelectedTeacher(refreshedTeacher);
       setDetailFormData(mapTeacherToFormData(refreshedTeacher));
+      setPendingDetailPhotoFile(null);
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to update the teacher record.');
@@ -439,6 +445,8 @@ const TeacherManagement = () => {
               setDetailFormData(createInitialFormData());
               setPendingDocument(null);
               setPendingDetailDocument(null);
+              setPendingPhotoFile(null);
+              setPendingDetailPhotoFile(null);
               if (activeTab !== 'list') {
                 setFormData(createInitialFormData());
               }
@@ -1355,6 +1363,55 @@ function normalizeStoredDocument(document) {
     fileData: document.fileData || '',
     fileSize: document.fileSize || 0,
   };
+}
+
+async function uploadTeacherAssets(formData, pendingPhotoFile) {
+  const uploadedPhoto = pendingPhotoFile
+    ? await uploadApi.uploadFile(pendingPhotoFile, '/erp/teachers/photos')
+    : null;
+  const uploadedDocuments = await Promise.all(
+    (formData.documents || []).map((document) => uploadTeacherDocument(document))
+  );
+
+  return {
+    ...formData,
+    photoUrl: uploadedPhoto?.url || formData.photoUrl,
+    fileUploadPath: '',
+    documents: uploadedDocuments,
+  };
+}
+
+function prepareTeacherFormDataForSave(formData) {
+  return {
+    ...formData,
+    documents: (formData.documents || []).map((document) => stripPendingFile(document)),
+    fileUploadPath: '',
+  };
+}
+
+async function uploadTeacherDocument(document) {
+  if (!document?.rawFile) {
+    return stripPendingFile(document);
+  }
+
+  const uploadedFile = await uploadApi.uploadFile(document.rawFile, '/erp/teachers/documents');
+  return {
+    ...stripPendingFile(document),
+    fileUploadPath: uploadedFile.filePath || document.fileUploadPath || document.fileName,
+    fileName: uploadedFile.name || document.fileName,
+    fileType: document.fileType || uploadedFile.fileType || 'application/octet-stream',
+    fileData: uploadedFile.url,
+    fileSize: uploadedFile.size || document.fileSize || 0,
+  };
+}
+
+function stripPendingFile(document) {
+  if (!document) {
+    return document;
+  }
+
+  const { rawFile, ...cleanDocument } = document;
+  return cleanDocument;
 }
 
 function createQrImageUrl(value) {
