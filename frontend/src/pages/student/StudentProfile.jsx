@@ -155,11 +155,11 @@ const StudentProfile = () => {
 
         <section className="mt-8 grid gap-8 lg:grid-cols-2">
           <InfoPanel
-            title="Guardian Details"
-            description="Parent and guardian references provided at the time of admission."
+            title="Father Details"
+            description="Parent references provided at the time of admission."
           >
-            <InfoRow icon={Users} label="Guardian Name" value={student?.guardianName || 'Not added'} />
-            <InfoRow icon={Phone} label="Guardian Phone" value={student?.guardianPhone || 'Not added'} />
+            <InfoRow icon={Users} label="Father Name" value={student?.guardianName || 'Not added'} />
+            <InfoRow icon={Phone} label="Father Phone" value={student?.guardianPhone || 'Not added'} />
             <InfoRow icon={Home} label="Address" value={student?.address || 'Not added'} />
           </InfoPanel>
 
@@ -263,7 +263,7 @@ const formatFacilityStatus = (requested, status) => {
 
 const formatLibraryFacilityStatus = (student) => {
   if (!(student?.libraryOptIn === 'yes' || student?.libraryOptIn === true)) return 'Not requested';
-  return `${student?.libraryStatus || 'Requested'} | Rs ${student?.libraryMonthlyCharge || '0'}/month`;
+  return student?.libraryStatus || 'Requested';
 };
 
 const StatCard = ({ label, value, icon: Icon }) => (

@@ -1,11 +1,13 @@
 package com.erp.backend.student.service;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
+import com.erp.backend.exception.FieldValidationException;
 import com.erp.backend.exception.ResourceNotFoundException;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
@@ -25,6 +27,7 @@ import org.springframework.util.StringUtils;
 @Service
 public class StudentService {
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^A-Z0-9]");
+    private static final Pattern TEN_DIGITS = Pattern.compile("\\d{10}");
 
     private final StudentRepository studentRepository;
     private final InstituteRepository instituteRepository;
@@ -79,8 +82,10 @@ public class StudentService {
 
     public StudentResponse createStudent(Long instituteId, StudentPayload request) {
         Institute institute = validateInstitute(instituteId);
+        validateRequiredFields(request);
         validateUniqueness(instituteId, request);
         validatePhoto(request);
+        validatePhoneNumbers(request);
 
         Student student = new Student();
         student.setInstitute(institute);
@@ -92,8 +97,10 @@ public class StudentService {
 
     public StudentResponse updateStudent(Long instituteId, Long studentId, StudentPayload request) {
         Student student = findStudent(instituteId, studentId);
+        validateRequiredFields(request);
         validateUniquenessForUpdate(instituteId, studentId, request);
         validatePhoto(request);
+        validatePhoneNumbers(request);
 
         String previousAssignedClass = student.getAssignedClass();
         applyStudentPayload(student, request);
@@ -110,6 +117,8 @@ public class StudentService {
         Institute institute = validateInstitute(instituteId);
         List<Student> entities = students.stream()
                 .map(payload -> {
+                    validateRequiredFields(payload);
+                    validatePhoneNumbers(payload);
                     Student student = new Student();
                     student.setInstitute(institute);
                     applyStudentPayload(student, payload);
@@ -197,38 +206,41 @@ public class StudentService {
     }
 
     private void applyStudentPayload(Student student, StudentPayload request) {
-        student.setFirstName(trim(request.firstName()));
-        student.setLastName(trim(request.lastName()));
-        student.setName(buildStudentName(request.firstName(), request.lastName()));
+        student.setFirstName(uppercase(request.firstName()));
+        student.setLastName(uppercase(request.lastName()));
+        student.setName(buildStudentName(uppercase(request.firstName()), uppercase(request.lastName())));
         student.setDob(trim(request.dob()));
         student.setGender(trim(request.gender()));
         student.setEmail(normalizeEmail(request.email()));
-        student.setMobile(trim(request.mobile()));
-        student.setBloodGroup(trim(request.bloodGroup()));
-        student.setAddress(trim(request.address()));
-        student.setGuardianName(trim(request.guardianName()));
-        student.setMotherName(trim(request.motherName()));
-        student.setGuardianPhone(trim(request.guardianPhone()));
-        student.setPrevSchool(trim(request.prevSchool()));
-        student.setCategory(trim(request.category()));
+        student.setMobile(digitsOnlyOrNull(request.mobile()));
+        student.setBloodGroup(uppercase(request.bloodGroup()));
+        student.setAddress(uppercase(request.address()));
+        student.setCity(uppercase(request.city()));
+        student.setPincode(digitsOnlyOrNull(request.pincode()));
+        student.setState(uppercase(request.state()));
+        student.setGuardianName(uppercase(resolveParentName(request.guardianFirstName(), request.guardianLastName(), request.guardianName())));
+        student.setMotherName(uppercase(resolveParentName(request.motherFirstName(), request.motherLastName(), request.motherName())));
+        student.setGuardianPhone(digitsOnlyOrNull(request.guardianPhone()));
+        student.setPrevSchool(uppercase(request.prevSchool()));
+        student.setCategory(uppercase(request.category()));
         String today = LocalDate.now().toString();
         student.setRegDate(resolveDate(request.regDate(), today));
         student.setAdmissionDate(resolveDate(request.admissionDate(), today));
         student.setEnrollmentNo(resolveEnrollmentNo(student, request));
-        student.setClassName(trim(request.className()));
-        student.setSection(trim(request.section()));
+        student.setClassName(uppercase(request.className()));
+        student.setSection(uppercase(request.section()));
         student.setAssignedClass(resolveAssignedClass(request));
-        student.setAdmissionCategory(trim(request.admissionCategory()));
+        student.setAdmissionCategory(uppercase(request.admissionCategory()));
         student.setTransportOptIn(defaultValue(request.transportOptIn(), "no"));
         student.setHostelOptIn(defaultValue(request.hostelOptIn(), "no"));
         student.setLibraryOptIn(defaultValue(request.libraryOptIn(), "no"));
-        student.setTransportStatus(defaultValue(request.transportStatus(), "inactive"));
-        student.setHostelStatus(defaultValue(request.hostelStatus(), "inactive"));
-        student.setLibraryStatus(defaultValue(request.libraryStatus(), "inactive"));
-        student.setLibraryMonthlyCharge(trim(request.libraryMonthlyCharge()));
+        student.setTransportStatus(resolveFacilityStatus(request.transportOptIn(), request.transportStatus()));
+        student.setHostelStatus(resolveFacilityStatus(request.hostelOptIn(), request.hostelStatus()));
+        student.setLibraryStatus(resolveFacilityStatus(request.libraryOptIn(), request.libraryStatus()));
+        student.setLibraryMonthlyCharge(null);
         student.setStudentPortalPassword(resolvePortalPassword(student, request));
-        student.setDocumentType(trim(request.documentType()));
-        student.setOtherDocumentName(trim(request.otherDocumentName()));
+        student.setDocumentType(uppercase(request.documentType()));
+        student.setOtherDocumentName(uppercase(request.otherDocumentName()));
         student.setFileUploadPath(trim(request.fileUploadPath()));
         student.setDocumentsJson(writeDocuments(normalizeDocuments(request.documents())));
         student.setCardExpiryDate(trim(request.cardExpiryDate()));
@@ -276,6 +288,9 @@ public class StudentService {
                 student.getRegDate(),
                 student.getBloodGroup(),
                 student.getAddress(),
+                student.getCity(),
+                student.getPincode(),
+                student.getState(),
                 student.getGuardianName(),
                 student.getMotherName(),
                 student.getGuardianPhone(),
@@ -361,13 +376,44 @@ public class StudentService {
         }
     }
 
+    private void validateRequiredFields(StudentPayload request) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        requireText(errors, "firstName", request.firstName(), "First name is required.");
+        requireText(errors, "dob", request.dob(), "Date of birth is required.");
+        requireText(errors, "mobile", request.mobile(), "Student mobile number is required.");
+        requireText(errors, "guardianFirstName", request.guardianFirstName(), "Father first name is required.");
+        requireText(errors, "motherFirstName", request.motherFirstName(), "Mother first name is required.");
+        requireText(errors, "guardianPhone", request.guardianPhone(), "Father mobile number is required.");
+        requireText(errors, "category", request.category(), "Category is required.");
+        requireText(errors, "address", request.address(), "Permanent address is required.");
+        requireText(errors, "city", request.city(), "City is required.");
+        requireText(errors, "pincode", request.pincode(), "Pincode is required.");
+        requireText(errors, "state", request.state(), "State is required.");
+        requireText(errors, "className", request.className(), "Class is required.");
+        requireText(errors, "section", request.section(), "Section is required.");
+        requireText(errors, "admissionCategory", request.admissionCategory(), "Admission category is required.");
+        requireText(errors, "transportOptIn", request.transportOptIn(), "Select transport facility option.");
+        requireText(errors, "hostelOptIn", request.hostelOptIn(), "Select hostel facility option.");
+        requireText(errors, "libraryOptIn", request.libraryOptIn(), "Select library facility option.");
+
+        if (!errors.isEmpty()) {
+            throw new FieldValidationException("Please fix the highlighted fields.", errors);
+        }
+    }
+
+    private void requireText(Map<String, String> errors, String field, String value, String message) {
+        if (!StringUtils.hasText(value)) {
+            errors.put(field, message);
+        }
+    }
+
     private String resolveDate(String requestedDate, String fallback) {
         return StringUtils.hasText(requestedDate) ? requestedDate.trim() : fallback;
     }
 
     private String resolveEnrollmentNo(Student student, StudentPayload request) {
-        if (StringUtils.hasText(request.enrollmentNo())) {
-            return request.enrollmentNo().trim();
+        if (StringUtils.hasText(student.getEnrollmentNo())) {
+            return student.getEnrollmentNo().trim();
         }
 
         String instituteCode = buildInstituteCode(student.getInstitute().getInstituteName());
@@ -375,17 +421,29 @@ public class StudentService {
         return instituteCode + "-" + String.format("%04d", nextSequence);
     }
 
+    private String resolveParentName(String firstName, String lastName, String fallbackName) {
+        String combinedName = buildStudentName(uppercase(firstName), uppercase(lastName));
+        return StringUtils.hasText(combinedName) ? combinedName : fallbackName;
+    }
+
     private String resolveAssignedClass(StudentPayload request) {
         if (StringUtils.hasText(request.className()) && StringUtils.hasText(request.section())) {
-            return request.className().trim() + " / " + request.section().trim();
+            return request.className().trim().toUpperCase() + " / " + request.section().trim().toUpperCase();
         }
         if (StringUtils.hasText(request.className())) {
-            return request.className().trim();
+            return request.className().trim().toUpperCase();
         }
         if (StringUtils.hasText(request.assignedClass())) {
-            return request.assignedClass().trim();
+            return request.assignedClass().trim().toUpperCase();
         }
         return null;
+    }
+
+    private String resolveFacilityStatus(String optIn, String requestedStatus) {
+        if (!"yes".equalsIgnoreCase(optIn)) {
+            return "inactive";
+        }
+        return defaultValue(requestedStatus, "active").toLowerCase();
     }
 
     private String resolvePortalPassword(Student student, StudentPayload request) {
@@ -438,8 +496,8 @@ public class StudentService {
                 "Gender: " + defaultValue(student.getGender(), "N/A"),
                 "Mobile: " + defaultValue(student.getMobile(), "N/A"),
                 "Email: " + defaultValue(student.getEmail(), "N/A"),
-                "Guardian: " + defaultValue(student.getGuardianName(), "N/A"),
-                "Guardian Phone: " + defaultValue(student.getGuardianPhone(), "N/A"),
+                "Father: " + defaultValue(student.getGuardianName(), "N/A"),
+                "Father Phone: " + defaultValue(student.getGuardianPhone(), "N/A"),
                 "Blood Group: " + defaultValue(student.getBloodGroup(), "N/A"),
                 "Admission Date: " + defaultValue(student.getAdmissionDate(), "N/A"),
                 "Documents: " + documentSummary);
@@ -495,6 +553,33 @@ public class StudentService {
 
     private String trim(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String uppercase(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase() : null;
+    }
+
+    private String digitsOnlyOrNull(String value) {
+        String digits = digitsOnly(value);
+        return StringUtils.hasText(digits) ? digits : null;
+    }
+
+    private void validatePhoneNumbers(StudentPayload request) {
+        validateOptionalPhone(request.mobile(), "Student mobile number must be exactly 10 digits.");
+        validateOptionalPhone(request.guardianPhone(), "Father mobile number must be exactly 10 digits.");
+        validateOptionalPincode(request.pincode());
+    }
+
+    private void validateOptionalPhone(String value, String message) {
+        if (StringUtils.hasText(value) && !TEN_DIGITS.matcher(digitsOnly(value)).matches()) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private void validateOptionalPincode(String value) {
+        if (StringUtils.hasText(value) && !Pattern.matches("\\d{6}", digitsOnly(value))) {
+            throw new IllegalArgumentException("Pincode must be exactly 6 digits.");
+        }
     }
 
     private String firstNonBlank(String primary, String fallback) {

@@ -362,7 +362,7 @@ const StudentDashboard = () => {
             desc={activeLibraryIssues.length
               ? `${activeLibraryIssues.length} active book issues currently linked to this student.`
               : ((student?.libraryOptIn === 'yes' || student?.libraryOptIn === true)
-                ? `Library ${student?.libraryStatus || 'inactive'} | Rs ${student?.libraryMonthlyCharge || '0'}/month`
+                ? `Library ${student?.libraryStatus || 'inactive'}`
                 : 'No library facility requested yet.')}
             onClick={() => navigate('/student/library')}
           />

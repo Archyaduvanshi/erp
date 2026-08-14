@@ -184,28 +184,24 @@ const TeacherExaminations = () => {
     setQuestionPapers(questionPaperResponse);
   };
 
-  const handleQuestionPaperBrowse = async (className, subjectName, e) => {
+  const handleQuestionPaperBrowse = (className, subjectName, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/examinations/question-papers');
-      setQuestionPaperDrafts((current) => ({
-        ...current,
-        [buildQuestionDraftKey(className)]: {
-          ...(current[buildQuestionDraftKey(className)] || {}),
-          className,
-          subjectName: subjectName || current[buildQuestionDraftKey(className)]?.subjectName || '',
-          uploadedBy: teacherName,
-          fileName: uploadedFile.name || file.name,
-          fileData: uploadedFile.url,
-          fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
-        },
-      }));
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to upload question paper to ImageKit.');
-    }
+    setQuestionPaperDrafts((current) => ({
+      ...current,
+      [buildQuestionDraftKey(className)]: {
+        ...(current[buildQuestionDraftKey(className)] || {}),
+        className,
+        subjectName: subjectName || current[buildQuestionDraftKey(className)]?.subjectName || '',
+        uploadedBy: teacherName,
+        fileName: file.name,
+        fileData: '',
+        fileType: file.type || 'application/octet-stream',
+        rawFile: file,
+      },
+    }));
+    setLoadError('');
   };
 
   const handleQuestionDraftChange = (className, subjectName, value) => {
@@ -224,15 +220,22 @@ const TeacherExaminations = () => {
   const handleQuestionPaperSave = async (className) => {
     const draft = questionPaperDrafts[buildQuestionDraftKey(className)];
     const subjectName = draft?.subjectName?.trim();
-    if (!draft?.fileData || !draft?.examTitle?.trim() || !className || !subjectName) return;
+    if (!(draft?.fileData || draft?.rawFile) || !draft?.examTitle?.trim() || !className || !subjectName) return;
 
     try {
+      const uploadedFile = draft.rawFile
+        ? await uploadApi.uploadFile(draft.rawFile, '/erp/examinations/question-papers')
+        : null;
+      const { rawFile, ...cleanDraft } = draft;
       await examApi.saveQuestionPaper({
-        ...draft,
+        ...cleanDraft,
         examTitle: draft.examTitle.trim(),
         className: className.trim(),
         subjectName: subjectName.trim(),
         uploadedBy: teacherName,
+        fileName: uploadedFile?.name || draft.fileName,
+        fileData: uploadedFile?.url || draft.fileData,
+        fileType: draft.fileType || uploadedFile?.fileType || 'application/octet-stream',
       });
 
       setQuestionPaperDrafts((current) => ({

@@ -67,6 +67,7 @@ const ExaminationManagement = () => {
   const [loadError, setLoadError] = useState('');
   const [templatePreview, setTemplatePreview] = useState(null);
   const [questionPaperPreview, setQuestionPaperPreview] = useState(null);
+  const [pendingDateSheetFile, setPendingDateSheetFile] = useState(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -229,28 +230,25 @@ const ExaminationManagement = () => {
     }, {})
   ), [filteredDateSheets]);
 
-  const handleDateSheetBrowse = async (e) => {
+  const handleDateSheetBrowse = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/examinations/date-sheets');
-      setDateSheetForm((current) => ({
-        ...current,
-        fileName: uploadedFile.name || file.name,
-        fileData: uploadedFile.url,
-        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
-      }));
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to upload date sheet to ImageKit.');
-    }
+    setPendingDateSheetFile(file);
+    setDateSheetForm((current) => ({
+      ...current,
+      fileName: file.name,
+      fileData: '',
+      fileType: file.type || 'application/octet-stream',
+    }));
+    setLoadError('');
   };
 
   const handleOpenDateSheetClass = (className) => {
     const existingRecord = dateSheets.find((record) => record.className === className);
     setOpenDateSheetClass(className);
     setDateSheetAction('');
+    setPendingDateSheetFile(null);
     setDateSheetForm(existingRecord ? {
       className,
       classFrom: existingRecord.classFrom || '',
@@ -279,14 +277,21 @@ const ExaminationManagement = () => {
 
   const handleDateSheetSave = async (e) => {
     e.preventDefault();
-    if (!dateSheetForm.className || !dateSheetForm.examType.trim() || !dateSheetForm.fileData) return;
+    if (!dateSheetForm.className || !dateSheetForm.examType.trim() || !(dateSheetForm.fileData || pendingDateSheetFile)) return;
 
     try {
+      const uploadedFile = pendingDateSheetFile
+        ? await uploadApi.uploadFile(pendingDateSheetFile, '/erp/examinations/date-sheets')
+        : null;
       await saveDateSheetRecord({
         ...dateSheetForm,
         examType: dateSheetForm.examType.trim(),
+        fileName: uploadedFile?.name || dateSheetForm.fileName,
+        fileData: uploadedFile?.url || dateSheetForm.fileData,
+        fileType: dateSheetForm.fileType || uploadedFile?.fileType || 'application/octet-stream',
       });
       setDateSheetForm(initialDateSheetForm);
+      setPendingDateSheetFile(null);
       setOpenDateSheetClass('');
       setDateSheetAction('');
       await refreshData();

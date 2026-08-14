@@ -15,6 +15,7 @@ public class RegisterInstituteRequest {
 
     @NotBlank(message = "Username is required")
     @Size(min = 4, max = 50, message = "Username must be between 4 and 50 characters")
+    @Pattern(regexp = "^[A-Za-z0-9]+$", message = "Username can contain only small letters, capital letters, and numbers")
     private String username;
 
     @NotBlank(message = "Affiliation number is required")
@@ -24,6 +25,7 @@ public class RegisterInstituteRequest {
     private String affiliatedFrom;
 
     @NotBlank(message = "Contact number is required")
+    @Pattern(regexp = "\\d{10}", message = "Contact number must be exactly 10 digits")
     private String contact;
 
     @NotBlank(message = "Official email is required")
@@ -45,10 +47,14 @@ public class RegisterInstituteRequest {
     @Pattern(regexp = "\\d{6}", message = "Pincode must be 6 digits")
     private String pincode;
 
+    @NotBlank(message = "Institution logo is required")
     private String logo;
 
     @NotBlank(message = "Password is required")
-    @Size(min = 6, message = "Password must be at least 6 characters")
+    @Pattern(
+            regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,}$",
+            message = "Password must be at least 8 characters with 1 uppercase letter, 1 lowercase letter, 1 number, and 1 symbol"
+    )
     private String password;
 
     @NotBlank(message = "Confirm password is required")

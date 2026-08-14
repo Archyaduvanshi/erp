@@ -459,7 +459,7 @@ const TeacherAttendance = () => {
                       <thead className="bg-slate-950 text-white">
                         <tr className="text-[11px] font-black uppercase tracking-[0.24em]">
                           <th className="px-6 py-4">Student Name</th>
-                          <th className="px-6 py-4">Guardian</th>
+                          <th className="px-6 py-4">Father</th>
                           <th className="px-6 py-4">Roll No</th>
                           <th className="px-6 py-4 text-center">Present</th>
                           <th className="px-6 py-4 text-center">Absent</th>
@@ -469,7 +469,7 @@ const TeacherAttendance = () => {
                         {selectedClassStudents.map((student) => {
                           const studentKey = String(student.id);
                           const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Unnamed student';
-                          const guardianName = student.guardianName || 'Guardian not added';
+                          const guardianName = student.guardianName || 'Father not added';
                           const rollNo = student.rollNo || student.enrollmentNo || student.systemId || String(student.id);
 
                           return (

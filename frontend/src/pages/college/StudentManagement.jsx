@@ -36,13 +36,19 @@ const initialFormData = {
   regDate: '',
   bloodGroup: '',
   address: '',
+  city: '',
+  pincode: '',
+  state: '',
+  guardianFirstName: '',
+  guardianLastName: '',
   guardianName: '',
+  motherFirstName: '',
+  motherLastName: '',
   motherName: '',
   guardianPhone: '',
   prevSchool: '',
   category: '',
   admissionDate: '',
-  enrollmentNo: '',
   className: '',
   section: '',
   assignedClass: '',
@@ -53,7 +59,6 @@ const initialFormData = {
   transportStatus: 'inactive',
   hostelStatus: 'inactive',
   libraryStatus: 'inactive',
-  libraryMonthlyCharge: '0',
   studentPortalPassword: '',
   documentType: '',
   otherDocumentName: '',
@@ -64,9 +69,32 @@ const initialFormData = {
   photoUrl: '',
 };
 
-const CATEGORY_OPTIONS = ['Select', 'Gen', 'OBC', 'SC', 'ST', 'EWS', 'Minority'];
-const ADMISSION_CATEGORY_OPTIONS = ['Select', 'Regular', 'Lateral Entry', 'Transfer', 'Scholarship'];
+const CATEGORY_OPTIONS = ['Select', 'GEN', 'OBC', 'SC', 'ST', 'EWS', 'MINORITY'];
+const ADMISSION_CATEGORY_OPTIONS = ['Select', 'REGULAR', 'LATERAL ENTRY', 'TRANSFER', 'SCHOLARSHIP'];
 const SECTION_OPTIONS = ['Select', 'A', 'B', 'C', 'D'];
+const BLOOD_GROUP_OPTIONS = ['Select', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+const UPPERCASE_STUDENT_FIELDS = new Set([
+  'firstName',
+  'lastName',
+  'bloodGroup',
+  'address',
+  'city',
+  'state',
+  'guardianFirstName',
+  'guardianLastName',
+  'guardianName',
+  'motherFirstName',
+  'motherLastName',
+  'motherName',
+  'prevSchool',
+  'category',
+  'className',
+  'section',
+  'assignedClass',
+  'admissionCategory',
+  'documentType',
+  'otherDocumentName',
+]);
 
 const StudentManagement = () => {
   const navigate = useNavigate();
@@ -74,7 +102,7 @@ const StudentManagement = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [students, setStudents] = useState([]);
   const [loadError, setLoadError] = useState('');
-  const [viewMode, setViewMode] = useState('grid');
+  const [viewMode, setViewMode] = useState('table');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [formData, setFormData] = useState(initialFormData);
@@ -84,7 +112,10 @@ const StudentManagement = () => {
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUpdatingStudent, setIsUpdatingStudent] = useState(false);
+  const [pendingDeleteStudent, setPendingDeleteStudent] = useState(null);
+  const [isDeletingStudent, setIsDeletingStudent] = useState(false);
   const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [pendingDocument, setPendingDocument] = useState(null);
   const [pendingDetailDocument, setPendingDetailDocument] = useState(null);
   const [pendingPhotoFile, setPendingPhotoFile] = useState(null);
@@ -106,9 +137,40 @@ const StudentManagement = () => {
   }, []);
 
   const today = new Date().toISOString().split('T')[0];
-  const draftEnrollmentNo = 'Auto-generated from institute short name and admission number';
   const draftAssignedClass = [formData.className, formData.section].filter(Boolean).join(' / ');
-  const draftSystemId = formData.enrollmentNo ? `EDU-${formData.enrollmentNo}` : 'EDU-AUTO-ID';
+  const draftSystemId = 'EDU-AUTO-ID';
+
+  const updateFormField = (field, value) => {
+    setFormData((current) => ({ ...current, [field]: normalizeStudentFieldValue(field, value) }));
+    setFieldErrors((current) => ({ ...current, [field]: '' }));
+    setFormError('');
+  };
+
+  const updateDetailField = (field, value) => {
+    setDetailFormData((current) => ({ ...current, [field]: normalizeStudentFieldValue(field, value) }));
+    setFieldErrors((current) => ({ ...current, [field]: '' }));
+    setLoadError('');
+  };
+
+  const handleWizardStepChange = (targetStep) => {
+    if (targetStep <= currentStep) {
+      setFieldErrors({});
+      setFormError('');
+      setCurrentStep(targetStep);
+      return;
+    }
+
+    const validationErrors = validateStudentStep(currentStep, formData);
+    if (Object.keys(validationErrors).length > 0) {
+      setFieldErrors(validationErrors);
+      setFormError('Please fix the highlighted fields.');
+      return;
+    }
+
+    setFieldErrors({});
+    setFormError('');
+    setCurrentStep(targetStep);
+  };
   const handleDocumentAdd = () => {
     const resolvedDocumentType = formData.documentType === 'Other' ? formData.otherDocumentName.trim() : formData.documentType;
     if (!resolvedDocumentType || !pendingDocument?.rawFile) return;
@@ -165,6 +227,7 @@ const StudentManagement = () => {
 
     setPendingPhotoFile(file);
     setFormError('');
+    setFieldErrors((current) => ({ ...current, photoUrl: '' }));
     setFormData((current) => ({
       ...current,
       photoUrl: URL.createObjectURL(file),
@@ -172,12 +235,21 @@ const StudentManagement = () => {
   };
 
   const handleSave = () => {
+    const validationErrors = validateStudentForm(formData, { requireDocuments: true });
+    if (Object.keys(validationErrors).length > 0) {
+      setFieldErrors(validationErrors);
+      setFormError('Please fix the highlighted fields.');
+      return;
+    }
+
     if (!formData.photoUrl) {
+      setFieldErrors((current) => ({ ...current, photoUrl: 'Student photo upload is required.' }));
       setFormError('Student photo upload is required before confirmation.');
       return;
     }
 
     setFormError('');
+    setFieldErrors({});
     setIsConfirmModalOpen(true);
   };
 
@@ -202,26 +274,24 @@ const StudentManagement = () => {
         className: pendingFormData.className,
         section: pendingFormData.section,
         assignedClass: resolvedAssignedClass,
-        transportStatus: pendingFormData.transportOptIn === 'yes' ? pendingFormData.transportStatus : 'inactive',
-        hostelStatus: pendingFormData.hostelOptIn === 'yes' ? pendingFormData.hostelStatus : 'inactive',
-        libraryStatus: pendingFormData.libraryOptIn === 'yes' ? pendingFormData.libraryStatus : 'inactive',
-        libraryMonthlyCharge: pendingFormData.libraryOptIn === 'yes' ? pendingFormData.libraryMonthlyCharge : '0',
+        transportStatus: pendingFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
+        hostelStatus: pendingFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
+        libraryStatus: pendingFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
         facilities: {
           transport: {
             requested: pendingFormData.transportOptIn === 'yes',
-            active: pendingFormData.transportOptIn === 'yes' && pendingFormData.transportStatus === 'active',
-            status: pendingFormData.transportOptIn === 'yes' ? pendingFormData.transportStatus : 'inactive',
+            active: pendingFormData.transportOptIn === 'yes',
+            status: pendingFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
           },
           hostel: {
             requested: pendingFormData.hostelOptIn === 'yes',
-            active: pendingFormData.hostelOptIn === 'yes' && pendingFormData.hostelStatus === 'active',
-            status: pendingFormData.hostelOptIn === 'yes' ? pendingFormData.hostelStatus : 'inactive',
+            active: pendingFormData.hostelOptIn === 'yes',
+            status: pendingFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
           },
           library: {
             requested: pendingFormData.libraryOptIn === 'yes',
-            active: pendingFormData.libraryOptIn === 'yes' && pendingFormData.libraryStatus === 'active',
-            status: pendingFormData.libraryOptIn === 'yes' ? pendingFormData.libraryStatus : 'inactive',
-            monthlyCharge: pendingFormData.libraryOptIn === 'yes' ? pendingFormData.libraryMonthlyCharge : '0',
+            active: pendingFormData.libraryOptIn === 'yes',
+            status: pendingFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
           },
         },
         systemId: studentId,
@@ -266,22 +336,68 @@ const StudentManagement = () => {
       setFormError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to save the student record.');
+      setFieldErrors(error.fieldErrors || {});
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDelete = async (studentId) => {
-    const shouldDelete = window.confirm('Delete this student record?');
-    if (!shouldDelete) return;
+  const handleNavbarBack = () => {
+    if (pendingDeleteStudent || isSaving || isDeletingStudent) {
+      return;
+    }
 
+    if (activeTab === 'detail' && selectedStudent) {
+      setSelectedStudent(null);
+      setDetailFormData(initialFormData);
+      setFieldErrors({});
+      setActiveTab('list');
+      return;
+    }
+
+    if (activeTab !== 'list') {
+      setActiveTab('list');
+      setGeneratedStudent(null);
+      setCurrentStep(1);
+      setFormError('');
+      setFieldErrors({});
+      return;
+    }
+
+    if (selectedClass) {
+      setSelectedClass('');
+      setSearchTerm('');
+      setViewMode('table');
+      return;
+    }
+
+    navigate('/college');
+  };
+
+  const handleDelete = (studentId) => {
+    const student = students.find((record) => record.id === studentId);
+    setPendingDeleteStudent(student || { id: studentId });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteStudent?.id) return;
+
+    setIsDeletingStudent(true);
     try {
-      await studentApi.delete(studentId);
-      const updated = students.filter((student) => student.id !== studentId);
+      await studentApi.delete(pendingDeleteStudent.id);
+      const updated = students.filter((student) => student.id !== pendingDeleteStudent.id);
       setStudents(updated);
+      if (selectedStudent?.id === pendingDeleteStudent.id) {
+        setSelectedStudent(null);
+        setDetailFormData(initialFormData);
+        setActiveTab('list');
+      }
+      setPendingDeleteStudent(null);
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to delete the student record.');
+    } finally {
+      setIsDeletingStudent(false);
     }
   };
 
@@ -368,6 +484,7 @@ const StudentManagement = () => {
     if (!file) return;
 
     setPendingDetailPhotoFile(file);
+    setFieldErrors((current) => ({ ...current, photoUrl: '' }));
     setDetailFormData((current) => ({
       ...current,
       photoUrl: URL.createObjectURL(file),
@@ -377,8 +494,15 @@ const StudentManagement = () => {
 
   const handleUpdateStudent = async () => {
     if (!selectedStudent) return;
+
+    const validationErrors = validateStudentForm(detailFormData);
     if (!detailFormData.photoUrl) {
-      setLoadError('Student photo is required to update the profile.');
+      validationErrors.photoUrl = 'Student photo upload is required.';
+    }
+
+    if (Object.keys(validationErrors).length > 0) {
+      setFieldErrors(validationErrors);
+      setLoadError('Please fix the highlighted fields.');
       return;
     }
 
@@ -399,10 +523,9 @@ const StudentManagement = () => {
       const payload = {
         ...pendingDetailFormData,
         assignedClass: resolvedAssignedClass,
-        transportStatus: pendingDetailFormData.transportOptIn === 'yes' ? pendingDetailFormData.transportStatus : 'inactive',
-        hostelStatus: pendingDetailFormData.hostelOptIn === 'yes' ? pendingDetailFormData.hostelStatus : 'inactive',
-        libraryStatus: pendingDetailFormData.libraryOptIn === 'yes' ? pendingDetailFormData.libraryStatus : 'inactive',
-        libraryMonthlyCharge: pendingDetailFormData.libraryOptIn === 'yes' ? pendingDetailFormData.libraryMonthlyCharge : '0',
+        transportStatus: pendingDetailFormData.transportOptIn === 'yes' ? (pendingDetailFormData.transportStatus || 'active') : 'inactive',
+        hostelStatus: pendingDetailFormData.hostelOptIn === 'yes' ? (pendingDetailFormData.hostelStatus || 'active') : 'inactive',
+        libraryStatus: pendingDetailFormData.libraryOptIn === 'yes' ? (pendingDetailFormData.libraryStatus || 'active') : 'inactive',
         studentPortalPassword: resolvedPortalPassword,
         qrCodeData: resolvedQrCodeData,
         status: selectedStudent.status || 'Verified',
@@ -430,6 +553,7 @@ const StudentManagement = () => {
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to update the student record.');
+      setFieldErrors(error.fieldErrors || {});
     } finally {
       setIsUpdatingStudent(false);
     }
@@ -468,7 +592,7 @@ const StudentManagement = () => {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/college')}
+              onClick={handleNavbarBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-cyan-300 hover:text-cyan-700"
             >
               <ArrowLeft size={14} />
@@ -527,12 +651,13 @@ const StudentManagement = () => {
             onSelectClass={(className) => {
               setSelectedClass(className);
               setSearchTerm('');
+              setViewMode('table');
             }}
             onBackToClasses={() => {
               setSelectedClass('');
               setSearchTerm('');
+              setViewMode('table');
             }}
-            onCreate={() => setActiveTab('add')}
             onDelete={handleDelete}
             onFacilityToggle={updateStudentFacilities}
             onOpenStudent={handleOpenStudent}
@@ -543,9 +668,13 @@ const StudentManagement = () => {
               student={selectedStudent}
               formData={detailFormData}
               setFormData={setDetailFormData}
+              updateFormField={updateDetailField}
+              clearFieldError={(field) => setFieldErrors((current) => ({ ...current, [field]: '' }))}
+              fieldErrors={fieldErrors}
               onBack={() => {
                 setSelectedStudent(null);
                 setDetailFormData(initialFormData);
+                setFieldErrors({});
                 setActiveTab('list');
               }}
               onSave={handleUpdateStudent}
@@ -568,9 +697,12 @@ const StudentManagement = () => {
           ) : (
             <EnrollmentWizard
               currentStep={currentStep}
-              setCurrentStep={setCurrentStep}
+              setCurrentStep={handleWizardStepChange}
               formData={formData}
               setFormData={setFormData}
+              updateFormField={updateFormField}
+              clearFieldError={(field) => setFieldErrors((current) => ({ ...current, [field]: '' }))}
+              fieldErrors={fieldErrors}
               handleSave={handleSave}
               draftSystemId={draftSystemId}
               draftAssignedClass={draftAssignedClass}
@@ -595,6 +727,17 @@ const StudentManagement = () => {
         onConfirm={handleConfirmSave}
         isSaving={isSaving}
       />
+      <DeleteStudentModal
+        open={Boolean(pendingDeleteStudent)}
+        student={pendingDeleteStudent}
+        onCancel={() => {
+          if (!isDeletingStudent) {
+            setPendingDeleteStudent(null);
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeletingStudent}
+      />
     </div>
   );
 };
@@ -610,7 +753,6 @@ const DirectoryView = ({
   setSearchTerm,
   onSelectClass,
   onBackToClasses,
-  onCreate,
   onDelete,
   onFacilityToggle,
   onOpenStudent,
@@ -627,13 +769,6 @@ const DirectoryView = ({
               </p>
             </div>
 
-            <button
-              onClick={onCreate}
-              className="inline-flex items-center gap-2 self-start rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-cyan-600 lg:self-auto"
-            >
-              <Plus size={14} />
-              Add Student
-            </button>
           </div>
 
           {classSummaries.length > 0 ? (
@@ -671,13 +806,6 @@ const DirectoryView = ({
               <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">
                 Add a student record with class details to start building the class directory.
               </p>
-              <button
-                onClick={onCreate}
-                className="mt-8 inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-cyan-600"
-              >
-                <Plus size={14} />
-                Create Student
-              </button>
             </div>
           )}
         </section>
@@ -794,13 +922,6 @@ const DirectoryView = ({
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">
             Clear the search, change the course filter, or create the first student entry for this institution.
           </p>
-          <button
-            onClick={onCreate}
-            className="mt-8 inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-cyan-600"
-          >
-            <Plus size={14} />
-            Create Student
-          </button>
         </div>
       )}
     </section>
@@ -813,6 +934,9 @@ const EnrollmentWizard = ({
   setCurrentStep,
   formData,
   setFormData,
+  updateFormField,
+  clearFieldError,
+  fieldErrors,
   handleSave,
   draftSystemId,
   draftAssignedClass,
@@ -823,8 +947,6 @@ const EnrollmentWizard = ({
   formError,
 }) => {
   const today = new Date().toISOString().split('T')[0];
-  const draftEnrollmentNo = 'Auto-generated from institute short name and admission number';
-
   return (
   <div className="grid items-start gap-8 xl:grid-cols-[0.78fr_1.22fr]">
     <aside className="space-y-6 xl:sticky xl:top-8">
@@ -832,8 +954,8 @@ const EnrollmentWizard = ({
         <p className="text-[11px] font-black uppercase tracking-[0.3em] text-cyan-600">Enrollment Steps</p>
         <div className="mt-6 space-y-5">
           <TimelineStep step={1} current={currentStep} title="Registration" desc="Basic student record" />
-          <TimelineStep step={2} current={currentStep} title="Profile" desc="History and guardian details" />
-          <TimelineStep step={3} current={currentStep} title="Admission" desc="Class, category, enrollment" />
+          <TimelineStep step={2} current={currentStep} title="Profile" desc="History and father details" />
+          <TimelineStep step={3} current={currentStep} title="Admission" desc="Class, category, facilities" />
           <TimelineStep step={4} current={currentStep} title="Documents" desc="Student locker and uploads" />
           <TimelineStep step={5} current={currentStep} title="ID Generation" desc="Auto ID card and QR" />
         </div>
@@ -872,11 +994,11 @@ const EnrollmentWizard = ({
         <div>
           <FormHeader eyebrow="Step 01" title="Student registration" desc="Capture the basic information that creates the student record inside the ERP." />
           <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => setFormData({ ...formData, firstName: e.target.value })} placeholder="Legal first name" />
-            <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} placeholder="Legal surname" />
+            <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => updateFormField('firstName', e.target.value)} placeholder="Legal first name" error={fieldErrors.firstName} />
+            <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => updateFormField('lastName', e.target.value)} placeholder="Legal surname" error={fieldErrors.lastName} />
             <CreativeInput label="Personal Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} placeholder="student@email.com" />
-            <CreativeInput label="Mobile Number" value={formData.mobile} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} placeholder="+91 98XXX XXXXX" />
-            <CreativeInput label="Date of Birth" type="date" value={formData.dob} onChange={(e) => setFormData({ ...formData, dob: e.target.value })} />
+            <CreativeInput label="Mobile Number" value={formData.mobile} onChange={(e) => updateFormField('mobile', e.target.value)} placeholder="9876543210" inputMode="numeric" error={fieldErrors.mobile} />
+            <CreativeInput label="Date of Birth" type="date" value={formData.dob} onChange={(e) => updateFormField('dob', e.target.value)} error={fieldErrors.dob} />
             <CreativeInput label="Registration Date" type="date" value={today} readOnly />
             <div className="space-y-3">
               <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Gender</label>
@@ -904,17 +1026,22 @@ const EnrollmentWizard = ({
 
       {currentStep === 2 && (
         <div>
-          <FormHeader eyebrow="Step 02" title="Profile management" desc="Maintain personal history, category information, guardian details, and permanent address." />
+          <FormHeader eyebrow="Step 02" title="Profile management" desc="Maintain personal history, category information, father details, and permanent address." />
           <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <CreativeInput label="Guardian Name" value={formData.guardianName} onChange={(e) => setFormData({ ...formData, guardianName: e.target.value })} placeholder="Parent or guardian" />
-            <CreativeInput label="Mother Name" value={formData.motherName} onChange={(e) => setFormData({ ...formData, motherName: e.target.value })} placeholder="Mother full name" />
-            <CreativeInput label="Guardian Phone" value={formData.guardianPhone} onChange={(e) => setFormData({ ...formData, guardianPhone: e.target.value })} placeholder="+91 98XXX XXXXX" />
-            <CreativeInput label="Blood Group (Optional)" value={formData.bloodGroup} onChange={(e) => setFormData({ ...formData, bloodGroup: e.target.value })} placeholder="A+, O-, AB+" />
-            <CreativeSelect label="Category" value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} options={CATEGORY_OPTIONS} />
-            <CreativeInput label="Previous School History (Optional)" value={formData.prevSchool} onChange={(e) => setFormData({ ...formData, prevSchool: e.target.value })} placeholder="Last school or college" />
+            <CreativeInput label="Father First Name" value={formData.guardianFirstName} onChange={(e) => updateFormField('guardianFirstName', e.target.value)} placeholder="Father first name" error={fieldErrors.guardianFirstName} />
+            <CreativeInput label="Father Last Name (Optional)" value={formData.guardianLastName} onChange={(e) => updateFormField('guardianLastName', e.target.value)} placeholder="Father surname" error={fieldErrors.guardianLastName} />
+            <CreativeInput label="Mother First Name" value={formData.motherFirstName} onChange={(e) => updateFormField('motherFirstName', e.target.value)} placeholder="Mother first name" error={fieldErrors.motherFirstName} />
+            <CreativeInput label="Mother Last Name (Optional)" value={formData.motherLastName} onChange={(e) => updateFormField('motherLastName', e.target.value)} placeholder="Mother surname" error={fieldErrors.motherLastName} />
+            <CreativeInput label="Father Mobile" value={formData.guardianPhone} onChange={(e) => updateFormField('guardianPhone', e.target.value)} placeholder="9876543210" inputMode="numeric" error={fieldErrors.guardianPhone} />
+            <CreativeSelect label="Blood Group (Optional)" value={formData.bloodGroup} onChange={(e) => updateFormField('bloodGroup', e.target.value)} options={BLOOD_GROUP_OPTIONS} error={fieldErrors.bloodGroup} />
+            <CreativeSelect label="Category" value={formData.category} onChange={(e) => updateFormField('category', e.target.value)} options={CATEGORY_OPTIONS} error={fieldErrors.category} />
+            <CreativeInput label="Previous School History (Optional)" value={formData.prevSchool} onChange={(e) => updateFormField('prevSchool', e.target.value)} placeholder="Last school or college" />
             <div className="md:col-span-2">
-              <CreativeTextarea label="Permanent Address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} placeholder="House number, street, area, city" />
+              <CreativeTextarea label="Permanent Address" value={formData.address} onChange={(e) => updateFormField('address', e.target.value)} placeholder="House number, street, area" error={fieldErrors.address} />
             </div>
+            <CreativeInput label="City" value={formData.city} onChange={(e) => updateFormField('city', e.target.value)} placeholder="City" error={fieldErrors.city} />
+            <CreativeInput label="Pincode" value={formData.pincode} onChange={(e) => updateFormField('pincode', e.target.value)} placeholder="201301" inputMode="numeric" error={fieldErrors.pincode} />
+            <CreativeInput label="State" value={formData.state} onChange={(e) => updateFormField('state', e.target.value)} placeholder="State" error={fieldErrors.state} />
           </div>
           <WizardButtons label="Continue to Admission" onNext={() => setCurrentStep(3)} onBack={() => setCurrentStep(1)} />
         </div>
@@ -924,20 +1051,26 @@ const EnrollmentWizard = ({
         <div>
           <FormHeader eyebrow="Step 03" title="Admission management" desc="Track the student transition from applicant to enrolled student with institutional assignment data." />
           <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <CreativeInput label="Admission Date" type="date" value={today} readOnly />
-            <CreativeInput label="Enrollment Number" value={draftEnrollmentNo} readOnly />
-            <CreativeInput label="Class" value={formData.className} onChange={(e) => setFormData({ ...formData, className: e.target.value, assignedClass: [e.target.value, formData.section].filter(Boolean).join(' / ') })} placeholder="B.Tech CSE" />
-            <CreativeSelect label="Section" value={formData.section} onChange={(e) => setFormData({ ...formData, section: e.target.value === 'Select' ? '' : e.target.value, assignedClass: [formData.className, e.target.value === 'Select' ? '' : e.target.value].filter(Boolean).join(' / ') })} options={SECTION_OPTIONS} />
-            <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => setFormData({ ...formData, admissionCategory: e.target.value })} options={ADMISSION_CATEGORY_OPTIONS} />
+            <CreativeInput label="Class" value={formData.className} onChange={(e) => {
+              const className = normalizeStudentFieldValue('className', e.target.value);
+              setFormData({ ...formData, className, assignedClass: [className, formData.section].filter(Boolean).join(' / ') });
+              clearFieldError('className');
+            }} placeholder="B.Tech CSE" error={fieldErrors.className} />
+            <CreativeSelect label="Section" value={formData.section} onChange={(e) => {
+              setFormData({ ...formData, section: e.target.value === 'Select' ? '' : e.target.value, assignedClass: [formData.className, e.target.value === 'Select' ? '' : e.target.value].filter(Boolean).join(' / ') });
+              clearFieldError('section');
+            }} options={SECTION_OPTIONS} error={fieldErrors.section} />
+            <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
             <CreativeSelect
               label="Transport Facility At Admission"
               value={formData.transportOptIn}
               onChange={(e) => setFormData({
                 ...formData,
                 transportOptIn: e.target.value,
-                transportStatus: e.target.value === 'yes' ? formData.transportStatus : 'inactive',
+                transportStatus: e.target.value === 'yes' ? 'active' : 'inactive',
               })}
               options={['Select', 'yes', 'no']}
+              error={fieldErrors.transportOptIn}
             />
               <CreativeSelect
                 label="Hostel Facility At Admission"
@@ -945,9 +1078,10 @@ const EnrollmentWizard = ({
                 onChange={(e) => setFormData({
                   ...formData,
                   hostelOptIn: e.target.value,
-                  hostelStatus: e.target.value === 'yes' ? formData.hostelStatus : 'inactive',
+                  hostelStatus: e.target.value === 'yes' ? 'active' : 'inactive',
                 })}
                 options={['Select', 'yes', 'no']}
+                error={fieldErrors.hostelOptIn}
               />
               <CreativeSelect
                 label="Library Facility At Admission"
@@ -955,52 +1089,18 @@ const EnrollmentWizard = ({
                 onChange={(e) => setFormData({
                   ...formData,
                   libraryOptIn: e.target.value,
-                  libraryStatus: e.target.value === 'yes' ? formData.libraryStatus : 'inactive',
-                  libraryMonthlyCharge: e.target.value === 'yes' ? formData.libraryMonthlyCharge : '0',
+                  libraryStatus: e.target.value === 'yes' ? 'active' : 'inactive',
                 })}
                 options={['Select', 'yes', 'no']}
+                error={fieldErrors.libraryOptIn}
               />
-              {formData.transportOptIn === 'yes' && (
-                <CreativeSelect
-                  label="Transport Status"
-                value={formData.transportStatus}
-                onChange={(e) => setFormData({ ...formData, transportStatus: e.target.value })}
-                options={['active', 'inactive']}
-              />
-            )}
-              {formData.hostelOptIn === 'yes' && (
-                <CreativeSelect
-                  label="Hostel Status"
-                  value={formData.hostelStatus}
-                  onChange={(e) => setFormData({ ...formData, hostelStatus: e.target.value })}
-                  options={['active', 'inactive']}
-                />
-              )}
-              {formData.libraryOptIn === 'yes' && (
-                <>
-                  <CreativeSelect
-                    label="Library Status"
-                    value={formData.libraryStatus}
-                    onChange={(e) => setFormData({ ...formData, libraryStatus: e.target.value })}
-                    options={['active', 'inactive']}
-                  />
-                  <CreativeInput
-                    label="Library Monthly Charge"
-                    type="number"
-                    min="0"
-                    value={formData.libraryMonthlyCharge}
-                    onChange={(e) => setFormData({ ...formData, libraryMonthlyCharge: e.target.value })}
-                    placeholder="500"
-                  />
-                </>
-              )}
             <div className="md:col-span-2">
               <CreativeInput
                 label="Student Portal Password"
                 type="password"
                 value={formData.studentPortalPassword}
                 onChange={(e) => setFormData({ ...formData, studentPortalPassword: e.target.value })}
-                placeholder="Optional. Default: guardian phone first 6 digits + birth year"
+                placeholder="Optional. Default: father phone first 6 digits + birth year"
               />
             </div>
           </div>
@@ -1026,7 +1126,7 @@ const EnrollmentWizard = ({
                 placeholder="Enter document name"
               />
             )}
-            <DocumentUploadField label="File Upload" value={formData.fileUploadPath} onBrowse={handleDocumentBrowse} />
+            <DocumentUploadField label="File Upload" value={formData.fileUploadPath} onBrowse={handleDocumentBrowse} error={fieldErrors.documents} />
           </div>
 
           <div className="mt-5 flex flex-col gap-3 sm:flex-row">
@@ -1083,11 +1183,8 @@ const EnrollmentWizard = ({
 
           <WizardButtons
             label="Continue to ID Generation"
-            onNext={() => {
-              if (formData.documents.length > 0) setCurrentStep(5);
-            }}
+            onNext={() => setCurrentStep(5)}
             onBack={() => setCurrentStep(3)}
-            isDisabled={formData.documents.length === 0}
           />
         </div>
       )}
@@ -1096,7 +1193,7 @@ const EnrollmentWizard = ({
         <div>
           <FormHeader eyebrow="Step 05" title="Student ID generation" desc="Upload the student photo, review the full form, and confirm to generate the QR code with all student details." />
           <div className="mt-8 grid gap-5">
-            <DocumentUploadField label="Student Photo Upload" value={formData.photoUrl ? 'Photo selected' : ''} onBrowse={handlePhotoBrowse} />
+            <DocumentUploadField label="Student Photo Upload" value={formData.photoUrl ? 'Photo selected' : ''} onBrowse={handlePhotoBrowse} error={fieldErrors.photoUrl} />
           </div>
 
           {formError ? (
@@ -1130,7 +1227,7 @@ const EnrollmentWizard = ({
                 <div className="mt-8 grid gap-3 text-sm text-slate-300">
                   <PreviewRow icon={IdCard} value={draftSystemId} />
                   <PreviewRow icon={Mail} value={formData.email || 'Email not added'} />
-                  <PreviewRow icon={Phone} value={formData.guardianPhone || 'Guardian phone not added'} />
+                  <PreviewRow icon={Phone} value={formData.guardianPhone || 'Father phone not added'} />
                   <PreviewRow icon={Calendar} value={today} />
                 </div>
               </div>
@@ -1155,8 +1252,8 @@ const EnrollmentWizard = ({
             </ReviewCard>
 
             <ReviewCard title="Profile">
-              <ReviewLine label="Guardian" value={formData.guardianName || '-'} />
-              <ReviewLine label="Mother Name" value={formData.motherName || '-'} />
+              <ReviewLine label="Father" value={combineNameParts(formData.guardianFirstName, formData.guardianLastName) || '-'} />
+              <ReviewLine label="Mother Name" value={combineNameParts(formData.motherFirstName, formData.motherLastName) || '-'} />
               <ReviewLine label="Blood Group" value={formData.bloodGroup || '-'} />
               <ReviewLine label="Category" value={formData.category || 'Select'} />
               <ReviewLine label="Previous School" value={formData.prevSchool || '-'} />
@@ -1165,12 +1262,10 @@ const EnrollmentWizard = ({
             <ReviewCard title="Admission">
               <ReviewLine label="Class" value={formData.className || '-'} />
               <ReviewLine label="Section" value={formData.section || '-'} />
-              <ReviewLine label="Enrollment" value={draftEnrollmentNo} />
-              <ReviewLine label="Admission Date" value={today} />
               <ReviewLine label="Admission Category" value={formData.admissionCategory || 'Select'} />
               <ReviewLine label="Transport" value={formData.transportOptIn === 'yes' ? `Requested | ${formData.transportStatus}` : 'Not requested'} />
               <ReviewLine label="Hostel" value={formData.hostelOptIn === 'yes' ? `Requested | ${formData.hostelStatus}` : 'Not requested'} />
-              <ReviewLine label="Library" value={formData.libraryOptIn === 'yes' ? `Requested | ${formData.libraryStatus} | Rs ${formData.libraryMonthlyCharge}/month` : 'Not requested'} />
+              <ReviewLine label="Library" value={formData.libraryOptIn === 'yes' ? `Requested | ${formData.libraryStatus}` : 'Not requested'} />
               <ReviewLine
                 label="Portal Password"
                 value={formData.studentPortalPassword || buildDefaultPortalPassword(formData)}
@@ -1264,13 +1359,12 @@ const StudentCard = ({ student, onDelete, onFacilityToggle, onOpen }) => (
             label="Library"
             requested={student.libraryOptIn === 'yes' || student.libraryOptIn === true}
             status={student.libraryStatus || 'inactive'}
-            meta={student.libraryOptIn === 'yes' || student.libraryOptIn === true ? `Rs ${student.libraryMonthlyCharge || '0'}/month` : 'Not requested yet'}
+            meta={student.libraryOptIn === 'yes' || student.libraryOptIn === true ? 'Handled in fees management' : 'Not requested yet'}
             onToggle={(e) => {
               e.stopPropagation();
               onFacilityToggle(student.id, {
                 libraryOptIn: 'yes',
                 libraryStatus: student.libraryStatus === 'active' ? 'inactive' : 'active',
-                libraryMonthlyCharge: student.libraryMonthlyCharge || '0',
               });
             }}
           />
@@ -1317,21 +1411,22 @@ const FormHeader = ({ eyebrow, title, desc }) => (
   </div>
 );
 
-const CreativeInput = ({ label, ...props }) => (
+const CreativeInput = ({ label, error, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <input
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 ${error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-cyan-500 focus:ring-cyan-100'}`}
       {...props}
     />
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );
 
-const CreativeSelect = ({ label, options, ...props }) => (
+const CreativeSelect = ({ label, options, error, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white focus:ring-4 ${error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-cyan-500 focus:ring-cyan-100'}`}
       {...props}
     >
       {options.map((option) => (
@@ -1340,13 +1435,14 @@ const CreativeSelect = ({ label, options, ...props }) => (
         </option>
       ))}
     </select>
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );
 
-const DocumentUploadField = ({ label, value, onBrowse }) => (
+const DocumentUploadField = ({ label, value, onBrowse, error }) => (
   <div className="space-y-2.5 md:col-span-2">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
-    <label className="flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-white">
+    <label className={`flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl border-2 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-white ${error ? 'border-rose-400 hover:border-rose-500' : 'border-slate-200 hover:border-cyan-300'}`}>
       <div className="min-w-0">
         <p className={`truncate ${value ? 'text-slate-900' : 'text-slate-400'}`}>
           {value || 'Click anywhere in this field to browse and select a file'}
@@ -1357,16 +1453,18 @@ const DocumentUploadField = ({ label, value, onBrowse }) => (
       </div>
       <input type="file" className="hidden" onChange={onBrowse} />
     </label>
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );
 
-const CreativeTextarea = ({ label, ...props }) => (
+const CreativeTextarea = ({ label, error, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <textarea
-      className="min-h-32 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+      className={`min-h-32 w-full rounded-2xl border-2 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 ${error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-cyan-500 focus:ring-cyan-100'}`}
       {...props}
     />
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );
 
@@ -1430,7 +1528,7 @@ const FacilitySummary = ({ student, compact = false }) => {
     <div className={classes}>
       <div>Transport: {transportRequested ? (student.transportStatus || 'inactive') : 'not requested'}</div>
       <div>Hostel: {hostelRequested ? (student.hostelStatus || 'inactive') : 'not requested'}</div>
-      <div>Library: {libraryRequested ? `${student.libraryStatus || 'inactive'} | Rs ${student.libraryMonthlyCharge || '0'}/month` : 'not requested'}</div>
+      <div>Library: {libraryRequested ? (student.libraryStatus || 'inactive') : 'not requested'}</div>
     </div>
   );
 };
@@ -1452,6 +1550,146 @@ const FacilityToggleRow = ({ label, requested, status, meta, onToggle }) => (
 );
 
 export default StudentManagement;
+
+function normalizeStudentFieldValue(field, value) {
+  const rawValue = String(value ?? '');
+
+  if (field === 'mobile' || field === 'guardianPhone') {
+    return rawValue.replace(/\D/g, '').slice(0, 10);
+  }
+
+  if (field === 'pincode') {
+    return rawValue.replace(/\D/g, '').slice(0, 6);
+  }
+
+  if (UPPERCASE_STUDENT_FIELDS.has(field)) {
+    return rawValue.toUpperCase();
+  }
+
+  return value;
+}
+
+function validateStudentForm(formData, options = {}) {
+  const errors = {
+    ...validateStudentStep(1, formData),
+    ...validateStudentStep(2, formData),
+    ...validateStudentStep(3, formData),
+  };
+
+  if (options.requireDocuments && (!formData.documents || formData.documents.length === 0)) {
+    errors.documents = 'At least one student document is required.';
+  }
+
+  return errors;
+}
+
+function validateStudentStep(step, formData) {
+  const errors = {};
+
+  if (step === 1) {
+    if (!String(formData.firstName || '').trim()) {
+      errors.firstName = 'First name is required.';
+    }
+
+    if (!String(formData.dob || '').trim()) {
+      errors.dob = 'Date of birth is required.';
+    }
+
+    if (!String(formData.mobile || '').trim()) {
+      errors.mobile = 'Student mobile number is required.';
+    }
+  }
+
+  if (formData.mobile && !/^\d{10}$/.test(formData.mobile)) {
+    errors.mobile = 'Student mobile number must be exactly 10 digits.';
+  }
+
+  if (step === 2) {
+    if (!String(formData.guardianFirstName || '').trim()) {
+      errors.guardianFirstName = 'Father first name is required.';
+    }
+
+    if (!String(formData.motherFirstName || '').trim()) {
+      errors.motherFirstName = 'Mother first name is required.';
+    }
+
+    if (!String(formData.guardianPhone || '').trim()) {
+      errors.guardianPhone = 'Father mobile number is required.';
+    }
+
+    if (!String(formData.category || '').trim()) {
+      errors.category = 'Category is required.';
+    }
+
+    if (!String(formData.address || '').trim()) {
+      errors.address = 'Permanent address is required.';
+    }
+
+    if (!String(formData.city || '').trim()) {
+      errors.city = 'City is required.';
+    }
+
+    if (!String(formData.pincode || '').trim()) {
+      errors.pincode = 'Pincode is required.';
+    }
+
+    if (!String(formData.state || '').trim()) {
+      errors.state = 'State is required.';
+    }
+  }
+
+  if (formData.guardianPhone && !/^\d{10}$/.test(formData.guardianPhone)) {
+    errors.guardianPhone = 'Father mobile number must be exactly 10 digits.';
+  }
+
+  if (formData.pincode && !/^\d{6}$/.test(formData.pincode)) {
+    errors.pincode = 'Pincode must be exactly 6 digits.';
+  }
+
+  if (step === 3) {
+    if (!String(formData.className || '').trim()) {
+      errors.className = 'Class is required.';
+    }
+
+    if (!String(formData.section || '').trim()) {
+      errors.section = 'Section is required.';
+    }
+
+    if (!String(formData.admissionCategory || '').trim()) {
+      errors.admissionCategory = 'Admission category is required.';
+    }
+
+    if (!String(formData.transportOptIn || '').trim()) {
+      errors.transportOptIn = 'Select transport facility option.';
+    }
+
+    if (!String(formData.hostelOptIn || '').trim()) {
+      errors.hostelOptIn = 'Select hostel facility option.';
+    }
+
+    if (!String(formData.libraryOptIn || '').trim()) {
+      errors.libraryOptIn = 'Select library facility option.';
+    }
+  }
+
+  if (step === 4 && (!formData.documents || formData.documents.length === 0)) {
+    errors.documents = 'At least one student document is required.';
+  }
+
+  return errors;
+}
+
+function combineNameParts(firstName, lastName) {
+  return [firstName, lastName].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+}
+
+function splitNameParts(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' '),
+  };
+}
 
 function buildDefaultPortalPassword(formData) {
   const guardianDigits = String(formData.guardianPhone || '').replace(/\D/g, '');
@@ -1482,10 +1720,9 @@ function buildStudentQrPayload(student) {
     `Gender: ${student.gender || 'N/A'}`,
     `Mobile: ${student.mobile || 'N/A'}`,
     `Email: ${student.email || 'N/A'}`,
-    `Guardian: ${student.guardianName || 'N/A'}`,
-    `Guardian Phone: ${student.guardianPhone || 'N/A'}`,
+    `Father: ${student.guardianName || 'N/A'}`,
+    `Father Phone: ${student.guardianPhone || 'N/A'}`,
     `Blood Group: ${student.bloodGroup || 'N/A'}`,
-    `Admission Date: ${student.admissionDate || 'N/A'}`,
     `Documents: ${documentSummary || 'N/A'}`,
   ].join('\n');
 }
@@ -1506,13 +1743,19 @@ function mapStudentToFormData(student) {
     regDate: student.regDate || '',
     bloodGroup: student.bloodGroup || '',
     address: student.address || '',
+    city: student.city || '',
+    pincode: student.pincode || '',
+    state: student.state || '',
     guardianName: student.guardianName || '',
+    guardianFirstName: splitNameParts(student.guardianName).firstName,
+    guardianLastName: splitNameParts(student.guardianName).lastName,
     motherName: student.motherName || '',
+    motherFirstName: splitNameParts(student.motherName).firstName,
+    motherLastName: splitNameParts(student.motherName).lastName,
     guardianPhone: student.guardianPhone || '',
     prevSchool: student.prevSchool || '',
     category: student.category || '',
     admissionDate: student.admissionDate || '',
-    enrollmentNo: student.enrollmentNo || '',
     className: student.className || '',
     section: student.section || '',
     assignedClass: student.assignedClass || '',
@@ -1523,7 +1766,6 @@ function mapStudentToFormData(student) {
     transportStatus: student.transportStatus || 'inactive',
     hostelStatus: student.hostelStatus || 'inactive',
     libraryStatus: student.libraryStatus || 'inactive',
-    libraryMonthlyCharge: student.libraryMonthlyCharge || '0',
     studentPortalPassword: student.studentPortalPassword || '',
     documentType: student.documentType || '',
     otherDocumentName: student.otherDocumentName || '',
@@ -1567,8 +1809,13 @@ async function uploadStudentAssets(formData, pendingPhotoFile) {
 }
 
 function prepareStudentFormDataForSave(formData) {
+  const guardianName = combineNameParts(formData.guardianFirstName, formData.guardianLastName) || formData.guardianName;
+  const motherName = combineNameParts(formData.motherFirstName, formData.motherLastName) || formData.motherName;
+
   return {
     ...formData,
+    guardianName,
+    motherName,
     documents: (formData.documents || []).map((document) => stripPendingFile(document)),
     fileUploadPath: '',
   };
@@ -1621,6 +1868,8 @@ function StudentDetailView({
   student,
   formData,
   setFormData,
+  updateFormField,
+  fieldErrors,
   onBack,
   onSave,
   isSaving,
@@ -1688,23 +1937,31 @@ function StudentDetailView({
             <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5">
               <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">Editable Details</p>
               <div className="mt-5 grid gap-5 md:grid-cols-2">
-                <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => setFormData({ ...formData, firstName: e.target.value })} />
-                <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} />
-                <CreativeInput label="Date of Birth" type="date" value={formData.dob} onChange={(e) => setFormData({ ...formData, dob: e.target.value })} />
+                <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => updateFormField('firstName', e.target.value)} error={fieldErrors.firstName} />
+                <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => updateFormField('lastName', e.target.value)} error={fieldErrors.lastName} />
+                <CreativeInput label="Date of Birth" type="date" value={formData.dob} onChange={(e) => updateFormField('dob', e.target.value)} error={fieldErrors.dob} />
                 <CreativeSelect label="Gender" value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })} options={['Male', 'Female', 'Other']} />
                 <CreativeInput label="Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
-                <CreativeInput label="Mobile" value={formData.mobile} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
-                <CreativeInput label="Guardian Name" value={formData.guardianName} onChange={(e) => setFormData({ ...formData, guardianName: e.target.value })} />
-                <CreativeInput label="Mother Name" value={formData.motherName} onChange={(e) => setFormData({ ...formData, motherName: e.target.value })} />
-                <CreativeInput label="Guardian Phone" value={formData.guardianPhone} onChange={(e) => setFormData({ ...formData, guardianPhone: e.target.value })} />
-                <CreativeInput label="Blood Group" value={formData.bloodGroup} onChange={(e) => setFormData({ ...formData, bloodGroup: e.target.value })} />
-                <CreativeSelect label="Category" value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} options={CATEGORY_OPTIONS} />
-                <CreativeInput label="Previous School" value={formData.prevSchool} onChange={(e) => setFormData({ ...formData, prevSchool: e.target.value })} />
+                <CreativeInput label="Mobile" value={formData.mobile} onChange={(e) => updateFormField('mobile', e.target.value)} inputMode="numeric" error={fieldErrors.mobile} />
+                <CreativeInput label="Father First Name" value={formData.guardianFirstName} onChange={(e) => updateFormField('guardianFirstName', e.target.value)} error={fieldErrors.guardianFirstName} />
+                <CreativeInput label="Father Last Name (Optional)" value={formData.guardianLastName} onChange={(e) => updateFormField('guardianLastName', e.target.value)} error={fieldErrors.guardianLastName} />
+                <CreativeInput label="Mother First Name" value={formData.motherFirstName} onChange={(e) => updateFormField('motherFirstName', e.target.value)} error={fieldErrors.motherFirstName} />
+                <CreativeInput label="Mother Last Name (Optional)" value={formData.motherLastName} onChange={(e) => updateFormField('motherLastName', e.target.value)} error={fieldErrors.motherLastName} />
+                <CreativeInput label="Father Phone" value={formData.guardianPhone} onChange={(e) => updateFormField('guardianPhone', e.target.value)} inputMode="numeric" error={fieldErrors.guardianPhone} />
+                <CreativeSelect label="Blood Group (Optional)" value={formData.bloodGroup} onChange={(e) => updateFormField('bloodGroup', e.target.value)} options={BLOOD_GROUP_OPTIONS} />
+                <CreativeSelect label="Category" value={formData.category} onChange={(e) => updateFormField('category', e.target.value)} options={CATEGORY_OPTIONS} error={fieldErrors.category} />
+                <CreativeInput label="Previous School" value={formData.prevSchool} onChange={(e) => updateFormField('prevSchool', e.target.value)} />
                 <CreativeInput label="Registration Date" type="date" value={formData.regDate} onChange={(e) => setFormData({ ...formData, regDate: e.target.value })} />
-                <CreativeInput label="Admission Date" type="date" value={formData.admissionDate} onChange={(e) => setFormData({ ...formData, admissionDate: e.target.value })} />
-                <CreativeInput label="Class" value={formData.className} onChange={(e) => setFormData({ ...formData, className: e.target.value, assignedClass: [e.target.value, formData.section].filter(Boolean).join(' / ') })} />
-                <CreativeSelect label="Section" value={formData.section} onChange={(e) => setFormData({ ...formData, section: e.target.value, assignedClass: [formData.className, e.target.value].filter(Boolean).join(' / ') })} options={SECTION_OPTIONS.filter((option) => option !== 'Select')} />
-                <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => setFormData({ ...formData, admissionCategory: e.target.value })} options={ADMISSION_CATEGORY_OPTIONS} />
+                <CreativeInput label="Class" value={formData.className} onChange={(e) => {
+                  const className = normalizeStudentFieldValue('className', e.target.value);
+                  setFormData({ ...formData, className, assignedClass: [className, formData.section].filter(Boolean).join(' / ') });
+                  clearFieldError('className');
+                }} error={fieldErrors.className} />
+                <CreativeSelect label="Section" value={formData.section} onChange={(e) => {
+                  setFormData({ ...formData, section: e.target.value, assignedClass: [formData.className, e.target.value].filter(Boolean).join(' / ') });
+                  clearFieldError('section');
+                }} options={SECTION_OPTIONS.filter((option) => option !== 'Select')} error={fieldErrors.section} />
+                <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
                 <div className="space-y-2.5">
                   <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Portal Password</label>
                   <div className="relative">
@@ -1727,12 +1984,14 @@ function StudentDetailView({
                 <CreativeSelect label="Transport Status" value={formData.transportStatus} onChange={(e) => setFormData({ ...formData, transportStatus: e.target.value })} options={['active', 'inactive']} />
                 <CreativeSelect label="Hostel Requested" value={formData.hostelOptIn} onChange={(e) => setFormData({ ...formData, hostelOptIn: e.target.value, hostelStatus: e.target.value === 'yes' ? formData.hostelStatus : 'inactive' })} options={['yes', 'no']} />
                 <CreativeSelect label="Hostel Status" value={formData.hostelStatus} onChange={(e) => setFormData({ ...formData, hostelStatus: e.target.value })} options={['active', 'inactive']} />
-                <CreativeSelect label="Library Requested" value={formData.libraryOptIn} onChange={(e) => setFormData({ ...formData, libraryOptIn: e.target.value, libraryStatus: e.target.value === 'yes' ? formData.libraryStatus : 'inactive', libraryMonthlyCharge: e.target.value === 'yes' ? formData.libraryMonthlyCharge : '0' })} options={['yes', 'no']} />
+                <CreativeSelect label="Library Requested" value={formData.libraryOptIn} onChange={(e) => setFormData({ ...formData, libraryOptIn: e.target.value, libraryStatus: e.target.value === 'yes' ? formData.libraryStatus : 'inactive' })} options={['yes', 'no']} />
                 <CreativeSelect label="Library Status" value={formData.libraryStatus} onChange={(e) => setFormData({ ...formData, libraryStatus: e.target.value })} options={['active', 'inactive']} />
-                <CreativeInput label="Library Monthly Charge" type="number" min="0" value={formData.libraryMonthlyCharge} onChange={(e) => setFormData({ ...formData, libraryMonthlyCharge: e.target.value })} />
                 <div className="md:col-span-2">
-                  <CreativeTextarea label="Address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+                  <CreativeTextarea label="Permanent Address" value={formData.address} onChange={(e) => updateFormField('address', e.target.value)} error={fieldErrors.address} />
                 </div>
+                <CreativeInput label="City" value={formData.city} onChange={(e) => updateFormField('city', e.target.value)} error={fieldErrors.city} />
+                <CreativeInput label="Pincode" value={formData.pincode} onChange={(e) => updateFormField('pincode', e.target.value)} inputMode="numeric" error={fieldErrors.pincode} />
+                <CreativeInput label="State" value={formData.state} onChange={(e) => updateFormField('state', e.target.value)} error={fieldErrors.state} />
               </div>
             </div>
 
@@ -1801,7 +2060,7 @@ function StudentDetailView({
               <ReviewLine label="Assigned Class" value={formData.assignedClass || [formData.className, formData.section].filter(Boolean).join(' / ') || '-'} />
               <ReviewLine label="Email" value={formData.email || '-'} />
               <ReviewLine label="Mobile" value={formData.mobile || '-'} />
-              <ReviewLine label="Guardian" value={formData.guardianName || '-'} />
+              <ReviewLine label="Father" value={formData.guardianName || '-'} />
               <ReviewLine label="Documents" value={String(formData.documents.length)} />
             </ReviewCard>
           </div>
@@ -1869,6 +2128,49 @@ function ConfirmationModal({ open, studentName, studentClass, onCancel, onConfir
             className="inline-flex flex-1 items-center justify-center rounded-2xl bg-emerald-600 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
           >
             {isSaving ? 'Saving Student...' : 'Yes, Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteStudentModal({ open, student, onCancel, onConfirm, isDeleting }) {
+  if (!open) {
+    return null;
+  }
+
+  const studentName = `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || 'this student';
+  const classLabel = getStudentClassLabel(student || {});
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-md">
+      <div className="w-full max-w-md rounded-4xl border border-white/30 bg-white/95 p-7 text-center shadow-[0_30px_90px_-30px_rgba(15,23,42,0.55)]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+          <Trash2 size={24} />
+        </div>
+        <p className="mt-5 text-[11px] font-black uppercase tracking-[0.28em] text-rose-600">Delete Student</p>
+        <h3 className="mt-3 font-serif text-3xl font-black italic tracking-tight text-slate-950">Are you sure?</h3>
+        <p className="mt-4 text-sm leading-7 text-slate-600">
+          This will permanently delete <span className="font-black text-slate-900">{studentName}</span>
+          {classLabel !== 'Unassigned' ? <span> from <span className="font-black text-slate-900">{classLabel}</span></span> : null}.
+        </p>
+        <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="inline-flex flex-1 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="inline-flex flex-1 items-center justify-center rounded-2xl bg-rose-600 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
+          >
+            {isDeleting ? 'Deleting...' : 'Yes, Delete'}
           </button>
         </div>
       </div>

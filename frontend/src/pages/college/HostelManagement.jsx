@@ -528,7 +528,7 @@ const HostelManagement = () => {
                 <InputField label="Assign Bed" value={residentForm.bedNumber} onChange={(e) => setResidentForm({ ...residentForm, bedNumber: e.target.value })} placeholder="Leave blank for auto" />
                 <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => setResidentForm({ ...residentForm, checkInDate: e.target.value })} />
                 <InputField label="Monthly Charge" type="number" min="0" value={residentForm.monthlyCharge} onChange={(e) => setResidentForm({ ...residentForm, monthlyCharge: e.target.value })} placeholder="Auto from room" />
-                <InputField label="Guardian Contact" value={residentForm.guardianContact || selectedStudent?.guardianPhone || ''} onChange={(e) => setResidentForm({ ...residentForm, guardianContact: e.target.value })} />
+                <InputField label="Father Contact" value={residentForm.guardianContact || selectedStudent?.guardianPhone || ''} onChange={(e) => setResidentForm({ ...residentForm, guardianContact: e.target.value })} />
                 <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => setResidentForm({ ...residentForm, emergencyContact: e.target.value })} />
                 <div className="md:col-span-2 xl:col-span-3 rounded-[1.3rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-semibold text-emerald-800">
                   {selectedRoom

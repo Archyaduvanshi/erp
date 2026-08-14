@@ -4,14 +4,35 @@ import { instituteApi, uploadApi } from '../utils/api';
 import { 
   GraduationCap, Building2, Mail, Lock, ArrowRight, 
   CheckCircle2, User, Phone, MapPin, Hash, Globe, 
-  Upload, School, Landmark, ShieldCheck 
+  Upload, School, Landmark, ShieldCheck, Eye, EyeOff
 } from 'lucide-react';
+
+const UPPERCASE_FIELDS = [
+  'instituteName',
+  'affiliationNo',
+  'affiliatedFrom',
+  'email',
+  'address',
+  'state',
+  'city',
+];
+
+const DIGIT_FIELDS = {
+  contact: 10,
+  pincode: 6,
+};
+
+const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+const PASSWORD_MESSAGE = 'Password must be at least 8 characters with 1 uppercase letter, 1 lowercase letter, 1 number, and 1 symbol.';
 
 const RegisterInstitute = () => {
   const navigate = useNavigate();
   const [isSuccess, setIsSuccess] = useState(false);
   const [logoPreview, setLogoPreview] = useState(null);
+  const [logoFile, setLogoFile] = useState(null);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [visiblePasswordField, setVisiblePasswordField] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -31,34 +52,98 @@ const RegisterInstitute = () => {
     confirmPassword: ''
   });
 
-  const handleLogoChange = async (e) => {
+  const handleLogoChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/institutes/logos');
-      setLogoPreview(uploadedFile.url);
-      setError('');
-    } catch (uploadError) {
-      setError(uploadError.message || 'Unable to upload logo to ImageKit.');
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+    setError('');
+    setFieldErrors((currentErrors) => ({ ...currentErrors, logo: '' }));
+  };
+
+  const updateField = (field, value) => {
+    let nextValue = value;
+
+    if (UPPERCASE_FIELDS.includes(field)) {
+      nextValue = value.toUpperCase();
     }
+
+    if (DIGIT_FIELDS[field]) {
+      nextValue = value.replace(/\D/g, '').slice(0, DIGIT_FIELDS[field]);
+    }
+
+    setFormData((currentData) => ({ ...currentData, [field]: nextValue }));
+    setFieldErrors((currentErrors) => ({ ...currentErrors, [field]: '' }));
+    setError('');
+  };
+
+  const validateForm = () => {
+    const errors = {};
+
+    Object.entries(formData).forEach(([field, value]) => {
+      if (field === 'website') return;
+      if (!String(value).trim()) {
+        errors[field] = 'This field is required.';
+      }
+    });
+
+    if (!logoFile && !logoPreview) {
+      errors.logo = 'Institution logo is required.';
+    }
+
+    if (formData.contact && !/^\d{10}$/.test(formData.contact)) {
+      errors.contact = 'Contact number must be exactly 10 digits.';
+    }
+
+    if (formData.pincode && !/^\d{6}$/.test(formData.pincode)) {
+      errors.pincode = 'Pincode must be exactly 6 digits.';
+    }
+
+    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      errors.email = 'Official email must be valid.';
+    }
+
+    if (formData.username && !/^[A-Za-z0-9]+$/.test(formData.username)) {
+      errors.username = 'Username can contain only small letters, capital letters, and numbers.';
+    }
+
+    if (formData.password && !PASSWORD_PATTERN.test(formData.password)) {
+      errors.password = PASSWORD_MESSAGE;
+    }
+
+    if (formData.confirmPassword && formData.password !== formData.confirmPassword) {
+      errors.confirmPassword = 'Password and confirm password do not match.';
+    }
+
+    return errors;
+  };
+
+  const togglePasswordVisibility = (field) => {
+    setVisiblePasswordField((currentField) => currentField === field ? null : field);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
 
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match.');
+    const validationErrors = validateForm();
+    if (Object.keys(validationErrors).length > 0) {
+      setFieldErrors(validationErrors);
+      setError('Please fix the highlighted fields.');
       return;
     }
 
     setIsSubmitting(true);
 
     try {
+      const uploadedLogo = logoFile
+        ? await uploadApi.uploadFile(logoFile, '/erp/institutes/logos')
+        : null;
       const registeredInstitute = await instituteApi.register({
         ...formData,
-        logo: logoPreview,
+        logo: uploadedLogo?.url || logoPreview,
       });
 
       localStorage.setItem('active_session', JSON.stringify(registeredInstitute));
@@ -68,6 +153,7 @@ const RegisterInstitute = () => {
       setTimeout(() => navigate('/college'), 1500);
     } catch (apiError) {
       setError(apiError.message);
+      setFieldErrors(apiError.fieldErrors || {});
     } finally {
       setIsSubmitting(false);
     }
@@ -130,7 +216,7 @@ const RegisterInstitute = () => {
             <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em]">All fields are required for multi-tenant setup</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-10">
+          <form onSubmit={handleSubmit} className="space-y-10" noValidate>
             {error && (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-left text-sm font-semibold text-rose-600">
                 {error}
@@ -145,7 +231,7 @@ const RegisterInstitute = () => {
               <div className="grid md:grid-cols-2 gap-6">
                 <InputGroup 
                   label="Institution Name" icon={Building2} placeholder="e.g. Stanford University" 
-                  value={formData.instituteName} onChange={(e) => setFormData({...formData, instituteName: e.target.value})} required
+                  value={formData.instituteName} onChange={(e) => updateField('instituteName', e.target.value)} error={fieldErrors.instituteName} required
                 />
                 <div className="space-y-2 text-left">
                   <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Institution Type</label>
@@ -160,9 +246,9 @@ const RegisterInstitute = () => {
               </div>
 
               <div className="grid md:grid-cols-3 gap-6">
-                <InputGroup label="Username" icon={User} placeholder="inst_01" value={formData.username} onChange={(e) => setFormData({...formData, username: e.target.value})} required />
-                <InputGroup label="Affiliation No." icon={Hash} placeholder="REG-12345" value={formData.affiliationNo} onChange={(e) => setFormData({...formData, affiliationNo: e.target.value})} required />
-                <InputGroup label={formData.type === 'School' ? 'Board' : 'University'} icon={School} placeholder="e.g. CBSE / AKTU" value={formData.affiliatedFrom} onChange={(e) => setFormData({...formData, affiliatedFrom: e.target.value})} required />
+                <InputGroup label="Username" icon={User} placeholder="Inst01" value={formData.username} onChange={(e) => updateField('username', e.target.value)} error={fieldErrors.username} required />
+                <InputGroup label="Affiliation No." icon={Hash} placeholder="REG-12345" value={formData.affiliationNo} onChange={(e) => updateField('affiliationNo', e.target.value)} error={fieldErrors.affiliationNo} required />
+                <InputGroup label={formData.type === 'School' ? 'Board' : 'University'} icon={School} placeholder="e.g. CBSE / AKTU" value={formData.affiliatedFrom} onChange={(e) => updateField('affiliatedFrom', e.target.value)} error={fieldErrors.affiliatedFrom} required />
               </div>
 
               {/* Logo Upload */}
@@ -178,6 +264,7 @@ const RegisterInstitute = () => {
                     <p className="text-[10px] text-slate-400">PNG, JPG up to 2MB</p>
                   </div>
                 </div>
+                {fieldErrors.logo && <p className="text-xs font-bold text-rose-600">{fieldErrors.logo}</p>}
               </div>
             </div>
 
@@ -187,11 +274,11 @@ const RegisterInstitute = () => {
                 <Globe size={14}/> 02. Digital & Contact Details
               </h3>
               <div className="grid md:grid-cols-2 gap-6">
-                <InputGroup label="Contact Number" icon={Phone} placeholder="+91 98XXX XXXXX" value={formData.contact} onChange={(e) => setFormData({...formData, contact: e.target.value})} required />
-                <InputGroup label="Official Email" icon={Mail} type="email" placeholder="admin@domain.edu" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} required />
+                <InputGroup label="Contact Number" icon={Phone} inputMode="numeric" placeholder="9876543210" value={formData.contact} onChange={(e) => updateField('contact', e.target.value)} error={fieldErrors.contact} required />
+                <InputGroup label="Official Email" icon={Mail} type="email" placeholder="admin@domain.edu" value={formData.email} onChange={(e) => updateField('email', e.target.value)} error={fieldErrors.email} required />
               </div>
               {/* Added Website URL field here */}
-              <InputGroup label="Website URL (Optional)" icon={Globe} placeholder="https://www.yourinstitute.com" value={formData.website} onChange={(e) => setFormData({...formData, website: e.target.value})} />
+              <InputGroup label="Website URL (Optional)" icon={Globe} placeholder="https://www.yourinstitute.com" value={formData.website} onChange={(e) => updateField('website', e.target.value)} error={fieldErrors.website} />
             </div>
 
             {/* SECTION 3: LOCATION */}
@@ -204,14 +291,15 @@ const RegisterInstitute = () => {
                  <textarea 
                     className="w-full bg-white border-2 border-slate-300 rounded-2xl px-5 py-4 font-bold text-sm text-slate-900 shadow-sm outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all min-h-25"
                     placeholder="Enter full physical address..."
-                    value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})}
+                    value={formData.address} onChange={(e) => updateField('address', e.target.value)}
                     required
                  />
+                 {fieldErrors.address && <p className="text-xs font-bold text-rose-600">{fieldErrors.address}</p>}
               </div>
               <div className="grid md:grid-cols-3 gap-6">
-                <InputGroup label="State" icon={MapPin} placeholder="e.g. Uttar Pradesh" value={formData.state} onChange={(e) => setFormData({...formData, state: e.target.value})} required />
-                <InputGroup label="City" icon={Building2} placeholder="e.g. Noida" value={formData.city} onChange={(e) => setFormData({...formData, city: e.target.value})} required />
-                <InputGroup label="Pincode" icon={Hash} placeholder="201301" value={formData.pincode} onChange={(e) => setFormData({...formData, pincode: e.target.value})} required />
+                <InputGroup label="State" icon={MapPin} placeholder="e.g. Uttar Pradesh" value={formData.state} onChange={(e) => updateField('state', e.target.value)} error={fieldErrors.state} required />
+                <InputGroup label="City" icon={Building2} placeholder="e.g. Noida" value={formData.city} onChange={(e) => updateField('city', e.target.value)} error={fieldErrors.city} required />
+                <InputGroup label="Pincode" icon={Hash} inputMode="numeric" placeholder="201301" value={formData.pincode} onChange={(e) => updateField('pincode', e.target.value)} error={fieldErrors.pincode} required />
               </div>
             </div>
 
@@ -221,8 +309,32 @@ const RegisterInstitute = () => {
                 <Lock size={14}/> 04. Access Security
               </h3>
               <div className="grid md:grid-cols-2 gap-6">
-                <InputGroup label="Password" icon={Lock} type="password" placeholder="••••••••" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} required />
-                <InputGroup label="Confirm Password" icon={ShieldCheck} type="password" placeholder="••••••••" value={formData.confirmPassword} onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})} required />
+                <InputGroup
+                  label="Password"
+                  icon={Lock}
+                  type={visiblePasswordField === 'password' ? 'text' : 'password'}
+                  placeholder="Password@123"
+                  value={formData.password}
+                  onChange={(e) => updateField('password', e.target.value)}
+                  error={fieldErrors.password}
+                  endAction={
+                    <PasswordToggle isVisible={visiblePasswordField === 'password'} onClick={() => togglePasswordVisibility('password')} />
+                  }
+                  required
+                />
+                <InputGroup
+                  label="Confirm Password"
+                  icon={ShieldCheck}
+                  type={visiblePasswordField === 'confirmPassword' ? 'text' : 'password'}
+                  placeholder="Password@123"
+                  value={formData.confirmPassword}
+                  onChange={(e) => updateField('confirmPassword', e.target.value)}
+                  error={fieldErrors.confirmPassword}
+                  endAction={
+                    <PasswordToggle isVisible={visiblePasswordField === 'confirmPassword'} onClick={() => togglePasswordVisibility('confirmPassword')} />
+                  }
+                  required
+                />
               </div>
             </div>
 
@@ -247,7 +359,19 @@ const FeatureItem = ({ text }) => (
   </li>
 );
 
-const InputGroup = ({ label, icon: Icon, type = "text", ...props }) => (
+const PasswordToggle = ({ isVisible, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-blue-600 focus:outline-none"
+    aria-label={isVisible ? 'Hide password' : 'Show password'}
+    title={isVisible ? 'Hide password' : 'Show password'}
+  >
+    {isVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+  </button>
+);
+
+const InputGroup = ({ label, icon: Icon, type = "text", error, endAction, ...props }) => (
   <div className="space-y-2 text-left">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <div className="relative group">
@@ -256,11 +380,14 @@ const InputGroup = ({ label, icon: Icon, type = "text", ...props }) => (
       </div>
       <input 
         type={type}
-        className="w-full bg-white border-2 border-slate-300 rounded-2xl pl-12 pr-5 py-4 font-bold text-sm text-slate-900 shadow-sm outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all placeholder:text-slate-400"
+        className={`w-full bg-white border-2 rounded-2xl pl-12 ${endAction ? 'pr-12' : 'pr-5'} py-4 font-bold text-sm text-slate-900 shadow-sm outline-none focus:ring-4 transition-all placeholder:text-slate-400 ${error ? 'border-rose-400 focus:ring-rose-100 focus:border-rose-500' : 'border-slate-300 focus:ring-blue-100 focus:border-blue-600'}`}
         {...props}
       />
+      {endAction}
     </div>
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );
 
 export default RegisterInstitute;
+

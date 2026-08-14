@@ -1,5 +1,9 @@
 package com.erp.backend.institute.service;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import com.erp.backend.exception.FieldValidationException;
 import com.erp.backend.exception.ResourceNotFoundException;
 import com.erp.backend.institute.dto.InstituteAuthResponse;
 import com.erp.backend.institute.dto.InstituteLoginRequest;
@@ -28,18 +32,18 @@ public class InstituteService {
         validateUniqueness(request);
 
         Institute institute = new Institute();
-        institute.setInstituteName(request.getInstituteName().trim());
-        institute.setType(request.getType().trim());
+        institute.setInstituteName(normalizeUppercase(request.getInstituteName()));
+        institute.setType(normalizeUppercase(request.getType()));
         institute.setUsername(request.getUsername().trim());
-        institute.setAffiliationNo(request.getAffiliationNo().trim());
-        institute.setAffiliatedFrom(request.getAffiliatedFrom().trim());
-        institute.setContact(request.getContact().trim());
+        institute.setAffiliationNo(normalizeUppercase(request.getAffiliationNo()));
+        institute.setAffiliatedFrom(normalizeUppercase(request.getAffiliatedFrom()));
+        institute.setContact(onlyDigits(request.getContact()));
         institute.setEmail(request.getEmail().trim().toLowerCase());
         institute.setWebsite(normalizeOptional(request.getWebsite()));
-        institute.setAddress(request.getAddress().trim());
-        institute.setState(request.getState().trim());
-        institute.setCity(request.getCity().trim());
-        institute.setPincode(request.getPincode().trim());
+        institute.setAddress(normalizeUppercase(request.getAddress()));
+        institute.setState(normalizeUppercase(request.getState()));
+        institute.setCity(normalizeUppercase(request.getCity()));
+        institute.setPincode(onlyDigits(request.getPincode()));
         institute.setLogo(normalizeOptional(request.getLogo()));
         institute.setPasswordHash(passwordEncoder.encode(request.getPassword()));
 
@@ -66,23 +70,40 @@ public class InstituteService {
 
     private void validateRegistrationRequest(RegisterInstituteRequest request) {
         if (!request.getPassword().equals(request.getConfirmPassword())) {
-            throw new IllegalArgumentException("Password and confirm password do not match.");
+            throw new FieldValidationException(
+                    "Password and confirm password do not match.",
+                    Map.of("confirmPassword", "Password and confirm password do not match.")
+            );
         }
     }
 
     private void validateUniqueness(RegisterInstituteRequest request) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+
         if (instituteRepository.existsByUsernameIgnoreCase(request.getUsername().trim())) {
-            throw new IllegalArgumentException("Username already taken. Please choose another.");
+            fieldErrors.put("username", "Username already taken. Please choose another.");
         }
         if (instituteRepository.existsByEmailIgnoreCase(request.getEmail().trim())) {
-            throw new IllegalArgumentException("Email is already registered.");
+            fieldErrors.put("email", "Email is already registered.");
         }
         if (instituteRepository.existsByAffiliationNoIgnoreCase(request.getAffiliationNo().trim())) {
-            throw new IllegalArgumentException("Affiliation number is already registered.");
+            fieldErrors.put("affiliationNo", "Affiliation number is already registered.");
+        }
+
+        if (!fieldErrors.isEmpty()) {
+            throw new FieldValidationException("Please fix the highlighted fields.", fieldErrors);
         }
     }
 
     private String normalizeOptional(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeUppercase(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase() : null;
+    }
+
+    private String onlyDigits(String value) {
+        return StringUtils.hasText(value) ? value.replaceAll("\\D", "") : null;
     }
 }

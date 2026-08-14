@@ -25,15 +25,19 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     let message = 'Something went wrong while contacting the server.';
+    let fieldErrors = {};
 
     try {
       const errorBody = await response.json();
       message = errorBody.message || message;
+      fieldErrors = errorBody.fieldErrors || {};
     } catch {
       message = response.statusText || message;
     }
 
-    throw new Error(message);
+    const error = new Error(message);
+    error.fieldErrors = fieldErrors;
+    throw error;
   }
 
   if (response.status === 204) {

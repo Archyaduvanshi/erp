@@ -50,6 +50,10 @@ public class Student {
     @Column(length = 2000)
     private String address;
 
+    private String city;
+    private String pincode;
+    private String state;
+
     private String guardianName;
     private String motherName;
     private String guardianPhone;

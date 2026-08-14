@@ -138,7 +138,7 @@ const StudentHostel = () => {
               >
                 <InfoRow icon={CalendarDays} label="Check In Date" value={residentRecord.checkInDate || 'Not available'} />
                 <InfoRow icon={CalendarDays} label="Check Out Date" value={residentRecord.checkOutDate || 'Currently staying'} />
-                <InfoRow icon={Phone} label="Guardian Contact" value={residentRecord.guardianContact || student?.guardianPhone || 'Not added'} />
+                <InfoRow icon={Phone} label="Father Contact" value={residentRecord.guardianContact || student?.guardianPhone || 'Not added'} />
                 <InfoRow icon={Phone} label="Emergency Contact" value={residentRecord.emergencyContact || 'Not added'} />
                 <InfoRow icon={Shield} label="Status" value={residentRecord.status || student?.hostelStatus || 'active'} />
               </InfoPanel>
