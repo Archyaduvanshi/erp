@@ -54,6 +54,8 @@ SPRING_JPA_HIBERNATE_DDL_AUTO=update
 SPRING_JPA_SHOW_SQL=false
 SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL=false
 APP_CORS_ALLOWED_ORIGINS=https://YOUR_FRONTEND_DOMAIN.vercel.app
+# Optional, useful for Vercel preview URLs:
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=https://*.vercel.app
 IMAGEKIT_PRIVATE_KEY=YOUR_IMAGEKIT_PRIVATE_KEY
 IMAGEKIT_PUBLIC_KEY=YOUR_IMAGEKIT_PUBLIC_KEY
 IMAGEKIT_URL_ENDPOINT=YOUR_IMAGEKIT_URL_ENDPOINT
@@ -87,7 +89,7 @@ After Vercel gives you the production frontend URL, update the backend CORS
 setting:
 
 ```env
-APP_CORS_ALLOWED_ORIGINS=https://YOUR_FRONTEND_DOMAIN.vercel.app
+APP_CORS_ALLOWED_ORIGINS=https://erpfrontend-kohl.vercel.app
 ```
 
 If you use a custom frontend domain, add that exact domain too:

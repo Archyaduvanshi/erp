@@ -11,16 +11,21 @@ public class CorsConfig implements WebMvcConfigurer {
     private static final String[] DEFAULT_ALLOWED_ORIGINS = {
             "http://localhost:5173",
             "http://localhost:3000",
-            "https://erpfrontend-gilt.vercel.app"
+            "https://erpfrontend-gilt.vercel.app",
+            "https://erpfrontend-kohl.vercel.app"
     };
 
     @Value("${app.cors.allowed-origins:}")
     private String allowedOrigins;
 
+    @Value("${app.cors.allowed-origin-patterns:}")
+    private String allowedOriginPatterns;
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
                 .allowedOrigins(parseOrigins())
+                .allowedOriginPatterns(parsePatterns())
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
                 .allowedHeaders("*");
     }
@@ -36,5 +41,15 @@ public class CorsConfig implements WebMvcConfigurer {
                 .filter(StringUtils::hasText)
                 .distinct()
                 .toArray(String[]::new);
+    }
+
+    private String[] parsePatterns() {
+        return StringUtils.hasText(allowedOriginPatterns)
+                ? java.util.Arrays.stream(allowedOriginPatterns.split(","))
+                        .map(String::trim)
+                        .filter(StringUtils::hasText)
+                        .distinct()
+                        .toArray(String[]::new)
+                : new String[0];
     }
 }
