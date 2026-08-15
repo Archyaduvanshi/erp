@@ -26,6 +26,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class TeacherService {
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^A-Z0-9]");
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final Pattern ONE_OR_TWO_DIGITS = Pattern.compile("^\\d{1,2}$");
 
     private final TeacherRepository teacherRepository;
     private final InstituteRepository instituteRepository;
@@ -80,6 +82,7 @@ public class TeacherService {
 
     public TeacherResponse createTeacher(Long instituteId, TeacherPayload request) {
         Institute institute = validateInstitute(instituteId);
+        validateTeacherPayload(request);
         validateUniqueness(instituteId, request);
         validatePhoto(request);
 
@@ -91,6 +94,7 @@ public class TeacherService {
 
     public TeacherResponse updateTeacher(Long instituteId, Long teacherId, TeacherPayload request) {
         Teacher teacher = findTeacher(instituteId, teacherId);
+        validateTeacherPayload(request);
         validateUniquenessForUpdate(instituteId, teacherId, request);
         validatePhoto(request);
 
@@ -102,6 +106,7 @@ public class TeacherService {
         Institute institute = validateInstitute(instituteId);
         List<Teacher> entities = teachers.stream()
                 .map(payload -> {
+                    validateTeacherPayload(payload);
                     Teacher teacher = new Teacher();
                     teacher.setInstitute(institute);
                     applyTeacherPayload(teacher, payload);
@@ -130,51 +135,118 @@ public class TeacherService {
     }
 
     private void validateUniqueness(Long instituteId, TeacherPayload request) {
-        if (StringUtils.hasText(request.personalEmail())
-                && teacherRepository.existsByInstituteIdAndPersonalEmailIgnoreCase(instituteId, request.personalEmail().trim())) {
-            throw new IllegalArgumentException("Teacher already exists with email: " + request.personalEmail());
-        }
+        String nextEmail = normalizeEmail(request.personalEmail());
+        String mobileNumber = digitsOnly(request.mobileNumber());
+        String nextEmployeeId = trim(request.employeeId());
 
-        if (StringUtils.hasText(request.employeeId())
-                && teacherRepository.existsByInstituteIdAndEmployeeIdIgnoreCase(instituteId, request.employeeId().trim())) {
-            throw new IllegalArgumentException("Teacher already exists with employee ID: " + request.employeeId());
-        }
+        teacherRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId)
+                .forEach(teacher -> {
+                    if (StringUtils.hasText(nextEmail)
+                            && nextEmail.equalsIgnoreCase(defaultValue(teacher.getPersonalEmail(), ""))) {
+                        throw new IllegalArgumentException("Teacher already exists with email: " + request.personalEmail());
+                    }
+                    if (StringUtils.hasText(mobileNumber)
+                            && mobileNumber.equals(digitsOnly(teacher.getMobileNumber()))) {
+                        throw new IllegalArgumentException("Teacher already exists with mobile number: " + mobileNumber);
+                    }
+                    if (StringUtils.hasText(nextEmployeeId)
+                            && nextEmployeeId.equalsIgnoreCase(defaultValue(teacher.getEmployeeId(), ""))) {
+                        throw new IllegalArgumentException("Teacher already exists with employee ID: " + request.employeeId());
+                    }
+                });
     }
 
     private void validateUniquenessForUpdate(Long instituteId, Long teacherId, TeacherPayload request) {
-        Teacher existingTeacher = findTeacher(instituteId, teacherId);
+        String nextEmail = normalizeEmail(request.personalEmail());
+        String nextMobile = digitsOnly(request.mobileNumber());
+        String nextEmployeeId = trim(request.employeeId());
 
-        if (StringUtils.hasText(request.personalEmail())) {
-            String nextEmail = request.personalEmail().trim();
-            if (!nextEmail.equalsIgnoreCase(defaultValue(existingTeacher.getPersonalEmail(), ""))) {
-                validateUniqueness(instituteId, request);
-                return;
-            }
+        teacherRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId)
+                .stream()
+                .filter(teacher -> !Objects.equals(teacher.getId(), teacherId))
+                .forEach(teacher -> {
+                    if (StringUtils.hasText(nextEmail)
+                            && nextEmail.equalsIgnoreCase(defaultValue(teacher.getPersonalEmail(), ""))) {
+                        throw new IllegalArgumentException("Teacher already exists with email: " + request.personalEmail());
+                    }
+                    if (StringUtils.hasText(nextMobile)
+                            && nextMobile.equals(digitsOnly(teacher.getMobileNumber()))) {
+                        throw new IllegalArgumentException("Teacher already exists with mobile number: " + nextMobile);
+                    }
+                    if (StringUtils.hasText(nextEmployeeId)
+                            && nextEmployeeId.equalsIgnoreCase(defaultValue(teacher.getEmployeeId(), ""))) {
+                        throw new IllegalArgumentException("Teacher already exists with employee ID: " + request.employeeId());
+                    }
+                });
+    }
+
+    private void validateTeacherPayload(TeacherPayload request) {
+        if (!StringUtils.hasText(request.firstName())) {
+            throw new IllegalArgumentException("First name is required.");
         }
 
-        if (StringUtils.hasText(request.employeeId())) {
-            String nextEmployeeId = request.employeeId().trim();
-            if (!nextEmployeeId.equalsIgnoreCase(defaultValue(existingTeacher.getEmployeeId(), ""))) {
-                validateUniqueness(instituteId, request);
-            }
+        String email = normalizeEmail(request.personalEmail());
+        if (!StringUtils.hasText(email)) {
+            throw new IllegalArgumentException("Personal email is required.");
+        }
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
+            throw new IllegalArgumentException("Enter a valid personal email address.");
+        }
+
+        String mobileNumber = digitsOnly(request.mobileNumber());
+        if (mobileNumber.length() != 10) {
+            throw new IllegalArgumentException("Mobile number must be exactly 10 digits.");
+        }
+
+        if (!StringUtils.hasText(request.dob())) {
+            throw new IllegalArgumentException("Date of birth is required.");
+        }
+        if (!StringUtils.hasText(request.address())) {
+            throw new IllegalArgumentException("Address is required.");
+        }
+        if (!StringUtils.hasText(request.city())) {
+            throw new IllegalArgumentException("City is required.");
+        }
+        if (!StringUtils.hasText(request.state())) {
+            throw new IllegalArgumentException("State is required.");
+        }
+        if (digitsOnly(request.pincode()).length() != 6) {
+            throw new IllegalArgumentException("Pincode must be exactly 6 digits.");
+        }
+        if (!StringUtils.hasText(request.specialization())) {
+            throw new IllegalArgumentException("Specialization is required.");
+        }
+
+        String experienceYears = digitsOnly(request.experienceYears());
+        if (!ONE_OR_TWO_DIGITS.matcher(experienceYears).matches()) {
+            throw new IllegalArgumentException("Experience years must be a one or two digit number.");
+        }
+        if (!StringUtils.hasText(request.contractType())) {
+            throw new IllegalArgumentException("Contract type is required.");
+        }
+        if (!StringUtils.hasText(request.salary())) {
+            throw new IllegalArgumentException("Monthly salary is required.");
         }
     }
 
     private void applyTeacherPayload(Teacher teacher, TeacherPayload request) {
-        teacher.setFirstName(trim(request.firstName()));
-        teacher.setLastName(trim(request.lastName()));
-        teacher.setName(buildTeacherName(request.firstName(), request.lastName()));
+        teacher.setFirstName(upper(request.firstName()));
+        teacher.setLastName(upper(request.lastName()));
+        teacher.setName(buildTeacherName(teacher.getFirstName(), teacher.getLastName()));
         teacher.setPersonalEmail(normalizeEmail(request.personalEmail()));
-        teacher.setMobileNumber(trim(request.mobileNumber()));
+        teacher.setMobileNumber(digitsOnly(request.mobileNumber()));
         teacher.setEmployeeId(resolveEmployeeId(teacher, request));
-        teacher.setAddress(trim(request.address()));
-        teacher.setSpecialization(trim(request.specialization()));
-        teacher.setExperienceYears(trim(request.experienceYears()));
-        teacher.setContractType(defaultValue(request.contractType(), "Full Time"));
+        teacher.setAddress(upper(request.address()));
+        teacher.setCity(upper(request.city()));
+        teacher.setState(upper(request.state()));
+        teacher.setPincode(digitsOnly(request.pincode()));
+        teacher.setSpecialization(upper(request.specialization()));
+        teacher.setExperienceYears(digitsOnly(request.experienceYears()));
+        teacher.setContractType(upper(defaultValue(request.contractType(), "FULL TIME")));
         teacher.setLeaveBalance(trim(request.leaveBalance()));
         teacher.setSalary(trim(request.salary()));
         teacher.setDob(trim(request.dob()));
-        teacher.setJoiningDate(resolveDate(request.joiningDate(), LocalDate.now().toString()));
+        teacher.setJoiningDate(resolveDate(teacher.getJoiningDate(), LocalDate.now().toString()));
         teacher.setTeacherPortalPassword(resolvePortalPassword(teacher, request));
         teacher.setDocumentType(trim(request.documentType()));
         teacher.setOtherDocumentName(trim(request.otherDocumentName()));
@@ -198,6 +270,9 @@ public class TeacherService {
                 teacher.getMobileNumber(),
                 teacher.getEmployeeId(),
                 teacher.getAddress(),
+                teacher.getCity(),
+                teacher.getState(),
+                teacher.getPincode(),
                 teacher.getSpecialization(),
                 teacher.getExperienceYears(),
                 teacher.getContractType(),
@@ -355,6 +430,9 @@ public class TeacherService {
         qrPayload.put("contractType", teacher.getContractType());
         qrPayload.put("joiningDate", teacher.getJoiningDate());
         qrPayload.put("address", teacher.getAddress());
+        qrPayload.put("city", teacher.getCity());
+        qrPayload.put("state", teacher.getState());
+        qrPayload.put("pincode", teacher.getPincode());
 
         try {
             return objectMapper.writeValueAsString(qrPayload);
@@ -402,6 +480,10 @@ public class TeacherService {
 
     private String trim(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String upper(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase() : null;
     }
 
     private String firstNonBlank(String primary, String fallback) {

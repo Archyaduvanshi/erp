@@ -44,6 +44,9 @@ public class Teacher {
     private String mobileNumber;
     private String employeeId;
     private String address;
+    private String city;
+    private String state;
+    private String pincode;
     private String specialization;
     private String experienceYears;
     private String contractType;

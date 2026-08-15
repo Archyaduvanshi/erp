@@ -24,7 +24,6 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
-  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -38,15 +37,16 @@ const createInitialFormData = () => ({
   lastName: '',
   personalEmail: '',
   mobileNumber: '',
-  employeeId: '',
   address: '',
+  city: '',
+  state: '',
+  pincode: '',
   specialization: '',
   dob: '',
   experienceYears: '',
-  contractType: 'Full Time',
+  contractType: '',
   leaveBalance: '',
   salary: '',
-  joiningDate: getToday(),
   teacherPortalPassword: '',
   documentType: '',
   otherDocumentName: '',
@@ -99,9 +99,40 @@ const TeacherManagement = () => {
   const draftTeacherId = `TCH-${draftEmployeeId}`;
   const resolvedPortalPassword = formData.teacherPortalPassword || buildDefaultTeacherPortalPassword(formData);
 
+  const handlePageBack = () => {
+    setFormError('');
+    setLoadError('');
+
+    if (activeTab === 'add') {
+      if (currentStep > 1) {
+        setCurrentStep((step) => step - 1);
+        return;
+      }
+      setActiveTab('list');
+      return;
+    }
+
+    if (activeTab === 'detail' || generatedTeacher) {
+      setSelectedTeacher(null);
+      setGeneratedTeacher(null);
+      setDetailFormData(createInitialFormData());
+      setActiveTab('list');
+      return;
+    }
+
+    navigate('/college');
+  };
+
   const handleDocumentAdd = () => {
     const resolvedDocumentType = formData.documentType === 'Other' ? formData.otherDocumentName.trim() : formData.documentType;
-    if (!resolvedDocumentType || !pendingDocument?.rawFile) return;
+    if (!resolvedDocumentType) {
+      setFormError('Select or enter a document type before submitting the document.');
+      return;
+    }
+    if (!pendingDocument?.rawFile) {
+      setFormError('Browse and select a document file before submitting the document.');
+      return;
+    }
 
     const nextDocument = {
       id: Date.now(),
@@ -122,6 +153,7 @@ const TeacherManagement = () => {
       fileUploadPath: '',
     });
     setPendingDocument(null);
+    setFormError('');
   };
 
   const handleDocumentRemove = (documentId) => {
@@ -163,7 +195,7 @@ const TeacherManagement = () => {
 
   const handleSave = (e) => {
     e?.preventDefault?.();
-    const stepOneValidation = validateTeacherProfileStep(formData);
+    const stepOneValidation = validateTeacherProfileStep(formData, teachers);
     const stepTwoValidation = validateTeacherWorkStep(formData);
 
     if (!stepOneValidation.isValid) {
@@ -195,37 +227,29 @@ const TeacherManagement = () => {
 
     try {
       const pendingFormData = prepareTeacherFormDataForSave(formData);
-      const resolvedEmployeeId = pendingFormData.employeeId || buildDraftEmployeeId(session?.instituteName, teachers.length + 1);
-      const resolvedTeacherId = `TCH-${resolvedEmployeeId}`;
       const resolvedPortalPassword = pendingFormData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(pendingFormData);
-      const qrPayload = buildTeacherQrPayload({
-        ...pendingFormData,
-        employeeId: resolvedEmployeeId,
-        teacherSystemId: resolvedTeacherId,
-        teacherPortalPassword: resolvedPortalPassword,
-        joiningDate: pendingFormData.joiningDate || getToday(),
-      });
-      const resolvedQrCodeData = JSON.stringify(qrPayload);
 
       const newTeacher = {
         ...pendingFormData,
-        employeeId: resolvedEmployeeId,
+        employeeId: '',
         salary: pendingFormData.salary ? String(pendingFormData.salary) : '',
-        joiningDate: pendingFormData.joiningDate || getToday(),
         paymentHistory: [],
         teacherPortalPassword: resolvedPortalPassword,
-        teacherSystemId: resolvedTeacherId,
-        qrCodeData: resolvedQrCodeData,
+        teacherSystemId: '',
+        qrCodeData: '',
         status: 'Active',
         attendanceStatus: 'Present',
       };
       const createdTeacher = await teacherApi.create(newTeacher);
       const uploadedFormData = await uploadTeacherAssets({
-        ...newTeacher,
+        ...pendingFormData,
+        employeeId: createdTeacher.employeeId,
+        teacherSystemId: createdTeacher.teacherSystemId,
+        teacherPortalPassword: resolvedPortalPassword,
         documents: formData.documents,
       }, pendingPhotoFile);
       const savedTeacher = await teacherApi.update(createdTeacher.id, {
-        ...newTeacher,
+        ...createdTeacher,
         ...uploadedFormData,
         employeeId: createdTeacher.employeeId,
         teacherSystemId: createdTeacher.teacherSystemId,
@@ -280,7 +304,14 @@ const TeacherManagement = () => {
     const resolvedDocumentType = detailFormData.documentType === 'Other'
       ? detailFormData.otherDocumentName.trim()
       : detailFormData.documentType;
-    if (!resolvedDocumentType || !(pendingDetailDocument?.fileData || pendingDetailDocument?.rawFile)) return;
+    if (!resolvedDocumentType) {
+      setLoadError('Select or enter a document type before submitting the document.');
+      return;
+    }
+    if (!(pendingDetailDocument?.fileData || pendingDetailDocument?.rawFile)) {
+      setLoadError('Browse and select a document file before submitting the document.');
+      return;
+    }
 
     setDetailFormData((current) => ({
       ...current,
@@ -302,6 +333,7 @@ const TeacherManagement = () => {
       fileUploadPath: '',
     }));
     setPendingDetailDocument(null);
+    setLoadError('');
   };
 
   const handleDetailDocumentRemove = (documentId) => {
@@ -343,6 +375,19 @@ const TeacherManagement = () => {
 
   const handleUpdateTeacher = async () => {
     if (!selectedTeacher) return;
+    const profileValidation = validateTeacherProfileStep(detailFormData, teachers, selectedTeacher.id);
+    const workValidation = validateTeacherWorkStep(detailFormData);
+
+    if (!profileValidation.isValid) {
+      setLoadError(profileValidation.message);
+      return;
+    }
+
+    if (!workValidation.isValid) {
+      setLoadError(workValidation.message);
+      return;
+    }
+
     if (!detailFormData.photoUrl) {
       setLoadError('Teacher photo is required to update the profile.');
       return;
@@ -357,14 +402,13 @@ const TeacherManagement = () => {
         teacherSystemId: selectedTeacher.teacherSystemId,
         employeeId: selectedTeacher.employeeId,
         teacherPortalPassword: resolvedPortalPassword,
-        joiningDate: pendingDetailFormData.joiningDate || getToday(),
       });
 
       const payload = {
         ...pendingDetailFormData,
         employeeId: selectedTeacher.employeeId,
         salary: pendingDetailFormData.salary ? String(pendingDetailFormData.salary) : '',
-        joiningDate: pendingDetailFormData.joiningDate || getToday(),
+        joiningDate: selectedTeacher.joiningDate || getToday(),
         paymentHistory: selectedTeacher.paymentHistory || [],
         teacherPortalPassword: resolvedPortalPassword,
         teacherSystemId: selectedTeacher.teacherSystemId,
@@ -407,6 +451,9 @@ const TeacherManagement = () => {
       String(teacher.personalEmail || '').toLowerCase().includes(searchValue) ||
       String(teacher.employeeId || '').toLowerCase().includes(searchValue) ||
       String(teacher.address || '').toLowerCase().includes(searchValue) ||
+      String(teacher.city || '').toLowerCase().includes(searchValue) ||
+      String(teacher.state || '').toLowerCase().includes(searchValue) ||
+      String(teacher.pincode || '').toLowerCase().includes(searchValue) ||
       String(teacher.specialization || '').toLowerCase().includes(searchValue) ||
       String(teacher.teacherSystemId || '').toLowerCase().includes(searchValue);
     const matchesContract = contractFilter === 'All Contracts' || teacher.contractType === contractFilter;
@@ -414,7 +461,7 @@ const TeacherManagement = () => {
   });
 
   const activeTeachers = teachers.filter((teacher) => teacher.status === 'Active').length;
-  const fullTimeTeachers = teachers.filter((teacher) => teacher.contractType === 'Full Time').length;
+  const fullTimeTeachers = teachers.filter((teacher) => String(teacher.contractType || '').toUpperCase() === 'FULL TIME').length;
   const uploadedDocs = teachers.reduce((count, teacher) => count + (teacher.documents || []).length, 0);
 
   return (
@@ -423,7 +470,7 @@ const TeacherManagement = () => {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/college')}
+              onClick={handlePageBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft size={14} />
@@ -489,7 +536,6 @@ const TeacherManagement = () => {
               setSelectedTeacher(null);
               setActiveTab('add');
             }}
-            onOpenSalaryDesk={() => navigate('/college/salary')}
             onDelete={handleDelete}
             onOpenTeacher={handleOpenTeacher}
           />
@@ -524,6 +570,7 @@ const TeacherManagement = () => {
             setCurrentStep={setCurrentStep}
             formData={formData}
             setFormData={setFormData}
+            teachers={teachers}
             handleSave={handleSave}
             formError={formError}
             setFormError={setFormError}
@@ -564,53 +611,14 @@ const DirectoryView = ({
   setContractFilter,
   availableContracts,
   onCreate,
-  onOpenSalaryDesk,
   onDelete,
   onOpenTeacher,
 }) => (
   <div className="space-y-8">
-    <section className="overflow-hidden rounded-4xl border border-slate-200/80 bg-slate-950 text-white shadow-[0_30px_80px_-40px_rgba(15,23,42,0.9)]">
-      <div className="grid gap-8 px-7 py-8 lg:grid-cols-[1.5fr_0.9fr] lg:px-10 lg:py-10">
-        <div className="relative">
-          <div className="absolute -left-16 -top-16 h-40 w-40 rounded-full bg-emerald-400/15 blur-3xl" />
-          <div className="absolute bottom-0 right-10 h-32 w-32 rounded-full bg-teal-500/10 blur-3xl" />
-          <div className="relative">
-            <p className="mb-3 text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300">HR Control Center</p>
-            <h2 className="max-w-2xl font-serif text-4xl font-black italic leading-none tracking-tight">
-              Faculty records, document readiness, and ID generation from one focused workspace.
-            </h2>
-            <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300">
-              Keep teacher profiles current, monitor attendance posture, verify documents, and issue auto-ready ID cards with QR data.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button
-                onClick={onCreate}
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-400 px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-950 transition hover:bg-emerald-300"
-              >
-                <UserPlus size={14} />
-                Add Faculty Record
-              </button>
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">
-                <ShieldCheck size={14} />
-                {uploadedDocs} documents uploaded
-              </div>
-              <button
-                onClick={onOpenSalaryDesk}
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-300 transition hover:border-emerald-300 hover:text-emerald-200"
-              >
-                <Banknote size={14} />
-                Open Salary Desk
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-          <StatCard label="Total Faculty" value={teachers.length} tone="emerald" icon={Users} />
-          <StatCard label="Active Teachers" value={activeTeachers} tone="cyan" icon={CalendarCheck2} />
-          <StatCard label="Full Time" value={fullTimeTeachers} tone="amber" icon={Briefcase} />
-        </div>
-      </div>
+    <section className="grid gap-4 sm:grid-cols-3">
+      <StatCard label="Total Faculty" value={teachers.length} tone="emerald" icon={Users} />
+      <StatCard label="Active Teachers" value={activeTeachers} tone="cyan" icon={CalendarCheck2} />
+      <StatCard label="Full Time" value={fullTimeTeachers} tone="amber" icon={Briefcase} />
     </section>
 
     <section className="rounded-4xl border border-slate-200/80 bg-white p-5 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-6">
@@ -694,7 +702,7 @@ const DirectoryView = ({
                     <td className="px-6 py-5 text-sm font-semibold text-slate-700">{formatSalary(teacher.salary)}</td>
                     <td className="px-6 py-5">
                       <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                        {teacher.contractType || 'Full Time'}
+                        {teacher.contractType || 'FULL TIME'}
                       </span>
                     </td>
                     <td className="px-6 py-5 text-right">
@@ -741,6 +749,7 @@ const TeacherWizard = ({
   setCurrentStep,
   formData,
   setFormData,
+  teachers,
   handleSave,
   formError,
   setFormError,
@@ -752,8 +761,14 @@ const TeacherWizard = ({
   handleDocumentBrowse,
   handlePhotoBrowse,
 }) => {
-  const stepOneValidation = validateTeacherProfileStep(formData);
+  const stepOneValidation = validateTeacherProfileStep(formData, teachers);
   const stepTwoValidation = validateTeacherWorkStep(formData);
+  const updateUpperField = (field) => (e) => {
+    setFormData({ ...formData, [field]: e.target.value.toUpperCase() });
+  };
+  const updateDigitsField = (field, maxLength) => (e) => {
+    setFormData({ ...formData, [field]: digitsOnly(e.target.value).slice(0, maxLength) });
+  };
 
   const moveToStepTwo = () => {
     if (!stepOneValidation.isValid) {
@@ -803,18 +818,18 @@ const TeacherWizard = ({
               {(formData.firstName?.[0] || 'T') + (formData.lastName?.[0] || 'R')}
             </div>
             <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">
-              {formData.contractType || 'Full Time'}
+              {formData.contractType || 'CONTRACT PENDING'}
             </span>
           </div>
           <h3 className="mt-8 font-serif text-3xl font-black italic tracking-tight">
-            {formData.firstName || 'New'} {formData.lastName || 'Teacher'}
+            {formData.firstName || 'NEW'} {formData.lastName || 'TEACHER'}
           </h3>
           <p className="mt-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">
-            {formData.specialization || 'Specialization pending'}
+            {formData.specialization || 'SPECIALIZATION PENDING'}
           </p>
           <div className="mt-8 space-y-3 text-sm text-slate-300">
             <PreviewRow icon={Briefcase} value={draftEmployeeId} />
-            <PreviewRow icon={MapPin} value={formData.address || 'Address not added'} />
+            <PreviewRow icon={MapPin} value={[formData.address, formData.city, formData.state, formData.pincode].filter(Boolean).join(', ') || 'ADDRESS NOT ADDED'} />
             <PreviewRow icon={CalendarCheck2} value={`Leave Balance: ${formData.leaveBalance || '0'} days`} />
             <PreviewRow icon={Banknote} value={`Salary: ${formatSalary(formData.salary)}`} />
             <PreviewRow icon={FileText} value={`${formData.documents.length} document(s) added`} />
@@ -838,24 +853,25 @@ const TeacherWizard = ({
             desc="Create a faculty record with identity and professional information used by the HR module."
           />
           <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => setFormData({ ...formData, firstName: e.target.value })} placeholder="Teacher first name" />
-            <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} placeholder="Teacher last name" />
-            <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value })} placeholder="teacher@email.com" />
-            <CreativeInput label="Mobile Number" value={formData.mobileNumber} onChange={(e) => setFormData({ ...formData, mobileNumber: e.target.value })} placeholder="+91 98XXX XXXXX" />
+            <CreativeInput label="First Name" value={formData.firstName} onChange={updateUpperField('firstName')} placeholder="ENTER TEACHER FIRST NAME" />
+            <CreativeInput label="Last Name (Optional)" value={formData.lastName} onChange={updateUpperField('lastName')} placeholder="ENTER TEACHER LAST NAME IF AVAILABLE" />
+            <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value.trim().toUpperCase() })} placeholder="ENTER UNIQUE EMAIL ADDRESS" />
+            <CreativeInput label="Mobile Number" value={formData.mobileNumber} onChange={updateDigitsField('mobileNumber', 10)} placeholder="ENTER 10 DIGIT MOBILE NUMBER" inputMode="numeric" maxLength={10} />
             <CreativeInput label="Date Of Birth" type="date" value={formData.dob} onChange={(e) => setFormData({ ...formData, dob: e.target.value })} />
-            <CreativeInput label="Employee ID" value={draftEmployeeId} readOnly placeholder="Auto-generated employee ID" />
-            <CreativeTextarea
+            <CreativeInput
               label="Address"
               value={formData.address}
-              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              placeholder="Enter full residential address"
-              className="md:col-span-2"
+              onChange={updateUpperField('address')}
+              placeholder="ENTER HOUSE, STREET OR LOCAL AREA"
             />
+            <CreativeInput label="City" value={formData.city} onChange={updateUpperField('city')} placeholder="ENTER CITY" />
+            <CreativeInput label="State" value={formData.state} onChange={updateUpperField('state')} placeholder="ENTER STATE" />
+            <CreativeInput label="Pincode" value={formData.pincode} onChange={updateDigitsField('pincode', 6)} placeholder="ENTER PINCODE" inputMode="numeric" maxLength={6} />
             <CreativeTextarea
               label="Specialization Subjects"
               value={formData.specialization}
-              onChange={(e) => setFormData({ ...formData, specialization: e.target.value })}
-              placeholder="Mathematics, Physics, English"
+              onChange={updateUpperField('specialization')}
+              placeholder="ENTER SUBJECTS SEPARATED BY COMMA"
               hint="Add multiple subjects separated by commas."
               className="md:col-span-2"
             />
@@ -872,17 +888,15 @@ const TeacherWizard = ({
             desc="Store the working profile that helps the institution manage contracts, tenure, leave, and monthly salary from the date the teacher starts teaching."
           />
           <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <CreativeInput label="Experience Years" type="number" value={formData.experienceYears} onChange={(e) => setFormData({ ...formData, experienceYears: e.target.value })} placeholder="6" />
+            <CreativeInput label="Experience Years" value={formData.experienceYears} onChange={updateDigitsField('experienceYears', 2)} placeholder="ENTER EXPERIENCE IN YEARS" inputMode="numeric" maxLength={2} />
             <CreativeSelect
               label="Contract Type"
               value={formData.contractType}
               onChange={(e) => setFormData({ ...formData, contractType: e.target.value })}
-              options={['Full Time', 'Part Time', 'Visiting', 'Contractual']}
+              options={['Select', 'FULL TIME', 'PART TIME', 'VISITING', 'CONTRACTUAL']}
             />
-            <CreativeInput label="Leave Balance" type="number" value={formData.leaveBalance} onChange={(e) => setFormData({ ...formData, leaveBalance: e.target.value })} placeholder="12" />
-            <CreativeInput label="Monthly Salary" type="number" min="0" value={formData.salary} onChange={(e) => setFormData({ ...formData, salary: e.target.value })} placeholder="35000" />
-            <CreativeInput label="Teaching Start Date" type="date" value={formData.joiningDate} onChange={(e) => setFormData({ ...formData, joiningDate: e.target.value })} />
-            <CreativeInput label="Teacher Portal Password" type="text" value={formData.teacherPortalPassword || resolvedPortalPassword} onChange={(e) => setFormData({ ...formData, teacherPortalPassword: e.target.value })} placeholder="Auto-generated teacher portal password" />
+            <CreativeInput label="Leave Balance" type="number" value={formData.leaveBalance} onChange={(e) => setFormData({ ...formData, leaveBalance: e.target.value })} placeholder="ENTER LEAVE BALANCE" min="0" />
+            <CreativeInput label="Monthly Salary" type="number" min="0" value={formData.salary} onChange={(e) => setFormData({ ...formData, salary: e.target.value })} placeholder="ENTER MONTHLY SALARY" />
           </div>
           <WizardButtons label="Continue to Documents" onNext={moveToStepThree} onBack={() => {
             setFormError('');
@@ -909,8 +923,8 @@ const TeacherWizard = ({
               <CreativeInput
                 label="Document Name"
                 value={formData.otherDocumentName}
-                onChange={(e) => setFormData({ ...formData, otherDocumentName: e.target.value })}
-                placeholder="Enter document name"
+                onChange={updateUpperField('otherDocumentName')}
+                placeholder="ENTER DOCUMENT NAME"
               />
             )}
             <DocumentUploadField
@@ -1021,7 +1035,7 @@ const TeacherWizard = ({
                   <PreviewRow icon={IdCard} value={draftTeacherId} />
                   <PreviewRow icon={Mail} value={formData.personalEmail || 'Email not added'} />
                   <PreviewRow icon={Phone} value={formData.mobileNumber || 'Mobile not added'} />
-                  <PreviewRow icon={CalendarCheck2} value={formData.joiningDate || 'Joining date pending'} />
+                  <PreviewRow icon={CalendarCheck2} value="JOINING DATE WILL BE SAVED AUTOMATICALLY" />
                 </div>
               </div>
 
@@ -1038,9 +1052,11 @@ const TeacherWizard = ({
           <div className="mt-8 grid gap-4 lg:grid-cols-2">
             <ReviewCard title="Teacher Profile">
               <ReviewLine label="Name" value={`${formData.firstName || '-'} ${formData.lastName || ''}`.trim()} />
-              <ReviewLine label="Employee ID" value={draftEmployeeId || '-'} />
               <ReviewLine label="Date Of Birth" value={formData.dob || '-'} />
               <ReviewLine label="Address" value={formData.address || '-'} />
+              <ReviewLine label="City" value={formData.city || '-'} />
+              <ReviewLine label="State" value={formData.state || '-'} />
+              <ReviewLine label="Pincode" value={formData.pincode || '-'} />
               <ReviewLine label="Specialization" value={formData.specialization || '-'} />
               <ReviewLine label="Experience" value={formData.experienceYears ? `${formData.experienceYears} years` : '-'} />
             </ReviewCard>
@@ -1049,7 +1065,7 @@ const TeacherWizard = ({
               <ReviewLine label="Contract" value={formData.contractType || '-'} />
               <ReviewLine label="Leave Balance" value={formData.leaveBalance ? `${formData.leaveBalance} days` : '-'} />
               <ReviewLine label="Monthly Salary" value={formatSalary(formData.salary)} />
-              <ReviewLine label="Teaching Start" value={formData.joiningDate || '-'} />
+              <ReviewLine label="Joining Date" value="Auto saved on create" />
               <ReviewLine label="Teacher ID" value={draftTeacherId} />
               <ReviewLine label="Portal Password" value={resolvedPortalPassword || '-'} />
             </ReviewCard>
@@ -1123,7 +1139,7 @@ const TeacherCard = ({ teacher, onDelete, onOpen }) => (
       <PreviewRow icon={Mail} value={teacher.personalEmail || 'No email added'} light />
       <PreviewRow icon={Phone} value={teacher.mobileNumber || 'No phone added'} light />
       <PreviewRow icon={Briefcase} value={teacher.employeeId || 'Employee ID pending'} light />
-      <PreviewRow icon={MapPin} value={teacher.address || 'Address not added'} light />
+      <PreviewRow icon={MapPin} value={[teacher.address, teacher.city, teacher.state, teacher.pincode].filter(Boolean).join(', ') || 'Address not added'} light />
       <PreviewRow icon={Banknote} value={`Salary: ${formatSalary(teacher.salary)}`} light />
       <PreviewRow icon={ShieldCheck} value={`Portal password: ${teacher.teacherPortalPassword || 'Not set'}`} light />
     </div>
@@ -1134,7 +1150,7 @@ const TeacherCard = ({ teacher, onDelete, onOpen }) => (
         <p className="mt-1 text-sm font-semibold text-slate-700">{teacher.teacherSystemId || 'Auto pending'}</p>
       </div>
       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
-        {teacher.contractType || 'Full Time'}
+        {teacher.contractType || 'FULL TIME'}
       </span>
     </div>
   </article>
@@ -1172,7 +1188,7 @@ const CreativeInput = ({ label, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <input
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold uppercase text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
       {...props}
     />
   </div>
@@ -1182,7 +1198,7 @@ const CreativeTextarea = ({ label, className = '', hint, ...props }) => (
   <div className={`space-y-2.5 ${className}`.trim()}>
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <textarea
-      className="min-h-28 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className="min-h-20 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold uppercase text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
       {...props}
     />
     {hint ? <p className="text-xs font-semibold text-slate-500">{hint}</p> : null}
@@ -1193,7 +1209,7 @@ const CreativeSelect = ({ label, options, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold uppercase text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
       {...props}
     >
       {options.map((option) => (
@@ -1320,6 +1336,9 @@ function buildTeacherQrPayload(teacher) {
     contractType: teacher.contractType,
     joiningDate: teacher.joiningDate,
     address: teacher.address,
+    city: teacher.city,
+    state: teacher.state,
+    pincode: teacher.pincode,
   };
 }
 
@@ -1332,13 +1351,16 @@ function mapTeacherToFormData(teacher) {
     mobileNumber: teacher.mobileNumber || '',
     employeeId: teacher.employeeId || '',
     address: teacher.address || '',
+    city: teacher.city || '',
+    state: teacher.state || '',
+    pincode: teacher.pincode || '',
     specialization: teacher.specialization || '',
     dob: teacher.dob || '',
     experienceYears: teacher.experienceYears || '',
-    contractType: teacher.contractType || 'Full Time',
+    contractType: teacher.contractType || '',
     leaveBalance: teacher.leaveBalance || '',
     salary: teacher.salary || '',
-    joiningDate: teacher.joiningDate || getToday(),
+    joiningDate: teacher.joiningDate || '',
     teacherPortalPassword: teacher.teacherPortalPassword || '',
     documentType: teacher.documentType || '',
     otherDocumentName: teacher.otherDocumentName || '',
@@ -1384,9 +1406,25 @@ async function uploadTeacherAssets(formData, pendingPhotoFile) {
 function prepareTeacherFormDataForSave(formData) {
   return {
     ...formData,
+    firstName: normalizeUpper(formData.firstName),
+    lastName: normalizeUpper(formData.lastName),
+    personalEmail: normalizeUpper(formData.personalEmail),
+    mobileNumber: digitsOnly(formData.mobileNumber),
+    address: normalizeUpper(formData.address),
+    city: normalizeUpper(formData.city),
+    state: normalizeUpper(formData.state),
+    pincode: digitsOnly(formData.pincode),
+    specialization: normalizeUpper(formData.specialization),
+    experienceYears: digitsOnly(formData.experienceYears),
+    contractType: normalizeUpper(formData.contractType),
+    otherDocumentName: normalizeUpper(formData.otherDocumentName),
     documents: (formData.documents || []).map((document) => stripPendingFile(document)),
     fileUploadPath: '',
   };
+}
+
+function normalizeUpper(value) {
+  return String(value || '').trim().toUpperCase();
 }
 
 async function uploadTeacherDocument(document) {
@@ -1451,6 +1489,12 @@ function TeacherDetailView({
   const qrImage = createQrImageUrl(teacher.qrCodeData);
   const fullName = `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher';
   const [showPortalPassword, setShowPortalPassword] = useState(false);
+  const updateUpperField = (field) => (e) => {
+    setFormData({ ...formData, [field]: e.target.value.toUpperCase() });
+  };
+  const updateDigitsField = (field, maxLength) => (e) => {
+    setFormData({ ...formData, [field]: digitsOnly(e.target.value).slice(0, maxLength) });
+  };
 
   return (
     <div className="space-y-8">
@@ -1507,16 +1551,15 @@ function TeacherDetailView({
             <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5">
               <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">Editable Details</p>
               <div className="mt-5 grid gap-5 md:grid-cols-2">
-                <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => setFormData({ ...formData, firstName: e.target.value })} />
-                <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} />
-                <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value })} />
-                <CreativeInput label="Mobile Number" value={formData.mobileNumber} onChange={(e) => setFormData({ ...formData, mobileNumber: e.target.value })} />
+                <CreativeInput label="First Name" value={formData.firstName} onChange={updateUpperField('firstName')} placeholder="ENTER TEACHER FIRST NAME" />
+                <CreativeInput label="Last Name (Optional)" value={formData.lastName} onChange={updateUpperField('lastName')} placeholder="ENTER TEACHER LAST NAME IF AVAILABLE" />
+                <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value.trim().toUpperCase() })} placeholder="ENTER UNIQUE EMAIL ADDRESS" />
+                <CreativeInput label="Mobile Number" value={formData.mobileNumber} onChange={updateDigitsField('mobileNumber', 10)} placeholder="ENTER 10 DIGIT MOBILE NUMBER" inputMode="numeric" maxLength={10} />
                 <CreativeInput label="Date Of Birth" type="date" value={formData.dob} onChange={(e) => setFormData({ ...formData, dob: e.target.value })} />
-                <CreativeInput label="Experience Years" type="number" value={formData.experienceYears} onChange={(e) => setFormData({ ...formData, experienceYears: e.target.value })} />
-                <CreativeSelect label="Contract Type" value={formData.contractType} onChange={(e) => setFormData({ ...formData, contractType: e.target.value })} options={['Full Time', 'Part Time', 'Visiting', 'Contractual']} />
-                <CreativeInput label="Leave Balance" type="number" value={formData.leaveBalance} onChange={(e) => setFormData({ ...formData, leaveBalance: e.target.value })} />
-                <CreativeInput label="Monthly Salary" type="number" min="0" value={formData.salary} onChange={(e) => setFormData({ ...formData, salary: e.target.value })} />
-                <CreativeInput label="Teaching Start Date" type="date" value={formData.joiningDate} onChange={(e) => setFormData({ ...formData, joiningDate: e.target.value })} />
+                <CreativeInput label="Experience Years" value={formData.experienceYears} onChange={updateDigitsField('experienceYears', 2)} placeholder="ENTER EXPERIENCE IN YEARS" inputMode="numeric" maxLength={2} />
+                <CreativeSelect label="Contract Type" value={formData.contractType} onChange={(e) => setFormData({ ...formData, contractType: e.target.value })} options={['Select', 'FULL TIME', 'PART TIME', 'VISITING', 'CONTRACTUAL']} />
+                <CreativeInput label="Leave Balance" type="number" value={formData.leaveBalance} onChange={(e) => setFormData({ ...formData, leaveBalance: e.target.value })} placeholder="ENTER LEAVE BALANCE" min="0" />
+                <CreativeInput label="Monthly Salary" type="number" min="0" value={formData.salary} onChange={(e) => setFormData({ ...formData, salary: e.target.value })} placeholder="ENTER MONTHLY SALARY" />
                 <div className="space-y-2.5 md:col-span-2">
                   <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Portal Password</label>
                   <div className="relative">
@@ -1536,10 +1579,15 @@ function TeacherDetailView({
                   </div>
                 </div>
                 <div className="md:col-span-2">
-                  <CreativeTextarea label="Address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+                  <CreativeInput label="Address" value={formData.address} onChange={updateUpperField('address')} placeholder="ENTER HOUSE, STREET OR LOCAL AREA" />
+                </div>
+                <CreativeInput label="City" value={formData.city} onChange={updateUpperField('city')} placeholder="ENTER CITY" />
+                <CreativeInput label="State" value={formData.state} onChange={updateUpperField('state')} placeholder="ENTER STATE" />
+                <div className="md:col-span-2">
+                  <CreativeInput label="Pincode" value={formData.pincode} onChange={updateDigitsField('pincode', 6)} placeholder="ENTER PINCODE" inputMode="numeric" maxLength={6} />
                 </div>
                 <div className="md:col-span-2">
-                  <CreativeTextarea label="Specialization Subjects" value={formData.specialization} onChange={(e) => setFormData({ ...formData, specialization: e.target.value })} />
+                  <CreativeTextarea label="Specialization Subjects" value={formData.specialization} onChange={updateUpperField('specialization')} placeholder="ENTER SUBJECTS SEPARATED BY COMMA" />
                 </div>
               </div>
             </div>
@@ -1549,7 +1597,7 @@ function TeacherDetailView({
               <div className="mt-5 grid gap-5 md:grid-cols-2">
                 <CreativeSelect label="Document Type" value={formData.documentType} onChange={(e) => setFormData({ ...formData, documentType: e.target.value })} options={['Select', 'Aadhar', 'Resume', 'Experience Certificate', 'Qualification Certificate', 'Other']} />
                 {formData.documentType === 'Other' ? (
-                  <CreativeInput label="Document Name" value={formData.otherDocumentName} onChange={(e) => setFormData({ ...formData, otherDocumentName: e.target.value })} />
+                  <CreativeInput label="Document Name" value={formData.otherDocumentName} onChange={updateUpperField('otherDocumentName')} placeholder="ENTER DOCUMENT NAME" />
                 ) : <div />}
                 <DocumentUploadField label="Attach Document" value={formData.fileUploadPath} onBrowse={onDocumentBrowse} />
               </div>
@@ -1608,6 +1656,9 @@ function TeacherDetailView({
             <ReviewCard title="Saved Snapshot">
               <ReviewLine label="Email" value={formData.personalEmail || '-'} />
               <ReviewLine label="Mobile" value={formData.mobileNumber || '-'} />
+              <ReviewLine label="City" value={formData.city || '-'} />
+              <ReviewLine label="State" value={formData.state || '-'} />
+              <ReviewLine label="Pincode" value={formData.pincode || '-'} />
               <ReviewLine label="Specialization" value={formData.specialization || '-'} />
               <ReviewLine label="Contract" value={formData.contractType || '-'} />
               <ReviewLine label="Documents" value={String(formData.documents.length)} />
@@ -1695,21 +1746,49 @@ function ConfirmationModal({ open, teacherName, specialization, onCancel, onConf
   );
 }
 
-function validateTeacherProfileStep(formData) {
+function validateTeacherProfileStep(formData, teachers = [], currentTeacherId = null) {
   if (!formData.firstName.trim()) {
     return { isValid: false, message: 'First name is required before moving to the next section.' };
   }
-  if (!formData.lastName.trim()) {
-    return { isValid: false, message: 'Last name is required before moving to the next section.' };
+
+  const emailValue = String(formData.personalEmail || '').trim();
+  if (!emailValue) {
+    return { isValid: false, message: 'Personal email is required before moving to the next section.' };
   }
-  if (!digitsOnly(formData.mobileNumber)) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) {
+    return { isValid: false, message: 'Enter a valid email address before moving to the next section.' };
+  }
+  if (teachers.some((teacher) => teacher.id !== currentTeacherId && String(teacher.personalEmail || '').toLowerCase() === emailValue.toLowerCase())) {
+    return { isValid: false, message: 'This email is already used by another teacher.' };
+  }
+
+  const mobileDigits = digitsOnly(formData.mobileNumber);
+  if (!mobileDigits) {
     return { isValid: false, message: 'Mobile number is required before moving to the next section.' };
+  }
+  if (mobileDigits.length !== 10) {
+    return { isValid: false, message: 'Mobile number must be exactly 10 digits.' };
+  }
+  if (teachers.some((teacher) => teacher.id !== currentTeacherId && digitsOnly(teacher.mobileNumber) === mobileDigits)) {
+    return { isValid: false, message: 'This mobile number is already used by another teacher.' };
   }
   if (!formData.dob) {
     return { isValid: false, message: 'Date of birth is required before moving to the next section.' };
   }
   if (!formData.address.trim()) {
     return { isValid: false, message: 'Address is required before moving to the next section.' };
+  }
+  if (!formData.city.trim()) {
+    return { isValid: false, message: 'City is required before moving to the next section.' };
+  }
+  if (!formData.state.trim()) {
+    return { isValid: false, message: 'State is required before moving to the next section.' };
+  }
+  if (!digitsOnly(formData.pincode)) {
+    return { isValid: false, message: 'Pincode is required before moving to the next section.' };
+  }
+  if (digitsOnly(formData.pincode).length !== 6) {
+    return { isValid: false, message: 'Pincode must be exactly 6 digits.' };
   }
   if (!formData.specialization.trim()) {
     return { isValid: false, message: 'Enter at least one specialization subject before moving to the next section.' };
@@ -1718,14 +1797,18 @@ function validateTeacherProfileStep(formData) {
 }
 
 function validateTeacherWorkStep(formData) {
+  const experienceDigits = digitsOnly(formData.experienceYears);
+  if (!experienceDigits) {
+    return { isValid: false, message: 'Experience years is required before moving to the next section.' };
+  }
+  if (!/^\d{1,2}$/.test(experienceDigits)) {
+    return { isValid: false, message: 'Experience years must be a one or two digit number.' };
+  }
   if (!formData.contractType.trim()) {
     return { isValid: false, message: 'Contract type is required before moving to the next section.' };
   }
   if (!String(formData.salary || '').trim()) {
     return { isValid: false, message: 'Monthly salary is required before moving to the next section.' };
-  }
-  if (!formData.joiningDate) {
-    return { isValid: false, message: 'Teaching start date is required before moving to the next section.' };
   }
   return { isValid: true, message: '' };
 }
