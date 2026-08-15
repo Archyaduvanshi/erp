@@ -5,12 +5,15 @@ import {
   BookCopy,
   BookOpen,
   ChevronRight,
+  Pencil,
   Library,
   Plus,
+  Save,
   ScrollText,
   Search,
   Tag,
   Trash2,
+  X,
 } from 'lucide-react';
 import { courseBookApi, studentApi } from '../../utils/api';
 
@@ -23,8 +26,10 @@ const initialSubjectForm = {
 const initialBookEntry = {
   subjectName: '',
   publisher: '',
-  language: 'English',
+  language: '',
 };
+
+const languageOptions = ['', 'ENGLISH', 'HINDI', 'BILINGUAL'];
 
 const normalizeClassLabel = (value) => {
   const normalized = String(value || '').trim();
@@ -32,6 +37,8 @@ const normalizeClassLabel = (value) => {
   const [baseClass] = normalized.split('/');
   return baseClass.trim();
 };
+
+const toUpperValue = (value) => String(value || '').trim().toUpperCase();
 
 const CourseSubjectManagement = () => {
   const navigate = useNavigate();
@@ -41,6 +48,10 @@ const CourseSubjectManagement = () => {
   const [subjectForm, setSubjectForm] = useState(initialSubjectForm);
   const [bookEntry, setBookEntry] = useState(initialBookEntry);
   const [pendingBooks, setPendingBooks] = useState([]);
+  const [editingBookId, setEditingBookId] = useState(null);
+  const [editBookForm, setEditBookForm] = useState(initialBookEntry);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [classSearch, setClassSearch] = useState('');
   const [subjectSearch, setSubjectSearch] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -100,21 +111,6 @@ const CourseSubjectManagement = () => {
     });
   }, [classMappings, subjectSearch]);
 
-  const groupedSubjectMappings = useMemo(() => (
-    filteredClassMappings.reduce((groups, record) => {
-      const key = record.subjectName || 'Unnamed Subject';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(record);
-      return groups;
-    }, {})
-  ), [filteredClassMappings]);
-
-  const totalSubjects = useMemo(() => (
-    new Set(bookMappings.map((record) => `${normalizeClassLabel(record.className)}-${record.subjectName || ''}`)).size
-  ), [bookMappings]);
-
-  const totalBooks = bookMappings.length;
-
   const openClassDesk = (className) => {
     setSelectedClass(className);
     setSubjectForm((current) => ({
@@ -124,18 +120,21 @@ const CourseSubjectManagement = () => {
     }));
     setBookEntry(initialBookEntry);
     setPendingBooks([]);
+    setEditingBookId(null);
+    setEditBookForm(initialBookEntry);
+    setDeleteTarget(null);
     setSubjectSearch('');
   };
 
   const handleAddBook = () => {
     const nextBook = {
       id: Date.now() + pendingBooks.length,
-      subjectName: bookEntry.subjectName.trim(),
-      publisher: bookEntry.publisher.trim(),
-      language: bookEntry.language.trim(),
+      subjectName: toUpperValue(bookEntry.subjectName),
+      publisher: toUpperValue(bookEntry.publisher),
+      language: toUpperValue(bookEntry.language),
     };
 
-    if (!nextBook.subjectName || !nextBook.publisher) return;
+    if (!nextBook.subjectName || !nextBook.publisher || !nextBook.language) return;
 
     setPendingBooks((current) => [...current, nextBook]);
     setBookEntry(initialBookEntry);
@@ -172,13 +171,71 @@ const CourseSubjectManagement = () => {
       });
   };
 
-  const handleDelete = async (recordId) => {
-    if (!window.confirm('Delete this subject book entry?')) return;
+  const handleEdit = (record) => {
+    setEditingBookId(record.id);
+    setEditBookForm({
+      subjectName: toUpperValue(record.subjectName),
+      publisher: toUpperValue(record.publisher),
+      language: toUpperValue(record.language),
+      academicYear: toUpperValue(record.academicYear || subjectForm.academicYear || '2026-27'),
+      notes: toUpperValue(record.notes),
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingBookId(null);
+    setEditBookForm(initialBookEntry);
+  };
+
+  const handleUpdate = async (record) => {
+    const payload = {
+      className: selectedClass,
+      subjectName: toUpperValue(editBookForm.subjectName),
+      publisher: toUpperValue(editBookForm.publisher),
+      language: toUpperValue(editBookForm.language),
+      academicYear: toUpperValue(editBookForm.academicYear) || '2026-27',
+      notes: toUpperValue(editBookForm.notes),
+    };
+
+    if (!payload.subjectName || !payload.publisher || !payload.language) {
+      setLoadError('Subject name, publisher, and language are required before updating.');
+      return;
+    }
+
     try {
-      await courseBookApi.delete(recordId);
+      await courseBookApi.update(record.id, payload);
+      setEditingBookId(null);
+      setEditBookForm(initialBookEntry);
+      await refreshData();
+    } catch (error) {
+      setLoadError(error.message || 'Unable to update this subject book entry.');
+    }
+  };
+
+  const handleDeleteRequest = (record) => {
+    setDeleteTarget(record);
+  };
+
+  const handleCancelDelete = () => {
+    if (isDeleting) return;
+    setDeleteTarget(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      await courseBookApi.delete(deleteTarget.id);
+      if (editingBookId === deleteTarget.id) {
+        setEditingBookId(null);
+        setEditBookForm(initialBookEntry);
+      }
+      setDeleteTarget(null);
       await refreshData();
     } catch (error) {
       setLoadError(error.message || 'Unable to delete this subject entry.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -209,29 +266,8 @@ const CourseSubjectManagement = () => {
           </div>
         ) : null}
 
-        <section className="overflow-hidden rounded-4xl bg-[linear-gradient(145deg,#78350f_0%,#451a03_55%,#0f172a_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(120,53,15,0.8)] lg:px-10 lg:py-10">
-          <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-amber-200">Curriculum Register</p>
-              <h2 className="mt-4 max-w-3xl font-serif text-4xl font-black italic leading-none tracking-tight">
-                Ek class ke sabhi sections ke liye ek hi subject set rakho, aur har class ke liye alag subject books define karo.
-              </h2>
-              <p className="mt-5 max-w-2xl text-sm leading-7 text-amber-50/80">
-                Yahan class list section-wise repeat nahi hogi. Class par click karte hi us class ke subjects aur unke multiple books manage honge.
-              </p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Classes" value={availableClasses.length} icon={Tag} />
-              <MetricCard label="Subject Sets" value={totalSubjects} icon={ScrollText} />
-              <MetricCard label="Books" value={totalBooks} icon={Library} />
-              <MetricCard label="Selected Class" value={selectedClass || 'None'} icon={BookOpen} />
-            </div>
-          </div>
-        </section>
-
         {!selectedClass ? (
-          <section className="mt-8 rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+          <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Choose Class</h3>
@@ -283,7 +319,7 @@ const CourseSubjectManagement = () => {
             )}
           </section>
         ) : (
-          <div className="mt-8 grid gap-8 xl:grid-cols-[0.92fr_1.08fr]">
+          <div className="space-y-8">
             <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
               <FormTitle
                 title={`Add Subjects For ${selectedClass}`}
@@ -302,8 +338,8 @@ const CourseSubjectManagement = () => {
                   <CreativeTextarea
                     label="Class Notes"
                     value={subjectForm.notes}
-                    onChange={(e) => setSubjectForm({ ...subjectForm, className: selectedClass, notes: e.target.value })}
-                    placeholder="Optional note for this class book list"
+                    onChange={(e) => setSubjectForm({ ...subjectForm, className: selectedClass, notes: e.target.value.toUpperCase() })}
+                    placeholder="WRITE OPTIONAL NOTE FOR THIS CLASS BOOK LIST"
                   />
                 </div>
 
@@ -324,20 +360,21 @@ const CourseSubjectManagement = () => {
                     <CreativeInput
                       label="Subject Name"
                       value={bookEntry.subjectName}
-                      onChange={(e) => setBookEntry({ ...bookEntry, subjectName: e.target.value })}
-                      placeholder="Mathematics"
+                      onChange={(e) => setBookEntry({ ...bookEntry, subjectName: e.target.value.toUpperCase() })}
+                      placeholder="WRITE SUBJECT NAME"
                     />
                     <CreativeInput
                       label="Publisher Name"
                       value={bookEntry.publisher}
-                      onChange={(e) => setBookEntry({ ...bookEntry, publisher: e.target.value })}
-                      placeholder="NCERT"
+                      onChange={(e) => setBookEntry({ ...bookEntry, publisher: e.target.value.toUpperCase() })}
+                      placeholder="WRITE PUBLISHER NAME"
                     />
                     <CreativeSelect
                       label="Language"
                       value={bookEntry.language}
                       onChange={(e) => setBookEntry({ ...bookEntry, language: e.target.value })}
-                      options={['English', 'Hindi', 'Bilingual']}
+                      options={languageOptions}
+                      renderOptionLabel={(value) => value || 'SELECT'}
                     />
                     <div className="md:col-span-3">
                       <button
@@ -388,58 +425,91 @@ const CourseSubjectManagement = () => {
             <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <FormTitle
-                  title={`Saved Subjects For ${selectedClass}`}
-                  description="Is class ke liye saved subject-wise publisher entries yahan grouped form me milenge."
+                  title={`Saved Books For ${selectedClass}`}
+                  description="Saved subject books yahan table me manage karo. Edit, save, cancel, aur delete actions available hain."
                 />
                 <SearchInput value={subjectSearch} onChange={setSubjectSearch} placeholder="Search subject, book, publisher..." />
               </div>
 
               {filteredClassMappings.length ? (
-                <div className="mt-8 space-y-6">
-                  {Object.entries(groupedSubjectMappings).map(([subjectName, records]) => (
-                    <div key={subjectName}>
-                      <div className="mb-4">
-                        <h3 className="text-lg font-black tracking-tight text-slate-950">{subjectName}</h3>
-                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">{records.length} book entries</p>
-                      </div>
+                <div className="mt-8 overflow-x-auto rounded-[1.4rem] border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200 text-left">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <TableHeader>Subject</TableHeader>
+                        <TableHeader>Publisher</TableHeader>
+                        <TableHeader>Language</TableHeader>
+                        <TableHeader>Academic Year</TableHeader>
+                        <TableHeader>Notes</TableHeader>
+                        <TableHeader align="right">Actions</TableHeader>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {filteredClassMappings.map((record) => {
+                        const isEditing = editingBookId === record.id;
 
-                      <div className="grid gap-5">
-                        {records.map((record) => (
-                          <article key={record.id} className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-3">
-                                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
-                                    <BookOpen size={20} />
-                                  </div>
-                                  <div>
-                                    <h4 className="text-lg font-black tracking-tight text-slate-950">{record.subjectName || 'Subject not added'}</h4>
-                                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">{record.publisher || 'Publisher not added'}</p>
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <InfoPill icon={Library} text={record.publisher || 'Publisher pending'} />
-                                  <InfoPill icon={BookCopy} text={record.language || 'Language pending'} />
-                                  <InfoPill icon={ScrollText} text={record.academicYear || 'Year pending'} />
-                                </div>
-                                {record.notes ? (
-                                  <p className="text-sm font-semibold leading-6 text-slate-600">{record.notes}</p>
-                                ) : null}
+                        return (
+                          <tr key={record.id} className="align-top">
+                            <TableCell>
+                              {isEditing ? (
+                                <InlineInput value={editBookForm.subjectName} onChange={(e) => setEditBookForm({ ...editBookForm, subjectName: e.target.value.toUpperCase() })} />
+                              ) : (
+                                <span className="font-black text-slate-950">{toUpperValue(record.subjectName) || 'SUBJECT NOT ADDED'}</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <InlineInput value={editBookForm.publisher} onChange={(e) => setEditBookForm({ ...editBookForm, publisher: e.target.value.toUpperCase() })} />
+                              ) : (
+                                toUpperValue(record.publisher) || 'PUBLISHER PENDING'
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <InlineSelect
+                                  value={editBookForm.language}
+                                  onChange={(e) => setEditBookForm({ ...editBookForm, language: e.target.value })}
+                                  options={languageOptions}
+                                  renderOptionLabel={(value) => value || 'SELECT'}
+                                />
+                              ) : (
+                                toUpperValue(record.language) || 'LANGUAGE PENDING'
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <InlineInput value={editBookForm.academicYear} onChange={(e) => setEditBookForm({ ...editBookForm, academicYear: e.target.value.toUpperCase() })} />
+                              ) : (
+                                toUpperValue(record.academicYear) || '2026-27'
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <InlineInput value={editBookForm.notes} onChange={(e) => setEditBookForm({ ...editBookForm, notes: e.target.value.toUpperCase() })} placeholder="WRITE OPTIONAL NOTES" />
+                              ) : (
+                                toUpperValue(record.notes) || '-'
+                              )}
+                            </TableCell>
+                            <TableCell align="right">
+                              <div className="flex justify-end gap-2">
+                                {isEditing ? (
+                                  <>
+                                    <IconButton label="Save" icon={Save} tone="emerald" onClick={() => handleUpdate(record)} />
+                                    <IconButton label="Cancel" icon={X} onClick={handleCancelEdit} />
+                                  </>
+                                ) : (
+                                  <>
+                                    <IconButton label="Edit" icon={Pencil} tone="amber" onClick={() => handleEdit(record)} />
+                                    <IconButton label="Delete" icon={Trash2} tone="rose" onClick={() => handleDeleteRequest(record)} />
+                                  </>
+                                )}
                               </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(record.id)}
-                                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                            </TableCell>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 <EmptyState
@@ -452,23 +522,107 @@ const CourseSubjectManagement = () => {
           </div>
         )}
       </div>
+      <DeleteBookModal
+        open={Boolean(deleteTarget)}
+        record={deleteTarget}
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
+      />
     </div>
   );
 };
 
-const MetricCard = ({ label, value, icon: Icon }) => (
-  <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.24em] text-amber-50/80">{label}</p>
-        <p className="mt-3 text-4xl font-black tracking-tight text-white">{value}</p>
-      </div>
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-200/20 bg-amber-200/10 text-amber-50">
-        <Icon size={20} />
+const TableHeader = ({ children, align = 'left' }) => (
+  <th className={`px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-500 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+    {children}
+  </th>
+);
+
+const TableCell = ({ children, align = 'left' }) => (
+  <td className={`px-4 py-4 text-sm font-semibold text-slate-700 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+    {children}
+  </td>
+);
+
+const InlineInput = (props) => (
+  <input
+    className="w-full min-w-36 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
+    {...props}
+  />
+);
+
+const InlineSelect = ({ options, renderOptionLabel, ...props }) => (
+  <select
+    className="w-full min-w-32 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
+    {...props}
+  >
+    {options.map((option) => (
+      <option key={option || 'empty-option'} value={option}>
+        {renderOptionLabel ? renderOptionLabel(option) : option}
+      </option>
+    ))}
+  </select>
+);
+
+const IconButton = ({ label, icon: Icon, tone = 'slate', onClick }) => {
+  const toneClass = {
+    amber: 'text-amber-700 hover:bg-amber-50',
+    emerald: 'text-emerald-700 hover:bg-emerald-50',
+    rose: 'text-rose-600 hover:bg-rose-50',
+    slate: 'text-slate-500 hover:bg-slate-100',
+  }[tone];
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${toneClass}`}
+    >
+      <Icon size={16} />
+    </button>
+  );
+};
+
+const DeleteBookModal = ({ open, record, onCancel, onConfirm, isDeleting }) => {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 backdrop-blur-md">
+      <div className="w-full max-w-lg rounded-4xl border border-white/30 bg-white/95 p-7 shadow-[0_30px_90px_-30px_rgba(15,23,42,0.5)]">
+        <p className="text-[11px] font-black uppercase tracking-[0.28em] text-rose-600">Delete Confirmation</p>
+        <h3 className="mt-3 font-serif text-3xl font-black italic tracking-tight text-slate-950">Delete this saved book?</h3>
+        <p className="mt-4 text-sm leading-7 text-slate-600">
+          This will remove <span className="font-black text-slate-900">{toUpperValue(record?.subjectName) || 'THIS SUBJECT'}</span>
+          {record?.publisher ? (
+            <> by <span className="font-black text-slate-900">{toUpperValue(record.publisher)}</span></>
+          ) : null}
+          {' '}from the saved books table.
+        </p>
+        <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="inline-flex flex-1 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="inline-flex flex-1 items-center justify-center rounded-2xl bg-rose-600 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
+          >
+            {isDeleting ? 'Deleting...' : 'Yes, Delete'}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const FormTitle = ({ title, description }) => (
   <div>

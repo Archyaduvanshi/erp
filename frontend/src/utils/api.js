@@ -65,11 +65,15 @@ export const instituteApi = {
 
 const withInstituteHeaders = (options = {}) => {
   const instituteId = getInstituteId();
+  if (!instituteId) {
+    throw new Error('College session expired. Please log in again.');
+  }
+
   return {
     ...options,
     headers: {
       ...(options.headers || {}),
-      ...(instituteId ? { 'X-Institute-Id': instituteId } : {}),
+      'X-Institute-Id': instituteId,
     },
   };
 };
@@ -236,6 +240,12 @@ export const courseBookApi = {
   create: (payload) =>
     request('/course-books', withInstituteHeaders({
       method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  update: (id, payload) =>
+    request(`/course-books/${id}`, withInstituteHeaders({
+      method: 'PUT',
       body: JSON.stringify(payload),
     })),
 

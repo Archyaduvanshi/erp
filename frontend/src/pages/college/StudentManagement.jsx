@@ -258,11 +258,22 @@ const StudentManagement = () => {
 
     try {
       const pendingFormData = prepareStudentFormDataForSave(formData);
-      const studentId = `EDU-${Math.floor(1000 + Math.random() * 9000)}`;
-      const resolvedAssignedClass = draftAssignedClass || pendingFormData.assignedClass || '';
-      const resolvedPortalPassword = pendingFormData.studentPortalPassword.trim() || buildDefaultPortalPassword(pendingFormData);
-      const resolvedQrCodeData = buildStudentQrPayload({
+      if (!pendingPhotoFile) {
+        setFieldErrors((current) => ({ ...current, photoUrl: 'Student photo upload is required.' }));
+        setFormError('Student photo upload is required before confirmation.');
+        setIsConfirmModalOpen(false);
+        return;
+      }
+
+      const uploadedFormData = await uploadStudentAssets({
         ...pendingFormData,
+        documents: formData.documents,
+      }, pendingPhotoFile);
+      const studentId = `EDU-${Math.floor(1000 + Math.random() * 9000)}`;
+      const resolvedAssignedClass = draftAssignedClass || uploadedFormData.assignedClass || '';
+      const resolvedPortalPassword = uploadedFormData.studentPortalPassword.trim() || buildDefaultPortalPassword(uploadedFormData);
+      const resolvedQrCodeData = buildStudentQrPayload({
+        ...uploadedFormData,
         assignedClass: resolvedAssignedClass,
         studentPortalPassword: resolvedPortalPassword,
         registrationDate: today,
@@ -270,28 +281,28 @@ const StudentManagement = () => {
         systemId: studentId,
       });
       const newStudent = {
-        ...pendingFormData,
-        className: pendingFormData.className,
-        section: pendingFormData.section,
+        ...uploadedFormData,
+        className: uploadedFormData.className,
+        section: uploadedFormData.section,
         assignedClass: resolvedAssignedClass,
-        transportStatus: pendingFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
-        hostelStatus: pendingFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
-        libraryStatus: pendingFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
+        transportStatus: uploadedFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
+        hostelStatus: uploadedFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
+        libraryStatus: uploadedFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
         facilities: {
           transport: {
-            requested: pendingFormData.transportOptIn === 'yes',
-            active: pendingFormData.transportOptIn === 'yes',
-            status: pendingFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
+            requested: uploadedFormData.transportOptIn === 'yes',
+            active: uploadedFormData.transportOptIn === 'yes',
+            status: uploadedFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
           },
           hostel: {
-            requested: pendingFormData.hostelOptIn === 'yes',
-            active: pendingFormData.hostelOptIn === 'yes',
-            status: pendingFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
+            requested: uploadedFormData.hostelOptIn === 'yes',
+            active: uploadedFormData.hostelOptIn === 'yes',
+            status: uploadedFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
           },
           library: {
-            requested: pendingFormData.libraryOptIn === 'yes',
-            active: pendingFormData.libraryOptIn === 'yes',
-            status: pendingFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
+            requested: uploadedFormData.libraryOptIn === 'yes',
+            active: uploadedFormData.libraryOptIn === 'yes',
+            status: uploadedFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
           },
         },
         systemId: studentId,
@@ -305,25 +316,11 @@ const StudentManagement = () => {
         enrollmentNo: savedStudent.enrollmentNo,
         systemId: savedStudent.systemId,
       });
-      const qrReadyStudent = await studentApi.update(savedStudent.id, {
+      const finalizedStudent = await studentApi.update(savedStudent.id, {
         ...newStudent,
         enrollmentNo: savedStudent.enrollmentNo,
         systemId: savedStudent.systemId,
         qrCodeData: savedQrCodeData,
-      });
-      const uploadedFormData = await uploadStudentAssets({
-        ...newStudent,
-        enrollmentNo: qrReadyStudent.enrollmentNo,
-        systemId: qrReadyStudent.systemId,
-        qrCodeData: qrReadyStudent.qrCodeData,
-        documents: formData.documents,
-      }, pendingPhotoFile);
-      const finalizedStudent = await studentApi.update(qrReadyStudent.id, {
-        ...newStudent,
-        ...uploadedFormData,
-        enrollmentNo: qrReadyStudent.enrollmentNo,
-        systemId: qrReadyStudent.systemId,
-        qrCodeData: qrReadyStudent.qrCodeData,
       });
       const updatedStudents = [finalizedStudent, ...students];
       setStudents(updatedStudents);

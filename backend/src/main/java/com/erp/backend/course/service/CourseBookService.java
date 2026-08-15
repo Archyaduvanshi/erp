@@ -49,6 +49,15 @@ public class CourseBookService {
     }
 
     @Transactional
+    public CourseBookResponse updateCourseBook(Long instituteId, Long id, CourseBookPayload request) {
+        validateInstitute(instituteId);
+        CourseBook courseBook = courseBookRepository.findByInstituteIdAndId(instituteId, id)
+                .orElseThrow(() -> new ResourceNotFoundException("Course book not found with id: " + id));
+        applyPayload(courseBook, request);
+        return toResponse(courseBookRepository.save(courseBook));
+    }
+
+    @Transactional
     public void deleteCourseBook(Long instituteId, Long id) {
         CourseBook courseBook = courseBookRepository.findByInstituteIdAndId(instituteId, id)
                 .orElseThrow(() -> new ResourceNotFoundException("Course book not found with id: " + id));
