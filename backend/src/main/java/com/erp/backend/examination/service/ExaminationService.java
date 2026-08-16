@@ -1,7 +1,11 @@
 package com.erp.backend.examination.service;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.erp.backend.examination.dto.ExamAdmitCardPayload;
 import com.erp.backend.examination.dto.ExamAdmitCardResponse;
@@ -15,6 +19,7 @@ import com.erp.backend.examination.entity.ExamQuestionPaper;
 import com.erp.backend.examination.repository.ExamAdmitCardRepository;
 import com.erp.backend.examination.repository.ExamDateSheetRepository;
 import com.erp.backend.examination.repository.ExamQuestionPaperRepository;
+import com.erp.backend.exception.FieldValidationException;
 import com.erp.backend.exception.ResourceNotFoundException;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
@@ -60,6 +65,7 @@ public class ExaminationService {
     @Transactional
     public ExamDateSheetResponse saveDateSheet(Long instituteId, ExamDateSheetPayload request) {
         Institute institute = validateInstitute(instituteId);
+        validateDateSheetPayload(request);
         ExamDateSheet dateSheet = examDateSheetRepository
                 .findByInstituteIdAndClassNameIgnoreCase(instituteId, request.className().trim())
                 .orElseGet(ExamDateSheet::new);
@@ -93,6 +99,7 @@ public class ExaminationService {
     @Transactional
     public ExamQuestionPaperResponse saveQuestionPaper(Long instituteId, ExamQuestionPaperPayload request) {
         Institute institute = validateInstitute(instituteId);
+        validateQuestionPaperPayload(request);
         ExamQuestionPaper questionPaper = new ExamQuestionPaper();
         questionPaper.setInstitute(institute);
         applyQuestionPaperPayload(questionPaper, request);
@@ -117,6 +124,7 @@ public class ExaminationService {
     @Transactional
     public ExamAdmitCardResponse saveAdmitCard(Long instituteId, ExamAdmitCardPayload request) {
         Institute institute = validateInstitute(instituteId);
+        validateAdmitCardPayload(request);
         ExamAdmitCard admitCard = new ExamAdmitCard();
         admitCard.setInstitute(institute);
         applyAdmitCardPayload(admitCard, request);
@@ -135,6 +143,46 @@ public class ExaminationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + instituteId));
     }
 
+    private void validateDateSheetPayload(ExamDateSheetPayload request) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        int shiftCount = parsePositiveInteger(request.shiftsPerDay(), "shiftsPerDay", "Shifts per day must be a valid number.", errors);
+        parsePositiveNumber(request.shiftDurationHours(), "shiftDurationHours", "Shift duration must be greater than 0.", errors);
+
+        if (StringUtils.hasText(request.shiftDurationUnit()) && !List.of("hours", "minutes").contains(request.shiftDurationUnit().trim())) {
+            errors.put("shiftDurationUnit", "Shift duration unit must be hours or minutes.");
+        }
+
+        if (request.shiftStartTimes() == null || request.shiftStartTimes().isEmpty()) {
+            errors.put("shiftStartTimes", "Shift start time is required.");
+        } else if (shiftCount > 0 && request.shiftStartTimes().size() != shiftCount) {
+            errors.put("shiftStartTimes", "Shift start time must be selected for every shift.");
+        } else if (request.shiftStartTimes().stream().anyMatch(value -> !StringUtils.hasText(value))) {
+            errors.put("shiftStartTimes", "Shift start time must be selected for every shift.");
+        }
+
+        LocalDate startDate = parseDate(request.examStartDate(), "examStartDate", "Exam start date must be valid.", errors);
+        LocalDate endDate = parseDate(request.examEndDate(), "examEndDate", "Exam end date must be valid.", errors);
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+            errors.put("examEndDate", "Exam end date cannot be before start date.");
+        }
+
+        throwIfFieldErrors(errors);
+    }
+
+    private void validateQuestionPaperPayload(ExamQuestionPaperPayload request) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        if (!StringUtils.hasText(request.fileType())) {
+            errors.put("fileType", "File type is required.");
+        }
+        throwIfFieldErrors(errors);
+    }
+
+    private void validateAdmitCardPayload(ExamAdmitCardPayload request) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        parseDate(request.examDate(), "examDate", "Exam date must be valid.", errors);
+        throwIfFieldErrors(errors);
+    }
+
     private void applyDateSheetPayload(ExamDateSheet dateSheet, ExamDateSheetPayload request) {
         dateSheet.setClassName(request.className().trim());
         dateSheet.setClassFrom(trim(request.classFrom()));
@@ -144,7 +192,7 @@ public class ExaminationService {
         dateSheet.setShiftsPerDay(trim(request.shiftsPerDay()));
         dateSheet.setShiftStartTimesJson(writeJson(request.shiftStartTimes() == null ? List.of() : request.shiftStartTimes()));
         dateSheet.setShiftDurationHours(trim(request.shiftDurationHours()));
-        dateSheet.setShiftDurationUnit(defaultValue(request.shiftDurationUnit(), "hours"));
+        dateSheet.setShiftDurationUnit(trim(request.shiftDurationUnit()));
         dateSheet.setExamStartDate(trim(request.examStartDate()));
         dateSheet.setExamEndDate(trim(request.examEndDate()));
         dateSheet.setFileName(request.fileName().trim());
@@ -184,7 +232,7 @@ public class ExaminationService {
                 dateSheet.getShiftsPerDay(),
                 readStringList(dateSheet.getShiftStartTimesJson()),
                 dateSheet.getShiftDurationHours(),
-                defaultValue(dateSheet.getShiftDurationUnit(), "hours"),
+                dateSheet.getShiftDurationUnit(),
                 dateSheet.getExamStartDate(),
                 dateSheet.getExamEndDate(),
                 dateSheet.getFileName(),
@@ -226,12 +274,57 @@ public class ExaminationService {
         );
     }
 
-    private String trim(String value) {
-        return StringUtils.hasText(value) ? value.trim() : null;
+    private int parsePositiveInteger(String value, String fieldName, String message, Map<String, String> errors) {
+        if (!StringUtils.hasText(value)) {
+            return 0;
+        }
+        try {
+            int parsedValue = Integer.parseInt(value.trim());
+            if (parsedValue <= 0) {
+                errors.put(fieldName, message);
+                return 0;
+            }
+            return parsedValue;
+        } catch (NumberFormatException exception) {
+            errors.put(fieldName, message);
+            return 0;
+        }
     }
 
-    private String defaultValue(String value, String fallback) {
-        return StringUtils.hasText(value) ? value.trim() : fallback;
+    private void parsePositiveNumber(String value, String fieldName, String message, Map<String, String> errors) {
+        if (!StringUtils.hasText(value)) {
+            return;
+        }
+        try {
+            double parsedValue = Double.parseDouble(value.trim());
+            if (parsedValue <= 0) {
+                errors.put(fieldName, message);
+            }
+        } catch (NumberFormatException exception) {
+            errors.put(fieldName, message);
+        }
+    }
+
+    private LocalDate parseDate(String value, String fieldName, String message, Map<String, String> errors) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (DateTimeParseException exception) {
+            errors.put(fieldName, message);
+            return null;
+        }
+    }
+
+    private void throwIfFieldErrors(Map<String, String> errors) {
+        if (!errors.isEmpty()) {
+            throw new FieldValidationException("Please fix the highlighted examination fields.", errors);
+        }
+    }
+
+    private String trim(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     private String writeJson(Object value) {

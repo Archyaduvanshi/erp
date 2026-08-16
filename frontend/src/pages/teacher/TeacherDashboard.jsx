@@ -47,7 +47,6 @@ const TeacherDashboard = () => {
     : 'Teacher';
 
   const teachingClasses = useMemo(() => deriveTeacherClassesFromTimetables(classTimetables, teacher), [classTimetables, teacher]);
-  const teacherSubjectsByClass = useMemo(() => deriveTeacherSubjectsByClass(classTimetables, teacher), [classTimetables, teacher]);
 
   const assignedStudents = useMemo(() => {
     if (!teachingClasses.length) return [];
@@ -58,11 +57,8 @@ const TeacherDashboard = () => {
     if (!teachingClasses.length) return [];
     return attendanceRecords
       .filter((record) => teachingClasses.includes(record.className))
-      .filter((record) => {
-        const allowedSubjects = teacherSubjectsByClass[record.className] || [];
-        return allowedSubjects.some((subjectName) => normalizeTeacherValue(subjectName) === normalizeTeacherValue(record.subject));
-      });
-  }, [attendanceRecords, teacherSubjectsByClass, teachingClasses]);
+      .filter((record) => normalizeTeacherValue(record.markedBy) === normalizeTeacherValue(teacherName));
+  }, [attendanceRecords, teacherName, teachingClasses]);
 
   const teacherExamDuty = useMemo(() => {
     if (!teacherName) return [];
@@ -330,12 +326,7 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   const classSet = new Set();
 
   classTimetables.forEach((record) => {
-    const template = readTeacherTimetableTemplate(record);
-    const hasTeacherSlot = template?.rows?.some((row) =>
-      (row.slots || []).some((slot) => slotMatchesTeacher(slot, teacherKeys)),
-    );
-
-    if (hasTeacherSlot && record.className) {
+    if (attendanceTeacherMatches(record, teacherKeys) && record.className) {
       classSet.add(record.className);
     }
   });
@@ -343,121 +334,15 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   return [...classSet];
 };
 
-const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
-  if (!teacher) return {};
+const resolveTimetableAttendanceTeacher = (record) => String(
+  record?.templateData?.attendanceTeacher
+    || record?.templateMeta?.attendanceTeacher
+    || '',
+).trim();
 
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
-  return classTimetables.reduce((accumulator, record) => {
-    const template = readTeacherTimetableTemplate(record);
-    if (!record?.className || !template?.rows?.length) return accumulator;
-
-    const subjectSet = new Set();
-    template.rows.forEach((row) => {
-      (row.slots || []).forEach((slot) => {
-        if (!slotMatchesTeacher(slot, teacherKeys)) return;
-        const subjectName = String(slot?.subjectName || '').trim();
-        if (subjectName) subjectSet.add(subjectName);
-      });
-    });
-
-    if (subjectSet.size) {
-      accumulator[record.className] = [...subjectSet].sort((left, right) => left.localeCompare(right));
-    }
-
-    return accumulator;
-  }, {});
-};
-
-const readTeacherTimetableTemplate = (record) => {
-  if (record?.templateData?.rows?.length && record?.templateData?.lecturePlan?.length) {
-    return record.templateData;
-  }
-
-  if (record?.fileType === 'text/html' && typeof window !== 'undefined') {
-    return parseTemplateFromHtmlDataUri(record.fileData, record.className);
-  }
-
-  return null;
-};
-
-const parseTemplateFromHtmlDataUri = (dataUri, className) => {
-  const html = decodeTimetableHtml(dataUri);
-  if (!html) return null;
-
-  const parser = new DOMParser();
-  const documentNode = parser.parseFromString(html, 'text/html');
-  const table = documentNode.querySelector('table');
-  if (!table) return null;
-
-  const rows = Array.from(table.querySelectorAll('tr'));
-  if (rows.length < 3) return null;
-
-  const headerCells = Array.from(rows[1].querySelectorAll('th'));
-  const lecturePlan = headerCells.slice(1)
-    .map((cell) => {
-      const text = cell.textContent?.replace(/\s+/g, ' ').trim() || '';
-      const lectureMatch = text.match(/Lecture\s+(\d+)/i);
-      if (!lectureMatch) return null;
-      const timeMatch = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
-      return {
-        lectureNumber: Number(lectureMatch[1]),
-        timeFrom: timeMatch?.[1] || '',
-        timeTo: timeMatch?.[2] || '',
-      };
-    })
-    .filter(Boolean);
-
-  const routineRows = rows.slice(2)
-    .map((rowNode) => {
-      const cells = Array.from(rowNode.querySelectorAll('td'));
-      if (!cells.length) return null;
-
-      const day = cells[0]?.textContent?.trim();
-      if (!day) return null;
-
-      const slotCells = cells.filter((cell, index) => {
-        if (index === 0) return false;
-        return !/Lunch/i.test(cell.textContent || '');
-      });
-
-      return {
-        day,
-        slots: lecturePlan.map((_, slotIndex) => {
-          const slotCell = slotCells[slotIndex];
-          const slotText = slotCell?.textContent?.replace(/\s+/g, ' ').trim() || '';
-          return {
-            subjectName: extractSlotValue(slotText, 'S'),
-            teacherName: extractSlotValue(slotText, 'T'),
-          };
-        }),
-      };
-    })
-    .filter(Boolean);
-
-  if (!lecturePlan.length || !routineRows.length) return null;
-
-  return {
-    className,
-    lecturePlan,
-    rows: routineRows,
-  };
-};
-
-const decodeTimetableHtml = (dataUri) => {
-  if (!dataUri || typeof dataUri !== 'string') return '';
-  const prefix = 'data:text/html;charset=utf-8,';
-  if (!dataUri.startsWith(prefix)) return '';
-
-  try {
-    return decodeURIComponent(dataUri.slice(prefix.length));
-  } catch {
-    return '';
-  }
-};
-
-const extractSlotValue = (slotText, key) => {
-  const expression = new RegExp(`${key}:\\s*(.*?)(?=\\s+[A-Z]:|$)`, 'i');
-  return slotText.match(expression)?.[1]?.trim() || '';
+const attendanceTeacherMatches = (record, teacherKeys) => {
+  const attendanceTeacher = normalizeTeacherValue(resolveTimetableAttendanceTeacher(record));
+  return Boolean(attendanceTeacher) && teacherKeys.some((key) => key === attendanceTeacher);
 };
 
 const buildTeacherIdentityKeys = (teacher) => {
@@ -471,11 +356,6 @@ const buildTeacherIdentityKeys = (teacher) => {
   ]
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean);
-};
-
-const slotMatchesTeacher = (slot, teacherKeys) => {
-  const teacherValue = String(slot?.teacherName || '').trim().toLowerCase();
-  return Boolean(teacherValue) && teacherKeys.some((key) => key === teacherValue);
 };
 
 const normalizeTeacherValue = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');

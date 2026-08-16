@@ -11,6 +11,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  UserCheck,
   UserRound,
   X,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ const TimetableManagement = () => {
   const [examSlotForm, setExamSlotForm] = useState(initialExamSlotForm);
   const [classSearch, setClassSearch] = useState('');
   const [examSearch, setExamSearch] = useState('');
+  const [openTimetablePreviewId, setOpenTimetablePreviewId] = useState(null);
   const [classTimetableAction, setClassTimetableAction] = useState('');
   const [savedTemplateDrafts, setSavedTemplateDrafts] = useState([]);
   const [templateForm, setTemplateForm] = useState(initialTemplateForm);
@@ -266,7 +268,6 @@ const TimetableManagement = () => {
       setLoadError('Please fill school name, total lectures, first lecture start, lecture length, and lunch length.');
       return;
     }
-
     const lectureCount = Number(templateForm.lectureCount);
     const lectureLength = Number(templateForm.lectureLength);
     const lunchLength = Number(templateForm.lunchLength);
@@ -285,6 +286,7 @@ const TimetableManagement = () => {
       firstLectureStart: templateForm.firstLectureStart,
       lectureLength,
       lunchLength,
+      attendanceTeacher: '',
       rows: classTemplateDays.map((day) => ({
         day,
         slots: lecturePlan.map(() => ({ subjectName: '', teacherName: '' })),
@@ -304,6 +306,7 @@ const TimetableManagement = () => {
       firstLectureStart: selectedClassEditableTemplate.firstLectureStart || selectedClassEditableTemplate.lecturePlan?.[0]?.timeFrom || '',
       lectureLength: selectedClassEditableTemplate.lectureLength || calculateLectureLength(selectedClassEditableTemplate.lecturePlan),
       lunchLength: selectedClassEditableTemplate.lunchLength ?? '',
+      attendanceTeacher: resolveTimetableAttendanceTeacher(selectedClassRecord),
     });
     setClassTimetableAction('');
     setActivePage('template-editor');
@@ -334,6 +337,10 @@ const TimetableManagement = () => {
       if (!generatedTemplateDraft || !selectedClass) return;
 
       const normalizedTemplateDraft = normalizeGeneratedTemplateDraft(generatedTemplateDraft);
+      if (!normalizedTemplateDraft.attendanceTeacher) {
+        setLoadError('Please select the attendance teacher for this class.');
+        return;
+      }
       const missingSubjects = findUnusedTimetableSubjects(normalizedTemplateDraft, selectedClassSubjectOptions);
       if (missingSubjects.length) {
         setLoadError(`Please schedule these subjects before final save: ${missingSubjects.join(', ')}.`);
@@ -353,6 +360,7 @@ const TimetableManagement = () => {
           firstLectureStart: normalizedTemplateDraft.firstLectureStart,
           lectureLength: normalizedTemplateDraft.lectureLength,
           lunchLength: normalizedTemplateDraft.lunchLength,
+          attendanceTeacher: normalizedTemplateDraft.attendanceTeacher,
         },
       };
     try {
@@ -488,6 +496,7 @@ const TimetableManagement = () => {
                         type="button"
                         onClick={() => {
                           setSelectedClass(className);
+                          setOpenTimetablePreviewId(null);
                           setClassTimetableAction('');
                           setGeneratedTemplateDraft(null);
                         }}
@@ -531,10 +540,9 @@ const TimetableManagement = () => {
                   selectedTeacherClassRecord ? (
                     <div className="mt-8 rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
                       <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                        <a
-                          href={selectedTeacherClassRecord.fileData || '#'}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => setOpenTimetablePreviewId(selectedTeacherClassRecord.id)}
                           className="flex min-w-0 flex-1 items-center gap-4 rounded-[1.4rem] p-2 text-left transition hover:bg-white"
                         >
                           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700">
@@ -545,14 +553,18 @@ const TimetableManagement = () => {
                             <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
                               Saved {formatSavedDate(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)}
                             </p>
-                            <p className="mt-2 text-xs font-bold text-slate-500">Click to open your generated timetable</p>
+                            <p className="mt-2 text-xs font-bold text-slate-500">Click to show your timetable here</p>
                           </div>
-                        </a>
+                        </button>
                         <div className="flex flex-wrap items-center gap-2">
                           <InfoPill icon={Clock3} text={formatSavedTime(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)} />
+                          <InfoPill icon={UserCheck} text={`Attendance: ${resolveTimetableAttendanceTeacher(selectedTeacherClassRecord) || 'Not assigned'}`} />
                           <InfoPill icon={FileText} text="Structured timetable" />
                         </div>
                       </div>
+                      {openTimetablePreviewId === selectedTeacherClassRecord.id ? (
+                        <SavedTimetablePreview record={selectedTeacherClassRecord} />
+                      ) : null}
                     </div>
                   ) : (
                     <div className="mt-8 rounded-4xl border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center">
@@ -567,11 +579,11 @@ const TimetableManagement = () => {
                   <div className="mt-8 space-y-6">
                     <div className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
                       {selectedClassRecord ? (
-                        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                          <a
-                            href={selectedClassRecord.fileData || '#'}
-                            target="_blank"
-                            rel="noreferrer"
+                        <>
+                          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                          <button
+                            type="button"
+                            onClick={() => setOpenTimetablePreviewId(selectedClassRecord.id)}
                             className="flex min-w-0 flex-1 items-center gap-4 rounded-[1.4rem] p-2 text-left transition hover:bg-white"
                           >
                             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700">
@@ -582,11 +594,12 @@ const TimetableManagement = () => {
                               <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
                                 Saved {formatSavedDate(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)}
                               </p>
-                              <p className="mt-2 text-xs font-bold text-slate-500">Click to open saved timetable</p>
+                              <p className="mt-2 text-xs font-bold text-slate-500">Click to show saved timetable here</p>
                             </div>
-                          </a>
+                          </button>
                         <div className="flex flex-wrap items-center gap-2">
                           <InfoPill icon={Clock3} text={formatSavedTime(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)} />
+                          <InfoPill icon={UserCheck} text={`Attendance: ${resolveTimetableAttendanceTeacher(selectedClassRecord) || 'Not assigned'}`} />
                           <InfoPill icon={FileText} text="Saved timetable" />
                           {isSelectedClassEditableTimetable ? (
                             <button
@@ -606,7 +619,11 @@ const TimetableManagement = () => {
                               <Trash2 size={18} />
                             </button>
                           </div>
-                        </div>
+                          </div>
+                          {openTimetablePreviewId === selectedClassRecord.id ? (
+                            <SavedTimetablePreview record={selectedClassRecord} />
+                          ) : null}
+                        </>
                       ) : (
                         <div className="py-8 text-center">
                           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
@@ -782,6 +799,16 @@ const TimetableManagement = () => {
                         Cancel
                       </button>
                     </div>
+                  </div>
+
+                  <div className="mt-6 max-w-xl">
+                    <SelectField
+                      label="Attendance Teacher"
+                      value={generatedTemplateDraft.attendanceTeacher || ''}
+                      onChange={(e) => setGeneratedTemplateDraft({ ...generatedTemplateDraft, attendanceTeacher: e.target.value })}
+                      options={['', ...teacherOptions.map((option) => option.value)]}
+                      renderOptionLabel={(value) => value || 'Select teacher for class attendance'}
+                    />
                   </div>
 
                   <div className="mt-6 overflow-x-auto rounded-[1.4rem] border border-slate-200 bg-white">
@@ -1074,6 +1101,7 @@ const normalizeGeneratedTemplateDraft = (draft) => {
     ...draft,
     schoolName: formatTimetableText(draft.schoolName),
     className: formatTimetableText(draft.className),
+    attendanceTeacher: formatTeacherStoredValue(draft.attendanceTeacher),
     rows: (draft.rows || []).map((row) => ({
       ...row,
       slots: (row.slots || []).map((slot) => ({
@@ -1218,6 +1246,11 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   const classSet = new Set();
 
   classTimetables.forEach((record) => {
+    if (attendanceTeacherMatches(record, teacherKeys)) {
+      if (record.className) classSet.add(record.className);
+      return;
+    }
+
     const template = readTeacherTimetableTemplate(record);
     const hasTeacherSlot = template?.rows?.some((row) =>
       (row.slots || []).some((slot) => slotMatchesTeacher(slot, teacherKeys)),
@@ -1229,6 +1262,19 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   });
 
   return [...classSet].sort(compareClassNames);
+};
+
+const resolveTimetableAttendanceTeacher = (record) => {
+  return formatTeacherStoredValue(
+    record?.templateData?.attendanceTeacher
+      || record?.templateMeta?.attendanceTeacher
+      || '',
+  );
+};
+
+const attendanceTeacherMatches = (record, teacherKeys) => {
+  const attendanceTeacher = resolveTimetableAttendanceTeacher(record).toLowerCase();
+  return Boolean(attendanceTeacher) && teacherKeys.some((key) => key === attendanceTeacher);
 };
 
 const readTeacherTimetableTemplate = (record) => {
@@ -1380,6 +1426,14 @@ const formatSavedTime = (value) => {
   });
 };
 
+const isImageFile = (record) => {
+  return record.fileType?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(record.fileName || '');
+};
+
+const isPreviewableFile = (record) => {
+  return Boolean(record?.fileData);
+};
+
 const TwoColumnPage = ({ left, right }) => (
   <div className="mt-8 grid gap-8 xl:grid-cols-[0.95fr_1.05fr]">
     {left}
@@ -1411,6 +1465,47 @@ const RecordCard = ({ icon, title, subtitle, children }) => (
     </div>
   </article>
 );
+
+const SavedTimetablePreview = ({ record }) => {
+  const attendanceTeacher = resolveTimetableAttendanceTeacher(record);
+
+  if (!isPreviewableFile(record)) {
+    return (
+      <div className="mt-5 rounded-[1.4rem] border border-dashed border-slate-300 bg-white px-5 py-8 text-center">
+        <p className="text-sm font-semibold text-slate-500">Saved timetable preview is not available.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-[1.4rem] border border-slate-200 bg-white">
+      <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">Saved Timetable</p>
+          <p className="mt-1 truncate text-sm font-black text-slate-950">{record.fileName || record.className || 'Class timetable'}</p>
+          <p className="mt-1 text-xs font-bold text-slate-500">
+            Attendance Teacher: {attendanceTeacher || 'Not assigned'}
+          </p>
+        </div>
+        <a
+          href={record.fileData}
+          download={record.fileName || 'class-timetable'}
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.16em] text-white transition hover:bg-emerald-600"
+        >
+          <Download size={15} />
+          Download
+        </a>
+      </div>
+      <div className="bg-white p-3">
+        {isImageFile(record) ? (
+          <img src={record.fileData} alt={record.fileName || 'Saved timetable'} className="mx-auto max-h-[70vh] w-auto max-w-full object-contain" />
+        ) : (
+          <iframe title={record.fileName || 'Saved timetable'} src={record.fileData} className="h-[70vh] w-full rounded-xl bg-white" />
+        )}
+      </div>
+    </div>
+  );
+};
 
 const InputField = ({ label, ...props }) => (
   <div className="space-y-2.5">

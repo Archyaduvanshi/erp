@@ -28,7 +28,6 @@ const AttendanceManagement = () => {
   const [selectedClass, setSelectedClass] = useState('');
   const [classSearch, setClassSearch] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [teacherAttendanceDate, setTeacherAttendanceDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [teacherAttendanceMonth, setTeacherAttendanceMonth] = useState('');
@@ -119,34 +118,10 @@ const AttendanceManagement = () => {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [classTimetables, selectedClass, teachers]);
 
-  const selectedTeacherRecord = useMemo(() => (
-    teacherOptions.find((teacher) => teacher.name === selectedTeacher) || null
-  ), [selectedTeacher, teacherOptions]);
-
-  const subjectOptions = useMemo(() => {
-    if (!selectedTeacher) return [];
-
-    const subjectsFromRecords = attendanceRecords
-      .filter((record) => record.className === selectedClass)
-      .filter((record) => normalizeAttendanceText(record.markedBy) === normalizeAttendanceText(selectedTeacher))
-      .map((record) => formatAttendanceText(record.subject))
-      .filter(Boolean);
-
-    const teacherSubject = formatAttendanceText(selectedTeacherRecord?.subject);
-
-    return [...new Set([teacherSubject, ...subjectsFromRecords].filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b));
-  }, [attendanceRecords, selectedClass, selectedTeacher, selectedTeacherRecord]);
-
   useEffect(() => {
     setSelectedTeacher('');
-    setSelectedSubject('');
     setSelectedMonth('');
   }, [selectedClass]);
-
-  useEffect(() => {
-    setSelectedSubject('');
-  }, [selectedTeacherRecord]);
 
   const today = new Date().toISOString().split('T')[0];
   const todayRecords = attendanceRecords.filter((record) => record.date === today);
@@ -157,7 +132,6 @@ const AttendanceManagement = () => {
     const classMonthKeys = attendanceRecords
       .filter((record) => record.className === selectedClass)
       .filter((record) => !selectedTeacher || normalizeAttendanceText(record.markedBy) === normalizeAttendanceText(selectedTeacher))
-      .filter((record) => !selectedSubject || normalizeAttendanceText(record.subject) === normalizeAttendanceText(selectedSubject))
       .map((record) => String(record.date || '').slice(0, 7))
       .filter((value) => /^\d{4}-\d{2}$/.test(value));
 
@@ -167,15 +141,14 @@ const AttendanceManagement = () => {
         value,
         label: formatMonthKey(value),
       }));
-  }, [attendanceRecords, selectedClass, selectedSubject, selectedTeacher]);
+  }, [attendanceRecords, selectedClass, selectedTeacher]);
 
   const monthlyAttendanceRegister = useMemo(() => {
-    if (!selectedClass || !selectedTeacher || !selectedSubject) return null;
+    if (!selectedClass || !selectedTeacher) return null;
 
     const classRecords = attendanceRecords
       .filter((record) => record.className === selectedClass)
       .filter((record) => !selectedTeacher || normalizeAttendanceText(record.markedBy) === normalizeAttendanceText(selectedTeacher))
-      .filter((record) => !selectedSubject || normalizeAttendanceText(record.subject) === normalizeAttendanceText(selectedSubject))
       .filter((record) => !Number.isNaN(new Date(`${record.date || ''}T00:00:00`).getTime()))
       .sort((a, b) => new Date(a.createdAt || a.date).getTime() - new Date(b.createdAt || b.date).getTime());
 
@@ -260,7 +233,7 @@ const AttendanceManagement = () => {
       schoolName: session?.instituteName || 'School Name',
       className: selectedClass,
       teacherLabel: selectedTeacher,
-      subjectLabel: selectedSubject,
+      classNumberLabel: selectedClass,
       monthLabel: formatMonthKey(effectiveMonthKey),
       dayColumns,
       holidayColumnMap,
@@ -273,7 +246,6 @@ const AttendanceManagement = () => {
     selectedClass,
     selectedClassStudents,
     selectedMonth,
-    selectedSubject,
     selectedTeacher,
     session?.instituteName,
     today,
@@ -402,7 +374,6 @@ const AttendanceManagement = () => {
     setActiveSection('student');
     setSelectedClass(className);
     setSelectedTeacher('');
-    setSelectedSubject('');
     setSelectedMonth('');
   };
 
@@ -652,22 +623,14 @@ const AttendanceManagement = () => {
                     }}
                     required
                   />
-                  <CreativeSelect
-                    label="Subject Name"
-                    value={selectedSubject}
-                    onChange={(e) => setSelectedSubject(e.target.value)}
-                    options={['', ...subjectOptions]}
-                    renderOptionLabel={(value) => value || 'Select subject'}
-                    required
-                    disabled={!selectedTeacher}
-                  />
+                  <StaticField label="Class Number" value={selectedClass || '-'} />
                   <CreativeSelect
                     label="Month"
                     value={selectedMonth}
                     onChange={(e) => setSelectedMonth(e.target.value)}
                     options={['', ...availableMonthOptions.map((option) => option.value)]}
                     renderOptionLabel={(value) => {
-                      if (!value) return 'Current Month';
+                      if (!value) return 'Latest saved month';
                       return availableMonthOptions.find((option) => option.value === value)?.label || value;
                     }}
                   />
@@ -676,7 +639,7 @@ const AttendanceManagement = () => {
                 {monthlyAttendanceRegister?.rows?.length ? (
                   <RegisterTable
                     titleLine={`${monthlyAttendanceRegister.schoolName}`}
-                    subtitleLine={`Class: ${monthlyAttendanceRegister.className} | Teacher: ${monthlyAttendanceRegister.teacherLabel} | Subject: ${monthlyAttendanceRegister.subjectLabel} | Month: ${monthlyAttendanceRegister.monthLabel}`}
+                    subtitleLine={`Class Number: ${monthlyAttendanceRegister.classNumberLabel} | Teacher: ${monthlyAttendanceRegister.teacherLabel} | Month: ${monthlyAttendanceRegister.monthLabel}`}
                     nameHeader="Student Name"
                     rows={monthlyAttendanceRegister.rows}
                     dayColumns={monthlyAttendanceRegister.dayColumns}
@@ -688,9 +651,9 @@ const AttendanceManagement = () => {
                   <EmptyState
                     icon={ClipboardCheck}
                     title="No attendance register available"
-                    description={!selectedTeacher || !selectedSubject
-                      ? 'Attendance register dekhne ke liye Teacher Name aur Subject Name dono required hain.'
-                      : 'Is class ke selected teacher, subject aur selected month ke liye koi saved attendance data available nahi hai.'}
+                    description={!selectedTeacher
+                      ? 'Attendance register dekhne ke liye Teacher Name required hai.'
+                      : 'Is class ke selected teacher aur selected month ke liye koi saved attendance data available nahi hai.'}
                   />
                 ) : null}
               </section>
@@ -1035,12 +998,7 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   const classSet = new Set();
 
   classTimetables.forEach((record) => {
-    const template = readTimetableTemplate(record);
-    const hasTeacherSlot = template?.rows?.some((row) =>
-      (row.slots || []).some((slot) => slotMatchesTeacher(slot, teacherKeys)),
-    );
-
-    if (hasTeacherSlot && record.className) {
+    if (attendanceTeacherMatches(record, teacherKeys) && record.className) {
       classSet.add(record.className);
     }
   });
@@ -1061,101 +1019,17 @@ const buildTeacherIdentityKeys = (teacher) => {
     .filter(Boolean);
 };
 
-const slotMatchesTeacher = (slot, teacherKeys) => {
-  const teacherValue = String(slot?.teacherName || '').trim().toLowerCase();
-  return Boolean(teacherValue) && teacherKeys.some((key) => key === teacherValue);
+const resolveTimetableAttendanceTeacher = (record) => {
+  return formatAttendanceText(
+    record?.templateData?.attendanceTeacher
+      || record?.templateMeta?.attendanceTeacher
+      || '',
+  );
 };
 
-const readTimetableTemplate = (record) => {
-  if (record?.templateData?.rows?.length && record?.templateData?.lecturePlan?.length) {
-    return record.templateData;
-  }
-
-  if (record?.fileType === 'text/html' && typeof window !== 'undefined') {
-    return parseTemplateFromHtmlDataUri(record.fileData, record.className);
-  }
-
-  return null;
-};
-
-const parseTemplateFromHtmlDataUri = (dataUri, className) => {
-  const html = decodeTimetableHtml(dataUri);
-  if (!html) return null;
-
-  const parser = new DOMParser();
-  const documentNode = parser.parseFromString(html, 'text/html');
-  const table = documentNode.querySelector('table');
-  if (!table) return null;
-
-  const rows = Array.from(table.querySelectorAll('tr'));
-  if (rows.length < 3) return null;
-
-  const headerCells = Array.from(rows[1].querySelectorAll('th'));
-  const lecturePlan = headerCells.slice(1)
-    .map((cell) => {
-      const text = cell.textContent?.replace(/\s+/g, ' ').trim() || '';
-      const lectureMatch = text.match(/Lecture\s+(\d+)/i);
-      if (!lectureMatch) return null;
-      const timeMatch = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
-      return {
-        lectureNumber: Number(lectureMatch[1]),
-        timeFrom: timeMatch?.[1] || '',
-        timeTo: timeMatch?.[2] || '',
-      };
-    })
-    .filter(Boolean);
-
-  const routineRows = rows.slice(2)
-    .map((rowNode) => {
-      const cells = Array.from(rowNode.querySelectorAll('td'));
-      if (!cells.length) return null;
-
-      const day = cells[0]?.textContent?.trim();
-      if (!day) return null;
-
-      const slotCells = cells.filter((cell, index) => {
-        if (index === 0) return false;
-        return !/Lunch/i.test(cell.textContent || '');
-      });
-
-      return {
-        day,
-        slots: lecturePlan.map((_, slotIndex) => {
-          const slotCell = slotCells[slotIndex];
-          const slotText = slotCell?.textContent?.replace(/\s+/g, ' ').trim() || '';
-          return {
-            subjectName: extractSlotValue(slotText, 'S'),
-            teacherName: extractSlotValue(slotText, 'T'),
-          };
-        }),
-      };
-    })
-    .filter(Boolean);
-
-  if (!lecturePlan.length || !routineRows.length) return null;
-
-  return {
-    className,
-    lecturePlan,
-    rows: routineRows,
-  };
-};
-
-const decodeTimetableHtml = (dataUri) => {
-  if (!dataUri || typeof dataUri !== 'string') return '';
-  const prefix = 'data:text/html;charset=utf-8,';
-  if (!dataUri.startsWith(prefix)) return '';
-
-  try {
-    return decodeURIComponent(dataUri.slice(prefix.length));
-  } catch {
-    return '';
-  }
-};
-
-const extractSlotValue = (slotText, key) => {
-  const expression = new RegExp(`${key}:\\s*(.*?)(?=\\s+[A-Z]:|$)`, 'i');
-  return slotText.match(expression)?.[1]?.trim() || '';
+const attendanceTeacherMatches = (record, teacherKeys) => {
+  const attendanceTeacher = normalizeAttendanceText(resolveTimetableAttendanceTeacher(record));
+  return Boolean(attendanceTeacher) && teacherKeys.some((key) => key === attendanceTeacher);
 };
 
 const formatMonthDateKey = (year, month, day) => (

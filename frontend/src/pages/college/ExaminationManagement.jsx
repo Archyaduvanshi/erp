@@ -12,10 +12,9 @@ import {
   Search,
   Ticket,
   Trash2,
-  Upload,
   X,
 } from 'lucide-react';
-import { examApi, studentApi, teacherApi, uploadApi } from '../../utils/api';
+import { courseBookApi, examApi, studentApi, teacherApi } from '../../utils/api';
 
 const initialDateSheetForm = {
   className: '',
@@ -23,11 +22,11 @@ const initialDateSheetForm = {
   classTo: '',
   sectionWise: false,
   examType: '',
-  shiftsPerDay: '1',
+  shiftsPerDay: '',
   shiftStartTimes: [''],
   shiftDurationHours: '',
-  shiftDurationUnit: 'hours',
-  shiftStartMeridians: ['AM'],
+  shiftDurationUnit: '',
+  shiftStartMeridians: [''],
   examStartDate: '',
   examEndDate: '',
   fileName: '',
@@ -45,19 +44,22 @@ const initialAdmitCardForm = {
   examDate: '',
 };
 
+function FieldError({ text }) {
+  return text ? <p className="text-xs font-semibold text-rose-600">{text}</p> : null;
+}
+
 const ExaminationManagement = () => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
   const [activeSection, setActiveSection] = useState('home');
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [courseBooks, setCourseBooks] = useState([]);
   const [dateSheets, setDateSheets] = useState([]);
   const [questionPapers, setQuestionPapers] = useState([]);
   const [admitCards, setAdmitCards] = useState([]);
   const [dateSheetForm, setDateSheetForm] = useState(initialDateSheetForm);
   const [admitCardForm, setAdmitCardForm] = useState(initialAdmitCardForm);
-  const [openDateSheetClass, setOpenDateSheetClass] = useState('');
-  const [dateSheetAction, setDateSheetAction] = useState('');
   const [dateSheetSearch, setDateSheetSearch] = useState('');
   const [questionSearch, setQuestionSearch] = useState('');
   const [selectedQuestionPaperClass, setSelectedQuestionPaperClass] = useState('');
@@ -65,9 +67,10 @@ const ExaminationManagement = () => {
   const [selectedQuestionPaperSubject, setSelectedQuestionPaperSubject] = useState('');
   const [admitSearch, setAdmitSearch] = useState('');
   const [loadError, setLoadError] = useState('');
+  const [dateSheetFieldErrors, setDateSheetFieldErrors] = useState({});
+  const [admitCardFieldErrors, setAdmitCardFieldErrors] = useState({});
   const [templatePreview, setTemplatePreview] = useState(null);
   const [questionPaperPreview, setQuestionPaperPreview] = useState(null);
-  const [pendingDateSheetFile, setPendingDateSheetFile] = useState(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -79,15 +82,17 @@ const ExaminationManagement = () => {
 
   const refreshData = async () => {
     try {
-      const [studentResponse, teacherResponse, dateSheetResponse, questionPaperResponse, admitCardResponse] = await Promise.all([
+      const [studentResponse, teacherResponse, courseBookResponse, dateSheetResponse, questionPaperResponse, admitCardResponse] = await Promise.all([
         studentApi.getAll(),
         teacherApi.getAll(),
+        courseBookApi.getAll(),
         examApi.getDateSheets(),
         examApi.getQuestionPapers(),
         examApi.getAdmitCards(),
       ]);
       setStudents(studentResponse);
       setTeachers(teacherResponse);
+      setCourseBooks(courseBookResponse);
       setDateSheets(dateSheetResponse);
       setQuestionPapers(questionPaperResponse);
       setAdmitCards(admitCardResponse);
@@ -95,6 +100,7 @@ const ExaminationManagement = () => {
     } catch (error) {
       setStudents([]);
       setTeachers([]);
+      setCourseBooks([]);
       setDateSheets([]);
       setQuestionPapers([]);
       setAdmitCards([]);
@@ -120,6 +126,29 @@ const ExaminationManagement = () => {
   const availableBaseClasses = useMemo(() => (
     [...new Set(availableClasses.map((className) => parseClassDescriptor(className).baseClass).filter(Boolean))]
   ), [availableClasses]);
+
+  const subjectsByClass = useMemo(() => {
+    return courseBooks.reduce((accumulator, record) => {
+      const className = normalizeClassValue(record.className);
+      const subjectName = formatExamFormText(record.subjectName).trim();
+      if (!className || !subjectName) return accumulator;
+
+      const exactKeys = [
+        className,
+        normalizeExamClassLabel(className),
+        parseClassDescriptor(className).baseClass,
+      ].filter(Boolean);
+
+      exactKeys.forEach((key) => {
+        const normalizedKey = normalizeExamClassLabel(key);
+        if (!normalizedKey) return;
+        if (!accumulator[normalizedKey]) accumulator[normalizedKey] = new Set();
+        accumulator[normalizedKey].add(subjectName);
+      });
+
+      return accumulator;
+    }, {});
+  }, [courseBooks]);
 
   const availableExamTitles = useMemo(() => {
     const examTitles = [
@@ -230,85 +259,17 @@ const ExaminationManagement = () => {
     }, {})
   ), [filteredDateSheets]);
 
-  const handleDateSheetBrowse = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setPendingDateSheetFile(file);
-    setDateSheetForm((current) => ({
-      ...current,
-      fileName: file.name,
-      fileData: '',
-      fileType: file.type || 'application/octet-stream',
-    }));
-    setLoadError('');
-  };
-
-  const handleOpenDateSheetClass = (className) => {
-    const existingRecord = dateSheets.find((record) => record.className === className);
-    setOpenDateSheetClass(className);
-    setDateSheetAction('');
-    setPendingDateSheetFile(null);
-    setDateSheetForm(existingRecord ? {
-      className,
-      classFrom: existingRecord.classFrom || '',
-      classTo: existingRecord.classTo || '',
-      sectionWise: Boolean(existingRecord.sectionWise),
-      examType: existingRecord.examType || '',
-      shiftsPerDay: existingRecord.shiftsPerDay || '1',
-      shiftStartTimes: normalizeShiftStartTimes(existingRecord.shiftStartTimes, existingRecord.shiftsPerDay || '1'),
-      shiftStartMeridians: normalizeShiftStartMeridians(existingRecord.shiftStartMeridians, existingRecord.shiftStartTimes, existingRecord.shiftsPerDay || '1'),
-      shiftDurationHours: existingRecord.shiftDurationHours || '',
-      shiftDurationUnit: existingRecord.shiftDurationUnit || 'hours',
-      examStartDate: existingRecord.examStartDate || '',
-      examEndDate: existingRecord.examEndDate || '',
-      fileName: existingRecord.fileName || '',
-      fileData: existingRecord.fileData || '',
-      fileType: existingRecord.fileType || '',
-    } : {
-      ...initialDateSheetForm,
-      className,
-    });
-  };
-
   const saveDateSheetRecord = async (payload) => {
     await examApi.saveDateSheet(payload);
   };
 
-  const handleDateSheetSave = async (e) => {
-    e.preventDefault();
-    if (!dateSheetForm.className || !dateSheetForm.examType.trim() || !(dateSheetForm.fileData || pendingDateSheetFile)) return;
-
-    try {
-      const uploadedFile = pendingDateSheetFile
-        ? await uploadApi.uploadFile(pendingDateSheetFile, '/erp/examinations/date-sheets')
-        : null;
-      await saveDateSheetRecord({
-        ...dateSheetForm,
-        examType: dateSheetForm.examType.trim(),
-        fileName: uploadedFile?.name || dateSheetForm.fileName,
-        fileData: uploadedFile?.url || dateSheetForm.fileData,
-        fileType: dateSheetForm.fileType || uploadedFile?.fileType || 'application/octet-stream',
-      });
-      setDateSheetForm(initialDateSheetForm);
-      setPendingDateSheetFile(null);
-      setOpenDateSheetClass('');
-      setDateSheetAction('');
-      await refreshData();
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save date sheet.');
-    }
-  };
-
   const handleGenerateDateSheetTemplate = async () => {
-    if (
-      !dateSheetForm.classFrom
-      || !dateSheetForm.classTo
-      || !dateSheetForm.examType.trim()
-      || !dateSheetForm.examStartDate
-      || !dateSheetForm.examEndDate
-    ) return;
+    const validationErrors = validateDateSheetForm(dateSheetForm);
+    if (Object.keys(validationErrors).length) {
+      setDateSheetFieldErrors(validationErrors);
+      setLoadError('');
+      return;
+    }
 
     const rangeLabel = buildClassRangeLabel(dateSheetForm.classFrom, dateSheetForm.classTo);
     const shiftCount = Math.max(Number(dateSheetForm.shiftsPerDay) || 1, 1);
@@ -325,6 +286,8 @@ const ExaminationManagement = () => {
       classTo: dateSheetForm.classTo,
       sectionWise: dateSheetForm.sectionWise,
     });
+    const examDateColumns = buildExamDateColumns(dateSheetForm.examStartDate, dateSheetForm.examEndDate);
+    const subjectGrid = buildInitialExamSubjectGrid(classColumns, examDateColumns, shiftCount);
 
     const schoolName = String(session?.instituteName || 'School Name').trim() || 'School Name';
     const previewPayload = {
@@ -334,26 +297,42 @@ const ExaminationManagement = () => {
       classTo: dateSheetForm.classTo,
       sectionWise: dateSheetForm.sectionWise,
       classColumns,
-      examType: dateSheetForm.examType.trim(),
+      examType: formatExamFormText(dateSheetForm.examType).trim(),
       shiftsPerDay: String(shiftCount),
       shiftStartTimes: normalizedShiftStartTimes.map((timeValue, index) => (
-        convertTimeToMeridian(timeValue, normalizedShiftStartMeridians[index] || 'AM')
+        convertTimeToMeridian(timeValue, normalizedShiftStartMeridians[index])
       )),
       shiftStartMeridians: normalizedShiftStartMeridians,
       shiftDurationHours: dateSheetForm.shiftDurationHours,
       shiftDurationUnit: dateSheetForm.shiftDurationUnit,
       examStartDate: dateSheetForm.examStartDate,
       examEndDate: dateSheetForm.examEndDate,
+      subjectGrid,
     };
 
     setTemplatePreview(previewPayload);
     setActiveSection('datesheet-preview');
+    setDateSheetFieldErrors({});
     setLoadError('');
   };
 
   const handleCloseTemplatePreview = () => {
     setActiveSection('datesheet');
     setTemplatePreview(null);
+  };
+
+  const handleTemplateSubjectChange = (className, dateValue, shiftIndex, subjectName) => {
+    setTemplatePreview((current) => {
+      if (!current) return current;
+      const cellKey = buildExamSubjectCellKey(className, dateValue, shiftIndex);
+      return {
+        ...current,
+        subjectGrid: {
+          ...(current.subjectGrid || {}),
+          [cellKey]: subjectName,
+        },
+      };
+    });
   };
 
   const handleSaveTemplatePreview = async () => {
@@ -389,13 +368,12 @@ const ExaminationManagement = () => {
       document.body.removeChild(link);
 
       setDateSheetForm(initialDateSheetForm);
-      setOpenDateSheetClass('');
-      setDateSheetAction('');
       setTemplatePreview(null);
       setActiveSection('datesheet');
       await refreshData();
       setLoadError('');
     } catch (error) {
+      setDateSheetFieldErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save generated date sheet template.');
     }
   };
@@ -415,32 +393,44 @@ const ExaminationManagement = () => {
     setAdmitCardForm((current) => ({
       ...current,
       studentId,
-      rollNo: selectedStudent.rollNo || selectedStudent.enrollmentNo || selectedStudent.systemId || '',
-      className: selectedStudent.assignedClass || '',
+      rollNo: formatExamFormText(selectedStudent.rollNo || selectedStudent.enrollmentNo || selectedStudent.systemId || ''),
+      className: formatExamFormText(selectedStudent.assignedClass || ''),
     }));
   };
 
   const handleAdmitCardSave = async (e) => {
     e.preventDefault();
+    const validationErrors = validateAdmitCardForm(admitCardForm);
+    if (Object.keys(validationErrors).length) {
+      setAdmitCardFieldErrors(validationErrors);
+      setLoadError('');
+      return;
+    }
+
     const selectedStudent = students.find((student) => String(student.id) === admitCardForm.studentId);
-    if (!selectedStudent) return;
+    if (!selectedStudent) {
+      setAdmitCardFieldErrors({ studentId: 'Please select a valid student.' });
+      return;
+    }
 
     try {
       await examApi.saveAdmitCard({
         ...admitCardForm,
-        examTitle: admitCardForm.examTitle.trim(),
+        examTitle: formatExamFormText(admitCardForm.examTitle).trim(),
         studentId: selectedStudent.systemId || String(selectedStudent.id),
         studentName: `${selectedStudent.firstName || ''} ${selectedStudent.lastName || ''}`.trim(),
         rollNo: selectedStudent.rollNo || selectedStudent.enrollmentNo || selectedStudent.systemId || admitCardForm.rollNo,
         className: selectedStudent.assignedClass || admitCardForm.className,
-        centerName: admitCardForm.centerName.trim(),
+        centerName: formatExamFormText(admitCardForm.centerName).trim(),
         reportingTime: admitCardForm.reportingTime.trim(),
         examDate: admitCardForm.examDate,
       });
       setAdmitCardForm(initialAdmitCardForm);
+      setAdmitCardFieldErrors({});
       await refreshData();
       setLoadError('');
     } catch (error) {
+      setAdmitCardFieldErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save admit card.');
     }
   };
@@ -568,15 +558,12 @@ const ExaminationManagement = () => {
             <DateSheetSection
               form={dateSheetForm}
               setForm={setDateSheetForm}
-              classes={availableClasses}
+              fieldErrors={dateSheetFieldErrors}
+              setFieldErrors={setDateSheetFieldErrors}
               baseClassOptions={availableBaseClasses}
               dateSheetMap={dateSheetMap}
-              action={dateSheetAction}
               searchValue={dateSheetSearch}
               onSearch={setDateSheetSearch}
-              onActionChange={setDateSheetAction}
-              onBrowse={handleDateSheetBrowse}
-              onSave={handleDateSheetSave}
               onGenerateTemplate={handleGenerateDateSheetTemplate}
               onDelete={(recordId) => handleDelete('exam_datesheets', recordId, 'Delete this exam date sheet entry?')}
             />
@@ -585,7 +572,9 @@ const ExaminationManagement = () => {
           {activeSection === 'datesheet-preview' && templatePreview ? (
             <DateSheetTemplatePreview
               preview={templatePreview}
+              subjectsByClass={subjectsByClass}
               onBack={handleCloseTemplatePreview}
+              onSubjectChange={handleTemplateSubjectChange}
               onSave={handleSaveTemplatePreview}
             />
           ) : null}
@@ -613,6 +602,8 @@ const ExaminationManagement = () => {
             <AdmitCardSection
               form={admitCardForm}
               setForm={setAdmitCardForm}
+              fieldErrors={admitCardFieldErrors}
+              setFieldErrors={setAdmitCardFieldErrors}
               students={students}
               examTitles={availableExamTitles}
               records={filteredAdmitCards}
@@ -650,7 +641,7 @@ const HeroPanel = ({ activeSection, quickStats }) => (
             Keep date sheets, teacher papers, and admit cards in one responsive exam workspace.
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-sky-50/80">
-            Switch sections instantly, review uploaded records, and manage printable exam documents without jumping across multiple pages.
+            Switch sections instantly, review saved records, and manage printable exam documents without jumping across multiple pages.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-sky-100/90">
@@ -674,13 +665,13 @@ const ExamHome = ({ onOpenDateSheet, onOpenQuestionPaper, onOpenAdmitCard }) => 
     <LaunchCard
       icon={CalendarDays}
       title="Exam Date Sheet"
-      description="Select classes, upload files, or generate fresh templates for each exam cycle."
+      description="Generate fresh Excel-style date sheet templates for each exam cycle."
       onClick={onOpenDateSheet}
     />
     <LaunchCard
       icon={ScrollText}
       title="Question Papers"
-      description="View teacher-uploaded question papers and keep download and print actions in one place."
+      description="View saved question papers and keep download and print actions in one place."
       onClick={onOpenQuestionPaper}
     />
     <LaunchCard
@@ -695,18 +686,20 @@ const ExamHome = ({ onOpenDateSheet, onOpenQuestionPaper, onOpenAdmitCard }) => 
 const DateSheetSection = ({
   form,
   setForm,
-  classes,
+  fieldErrors,
+  setFieldErrors,
   baseClassOptions,
   dateSheetMap,
-  action,
   searchValue,
   onSearch,
-  onActionChange,
-  onBrowse,
-  onSave,
   onGenerateTemplate,
   onDelete,
 }) => {
+  const updateField = (field, value) => {
+    setForm({ ...form, [field]: value });
+    setFieldErrors((current) => ({ ...current, [field]: '' }));
+  };
+
   const filteredRecords = Object.values(dateSheetMap).filter((record) => {
     const query = searchValue.trim().toLowerCase();
     if (!query) return true;
@@ -722,66 +715,26 @@ const DateSheetSection = ({
       <Panel>
         <PanelHeader
           title="Date Sheet Workspace"
-          description="Yahan class list nahi dikhegi. Direct upload file ya Excel generate logic use karo, aur class form ke andar select karo."
+          description="Class range, exam type, date range, aur shifts fill karke Excel-style date sheet generate karo."
         />
 
         <div className="mt-6 space-y-5">
-          <div className="grid gap-4 md:grid-cols-2">
-            <ActionChoice
-              active={action === 'upload'}
-              icon={Upload}
-              title="Upload File"
-              description="PDF, image, spreadsheet, ya document directly save karo."
-              onClick={() => onActionChange('upload')}
-            />
-            <ActionChoice
-              active={action === 'generate'}
-              icon={Download}
-              title="Generate Template"
-              description="Blank Excel-style date sheet template bana kar turant save aur download karo."
-              onClick={() => onActionChange('generate')}
-            />
-          </div>
-
-          {action === 'upload' ? (
-            <form className="grid gap-4 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4 sm:p-5 md:grid-cols-2" onSubmit={onSave}>
-              <CreativeSelect
-                label="Class"
-                value={form.className}
-                onChange={(e) => setForm({ ...form, className: e.target.value })}
-                options={['', ...classes]}
-                renderOptionLabel={(value) => value || 'Select class'}
-              />
-              <CreativeInput
-                label="Exam Type"
-                value={form.examType}
-                onChange={(e) => setForm({ ...form, examType: e.target.value })}
-                placeholder="Mid Term / Unit Test / Annual"
-              />
-              <div className="md:col-span-2">
-                <FileUploadField label="Upload Date Sheet" fileName={form.fileName} onBrowse={onBrowse} />
-              </div>
-              <div className="md:col-span-2">
-                <PrimaryButton type="submit" icon={Upload} label="Save Uploaded Date Sheet" />
-              </div>
-            </form>
-          ) : null}
-
-          {action === 'generate' ? (
-            <div className="grid gap-4 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4 sm:p-5 md:grid-cols-2">
+          <div className="grid gap-4 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4 sm:p-5 md:grid-cols-2">
               <CreativeSelect
                 label="Class Range From"
                 value={form.classFrom}
-                onChange={(e) => setForm({ ...form, classFrom: e.target.value })}
+                onChange={(e) => updateField('classFrom', e.target.value)}
                 options={['', ...baseClassOptions]}
                 renderOptionLabel={(value) => value || 'Select start class'}
+                error={fieldErrors.classFrom}
               />
               <CreativeSelect
                 label="Class Range To"
                 value={form.classTo}
-                onChange={(e) => setForm({ ...form, classTo: e.target.value })}
+                onChange={(e) => updateField('classTo', e.target.value)}
                 options={['', ...baseClassOptions]}
                 renderOptionLabel={(value) => value || 'Select end class'}
+                error={fieldErrors.classTo}
               />
               <label className="flex items-center gap-3 rounded-2xl border-2 border-slate-200 bg-white px-4 py-3.5 md:col-span-2">
                 <input
@@ -800,70 +753,95 @@ const DateSheetSection = ({
               <CreativeInput
                 label="Exam Type"
                 value={form.examType}
-                onChange={(e) => setForm({ ...form, examType: e.target.value })}
+                onChange={(e) => updateField('examType', e.target.value)}
                 placeholder="Mid Term / Unit Test / Annual"
+                error={fieldErrors.examType}
               />
               <CreativeSelect
                 label="Shift In A Day"
                 value={form.shiftsPerDay}
-                onChange={(e) => setForm((current) => ({
-                  ...current,
-                  shiftsPerDay: e.target.value,
-                  shiftStartTimes: normalizeShiftStartTimes(current.shiftStartTimes, e.target.value),
-                  shiftStartMeridians: normalizeShiftStartMeridians(
-                    current.shiftStartMeridians,
-                    current.shiftStartTimes,
-                    e.target.value,
-                  ),
-                }))}
-                options={['1', '2', '3', '4']}
+                onChange={(e) => {
+                  setForm((current) => ({
+                    ...current,
+                    shiftsPerDay: e.target.value,
+                    shiftStartTimes: normalizeShiftStartTimes(current.shiftStartTimes, e.target.value),
+                    shiftStartMeridians: normalizeShiftStartMeridians(
+                      current.shiftStartMeridians,
+                      current.shiftStartTimes,
+                      e.target.value,
+                    ),
+                  }));
+                  setFieldErrors((current) => ({ ...current, shiftsPerDay: '', shiftStartTimes: '', shiftStartMeridians: '' }));
+                }}
+                options={['', '1', '2', '3', '4']}
+                renderOptionLabel={(value) => value || 'Select shifts'}
+                error={fieldErrors.shiftsPerDay}
               />
               <div className="space-y-2.5">
                 <label className="text-xs font-black uppercase tracking-[0.16em] text-slate-700">Length Of Shift</label>
-                <div className="relative flex items-center rounded-2xl border-2 border-slate-200 bg-white outline-none transition focus-within:border-sky-500 focus-within:ring-4 focus-within:ring-sky-100">
+                <div className={`relative flex items-center rounded-2xl border-2 bg-white outline-none transition focus-within:ring-4 ${
+                  fieldErrors.shiftDurationHours || fieldErrors.shiftDurationUnit
+                    ? 'border-rose-300 focus-within:border-rose-500 focus-within:ring-rose-100'
+                    : 'border-slate-200 focus-within:border-sky-500 focus-within:ring-sky-100'
+                }`}>
                   <input
                     type="number"
                     min="1"
                     step={form.shiftDurationUnit === 'minutes' ? '1' : '0.5'}
                     value={form.shiftDurationHours}
-                    onChange={(e) => setForm({ ...form, shiftDurationHours: e.target.value })}
-                    placeholder={form.shiftDurationUnit === 'minutes' ? '180' : '3'}
+                    onChange={(e) => {
+                      setForm({ ...form, shiftDurationHours: e.target.value });
+                      setFieldErrors((current) => ({ ...current, shiftDurationHours: '' }));
+                    }}
+                    placeholder="Write shift length"
                     className="w-full bg-transparent px-4 py-3.5 text-sm font-semibold text-slate-900 outline-none"
                   />
                   <select
                     value={form.shiftDurationUnit}
-                    onChange={(e) => setForm({ ...form, shiftDurationUnit: e.target.value })}
+                    onChange={(e) => {
+                      setForm({ ...form, shiftDurationUnit: e.target.value });
+                      setFieldErrors((current) => ({ ...current, shiftDurationUnit: '' }));
+                    }}
                     className="border-l-2 border-slate-200 bg-transparent px-4 py-3.5 text-[11px] font-black uppercase tracking-[0.12em] text-slate-700 outline-none cursor-pointer"
                   >
+                    <option value="">Unit</option>
                     <option value="hours">Hours</option>
                     <option value="minutes">Minutes</option>
                   </select>
                 </div>
+                <FieldError text={fieldErrors.shiftDurationHours || fieldErrors.shiftDurationUnit} />
               </div>
               <CreativeInput
                 label="Exam Starting Date"
                 type="date"
                 value={form.examStartDate}
-                onChange={(e) => setForm({ ...form, examStartDate: e.target.value })}
+                onChange={(e) => updateField('examStartDate', e.target.value)}
+                error={fieldErrors.examStartDate}
               />
               <CreativeInput
                 label="Exam Ending Date"
                 type="date"
                 value={form.examEndDate}
-                onChange={(e) => setForm({ ...form, examEndDate: e.target.value })}
+                onChange={(e) => updateField('examEndDate', e.target.value)}
+                error={fieldErrors.examEndDate}
               />
               {Array.from({ length: Math.max(Number(form.shiftsPerDay) || 1, 1) }).map((_, index) => {
                 const startTime = form.shiftStartTimes?.[index] || '';
-                const meridian = form.shiftStartMeridians?.[index] || 'AM';
+                const meridian = form.shiftStartMeridians?.[index] || '';
                 const displayHour = getTimeHour12Value(startTime);
                 const displayMinute = getTimeMinuteValue(startTime);
                 const endTime = calculateShiftEndTime(startTime, form.shiftDurationHours, form.shiftDurationUnit);
+                const hasShiftTimeError = Boolean(fieldErrors.shiftStartTimes || fieldErrors.shiftStartMeridians);
                 return (
                   <div key={`shift-start-${index}`} className="space-y-2.5">
                     <label className="text-xs font-black uppercase tracking-[0.16em] text-slate-700">
                       {`Shift ${index + 1} Starting Time`}
                     </label>
-                    <div className="relative flex items-center rounded-2xl border-2 border-slate-200 bg-white outline-none transition focus-within:border-sky-500 focus-within:ring-4 focus-within:ring-sky-100">
+                    <div className={`relative flex items-center rounded-2xl border-2 bg-white outline-none transition focus-within:ring-4 ${
+                      hasShiftTimeError
+                        ? 'border-rose-300 focus-within:border-rose-500 focus-within:ring-rose-100'
+                        : 'border-slate-200 focus-within:border-sky-500 focus-within:ring-sky-100'
+                    }`}>
                       <div className="flex flex-1 items-center px-4 py-3.5">
                         <span className="mr-3 text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">Time</span>
                         <div className="flex items-center gap-2">
@@ -880,13 +858,15 @@ const DateSheetSection = ({
                                 ...current,
                                 shiftStartTimes: currentTimes.map((entry, entryIndex) => (
                                   entryIndex === index
-                                    ? buildTimeFromTwelveHourParts(e.target.value, getTimeMinuteValue(entry), currentMeridians[index] || 'AM')
+                                    ? buildTimeFromTwelveHourParts(e.target.value, getTimeMinuteValue(entry), currentMeridians[index])
                                     : entry
                                 )),
                               };
                             })}
+                            onFocus={() => setFieldErrors((current) => ({ ...current, shiftStartTimes: '' }))}
                             className="min-w-[72px] bg-transparent text-sm font-semibold text-slate-900 outline-none cursor-pointer"
                           >
+                            <option value="">Hour</option>
                             {twelveHourOptions.map((hourValue) => (
                               <option key={hourValue} value={hourValue}>{hourValue}</option>
                             ))}
@@ -905,13 +885,15 @@ const DateSheetSection = ({
                                 ...current,
                                 shiftStartTimes: currentTimes.map((entry, entryIndex) => (
                                   entryIndex === index
-                                    ? buildTimeFromTwelveHourParts(getTimeHour12Value(entry), e.target.value, currentMeridians[index] || 'AM')
+                                    ? buildTimeFromTwelveHourParts(getTimeHour12Value(entry), e.target.value, currentMeridians[index])
                                     : entry
                                 )),
                               };
                             })}
+                            onFocus={() => setFieldErrors((current) => ({ ...current, shiftStartTimes: '' }))}
                             className="min-w-[72px] bg-transparent text-sm font-semibold text-slate-900 outline-none cursor-pointer"
                           >
+                            <option value="">Min</option>
                             {minuteOptions.map((minuteValue) => (
                               <option key={minuteValue} value={minuteValue}>{minuteValue}</option>
                             ))}
@@ -936,8 +918,10 @@ const DateSheetSection = ({
                             entryIndex === index ? e.target.value : entry
                           )),
                         }))}
+                        onFocus={() => setFieldErrors((current) => ({ ...current, shiftStartMeridians: '' }))}
                         className="border-l-2 border-slate-200 bg-transparent px-4 py-3.5 text-[11px] font-black uppercase tracking-[0.12em] text-slate-700 outline-none cursor-pointer"
                       >
+                        <option value="">AM/PM</option>
                         <option value="AM">AM</option>
                         <option value="PM">PM</option>
                       </select>
@@ -945,6 +929,7 @@ const DateSheetSection = ({
                     <p className="text-xs font-semibold text-slate-500">
                       {endTime ? `Ending time: ${formatTimeToTwelveHour(endTime)}` : 'Ending time will auto-calculate from shift length.'}
                     </p>
+                    {index === 0 ? <FieldError text={fieldErrors.shiftStartTimes || fieldErrors.shiftStartMeridians} /> : null}
                   </div>
                 );
               })}
@@ -955,14 +940,13 @@ const DateSheetSection = ({
                 <PrimaryButton type="button" icon={Download} label="Generate Excel Template" onClick={onGenerateTemplate} />
               </div>
             </div>
-          ) : null}
         </div>
       </Panel>
 
       <Panel>
         <PanelHeader
           title="Saved Date Sheets"
-          description="Both upload file aur Excel generated records yahan show honge."
+          description="Excel generated date sheet records yahan show honge."
           action={<SearchInput value={searchValue} onChange={onSearch} placeholder="Search class, exam, file..." />}
         />
 
@@ -978,21 +962,21 @@ const DateSheetSection = ({
                 pills={[
                   { icon: FileText, text: record.fileName || 'Saved file' },
                   { icon: CalendarDays, text: record.examStartDate && record.examEndDate ? `${record.examStartDate} to ${record.examEndDate}` : 'Date range pending' },
-                  { icon: Download, text: `${record.shiftsPerDay || '1'} shift(s) | ${formatShiftDurationLabel(record.shiftDurationHours, record.shiftDurationUnit)}` },
+                  { icon: Download, text: record.shiftsPerDay ? `${record.shiftsPerDay} shift(s) | ${formatShiftDurationLabel(record.shiftDurationHours, record.shiftDurationUnit)}` : 'Shift count pending' },
                 ]}
                 actions={<IconButton icon={Trash2} onClick={() => onDelete(record.id)} danger />}
               />
             ))}
           </div>
         ) : (
-          <EmptyState icon={CalendarDays} title="No saved date sheets yet" description="Upload file ya generate Excel karte hi records yahan show hone lagenge." />
+          <EmptyState icon={CalendarDays} title="No saved date sheets yet" description="Generate Excel date sheet karte hi records yahan show hone lagenge." />
         )}
       </Panel>
     </div>
   );
 };
 
-const DateSheetTemplatePreview = ({ preview, onBack, onSave }) => {
+const DateSheetTemplatePreview = ({ preview, subjectsByClass, onBack, onSubjectChange, onSave }) => {
   const dateColumns = buildExamDateColumns(preview.examStartDate, preview.examEndDate);
   const shiftColumns = buildShiftColumns(preview.shiftStartTimes, preview.shiftDurationHours, preview.shiftDurationUnit);
   const totalColumns = 1 + dateColumns.reduce((sum, current) => sum + Math.max(shiftColumns.length, 1), 0);
@@ -1011,28 +995,28 @@ const DateSheetTemplatePreview = ({ preview, onBack, onSave }) => {
           )}
         />
 
-        <div className="mt-6 overflow-x-auto rounded-[1.75rem] border border-slate-200 bg-white">
-          <table className="min-w-[980px] border-collapse text-sm text-slate-800">
+        <div className="-mx-4 mt-6 overflow-x-auto rounded-[1.4rem] border border-slate-200 bg-white px-2 shadow-sm sm:-mx-6 lg:-mx-12 xl:-mx-20">
+          <table className="min-w-[1600px] table-fixed border-separate border-spacing-0 text-xs text-slate-800">
             <tbody>
               <tr>
-                <th colSpan={totalColumns} className="border border-slate-300 bg-emerald-700 px-4 py-4 text-center text-xl font-black uppercase tracking-[0.16em] text-white">
+                <th colSpan={totalColumns} className="rounded-t-[1.25rem] border border-emerald-700 bg-emerald-700 px-4 py-4 text-center text-lg font-black uppercase tracking-normal text-white">
                   {preview.schoolName}
                 </th>
               </tr>
               <tr>
-                <th colSpan={totalColumns} className="border border-slate-300 bg-slate-950 px-4 py-3 text-center text-lg font-black uppercase tracking-[0.14em] text-white">
+                <th colSpan={totalColumns} className="border border-slate-300 bg-slate-950 px-4 py-2.5 text-center text-sm font-black uppercase tracking-normal text-white">
                   {preview.examType}
                 </th>
               </tr>
               <tr>
-                <th rowSpan={2} className="border border-slate-300 bg-slate-950 px-4 py-3 text-center text-sm font-black uppercase tracking-[0.14em] text-white">
+                <th rowSpan={2} className="w-28 border border-slate-300 bg-slate-950 px-3 py-3 text-center text-xs font-black uppercase tracking-[0.12em] text-white">
                   Class
                 </th>
                 {dateColumns.map((dateValue) => (
                   <th
                     key={dateValue}
                     colSpan={Math.max(shiftColumns.length, 1)}
-                    className="border border-slate-300 bg-emerald-50 px-4 py-3 text-center text-sm font-black uppercase tracking-[0.12em] text-slate-950"
+                    className="border border-slate-300 bg-emerald-50 px-1 py-1.5 text-center text-[10px] font-black uppercase tracking-normal text-slate-950"
                   >
                     {formatTemplateDate(dateValue)}
                   </th>
@@ -1043,10 +1027,10 @@ const DateSheetTemplatePreview = ({ preview, onBack, onSave }) => {
                   (shiftColumns.length ? shiftColumns : [{ label: 'Shift', value: '' }]).map((shift, shiftIndex) => (
                     <th
                       key={`${dateValue}-${shift.label}-${shiftIndex}`}
-                      className="border border-slate-300 bg-emerald-100 px-3 py-3 text-center text-xs font-black uppercase tracking-[0.1em] text-slate-950"
+                      className="w-24 border border-slate-300 bg-emerald-100 px-1 py-1.5 text-center text-[9px] font-black uppercase tracking-normal text-slate-950"
                     >
                       <span className="block">{shift.label}</span>
-                      <span className="mt-1 block text-[11px] font-bold normal-case tracking-normal text-slate-600">
+                      <span className="mt-0.5 block truncate text-[10px] font-bold normal-case tracking-normal text-slate-600">
                         {shift.value || 'Timing pending'}
                       </span>
                     </th>
@@ -1055,17 +1039,37 @@ const DateSheetTemplatePreview = ({ preview, onBack, onSave }) => {
               </tr>
               {preview.classColumns.map((className) => (
                 <tr key={className}>
-                  <td className="border border-slate-300 bg-slate-50 px-4 py-3 font-bold text-slate-900">
+                  <td className="border border-slate-300 bg-slate-50 px-3 py-3 text-xs font-black text-slate-950">
                     {className}
                   </td>
-                  {dateColumns.flatMap((dateValue) => (
-                    (shiftColumns.length ? shiftColumns : [{ label: 'Shift', value: '' }]).map((shift, shiftIndex) => (
-                      <td
-                        key={`${className}-${dateValue}-${shift.label}-${shiftIndex}`}
-                        className="h-14 border border-slate-300 bg-white px-3 py-3"
-                      />
-                    ))
-                  ))}
+                  {dateColumns.flatMap((dateValue) => {
+                    const classSubjects = getSubjectsForExamClass(subjectsByClass, className);
+                    return (shiftColumns.length ? shiftColumns : [{ label: 'Shift', value: '' }]).map((shift, shiftIndex) => {
+                      const cellKey = buildExamSubjectCellKey(className, dateValue, shiftIndex);
+                      return (
+                        <td
+                          key={`${className}-${dateValue}-${shift.label}-${shiftIndex}`}
+                          className="h-14 border border-slate-200 bg-white px-1.5 py-1.5"
+                        >
+                          <div className="flex h-9 min-w-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-1.5 shadow-[0_6px_16px_-14px_rgba(15,23,42,0.65)] focus-within:border-emerald-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-emerald-100">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-[10px] font-black text-emerald-700">
+                              S
+                            </span>
+                            <select
+                              value={preview.subjectGrid?.[cellKey] || ''}
+                              onChange={(event) => onSubjectChange(className, dateValue, shiftIndex, event.target.value)}
+                              className="min-w-0 flex-1 bg-transparent text-[10px] font-bold uppercase text-slate-900 outline-none"
+                            >
+                              <option value="">SUBJECT</option>
+                              {classSubjects.map((subjectName) => (
+                                <option key={`${cellKey}-${subjectName}`} value={subjectName}>{subjectName}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </td>
+                      );
+                    });
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -1178,7 +1182,7 @@ const QuestionPaperSection = ({
                             subtitle={record.examTitle || 'Exam type pending'}
                             pills={[
                               { icon: FileText, text: record.className || 'Class pending' },
-                              { icon: Upload, text: record.uploadedBy || 'Teacher not added' },
+                              { icon: FileText, text: record.uploadedBy || 'Teacher not added' },
                               { icon: ScrollText, text: record.fileName || 'File missing' },
                             ]}
                             actions={(
@@ -1255,43 +1259,54 @@ const QuestionPaperPreviewModal = ({ paper, onClose, onDownload }) => (
   </div>
 );
 
-const AdmitCardSection = ({ form, setForm, students, examTitles, records, searchValue, onSearch, onStudentSelect, onSave, onDelete, onPrint }) => (
-  <div className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
-    <Panel>
-      <PanelHeader
-        title="Generate Admit Card"
-        description="Student select karke exam details save karo. Print-ready admit card record right panel me aa jayega."
-      />
-      <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={onSave}>
-        <CreativeInput
-          list="admit-exam-options"
-          label="Exam Title"
-          value={form.examTitle}
-          onChange={(e) => setForm({ ...form, examTitle: e.target.value })}
-          placeholder="Annual Examination"
+const AdmitCardSection = ({ form, setForm, fieldErrors, setFieldErrors, students, examTitles, records, searchValue, onSearch, onStudentSelect, onSave, onDelete, onPrint }) => {
+  const updateField = (field, value) => {
+    setForm({ ...form, [field]: value });
+    setFieldErrors((current) => ({ ...current, [field]: '' }));
+  };
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
+      <Panel>
+        <PanelHeader
+          title="Generate Admit Card"
+          description="Student select karke exam details save karo. Print-ready admit card record right panel me aa jayega."
         />
-        <CreativeSelect
-          label="Student"
-          value={form.studentId}
-          onChange={(e) => onStudentSelect(e.target.value)}
-          options={['', ...students.map((student) => String(student.id))]}
-          renderOptionLabel={(value) => {
-            if (!value) return 'Select student';
-            const student = students.find((record) => String(record.id) === value);
-            return student ? `${student.firstName || ''} ${student.lastName || ''}`.trim() : value;
-          }}
-        />
-        <CreativeInput label="Roll No" value={form.rollNo} onChange={(e) => setForm({ ...form, rollNo: e.target.value })} placeholder="Auto from student" />
-        <CreativeInput label="Class / Section" value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value })} placeholder="Auto from student" />
-        <CreativeInput label="Exam Date" type="date" value={form.examDate} onChange={(e) => setForm({ ...form, examDate: e.target.value })} />
-        <CreativeInput label="Reporting Time" type="time" value={form.reportingTime} onChange={(e) => setForm({ ...form, reportingTime: e.target.value })} />
-        <div className="md:col-span-2">
-          <CreativeInput label="Exam Center / Venue" value={form.centerName} onChange={(e) => setForm({ ...form, centerName: e.target.value })} placeholder="Main Examination Hall" />
-        </div>
-        <div className="md:col-span-2">
-          <PrimaryButton type="submit" icon={Ticket} label="Save Admit Card" />
-        </div>
-      </form>
+        <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={onSave}>
+          <CreativeInput
+            list="admit-exam-options"
+            label="Exam Title"
+            value={form.examTitle}
+            onChange={(e) => updateField('examTitle', e.target.value)}
+            placeholder="Annual Examination"
+            error={fieldErrors.examTitle}
+          />
+          <CreativeSelect
+            label="Student"
+            value={form.studentId}
+            onChange={(e) => {
+              onStudentSelect(e.target.value);
+              setFieldErrors((current) => ({ ...current, studentId: '', rollNo: '', className: '' }));
+            }}
+            options={['', ...students.map((student) => String(student.id))]}
+            renderOptionLabel={(value) => {
+              if (!value) return 'Select student';
+              const student = students.find((record) => String(record.id) === value);
+              return student ? `${student.firstName || ''} ${student.lastName || ''}`.trim() : value;
+            }}
+            error={fieldErrors.studentId}
+          />
+          <CreativeInput label="Roll No" value={form.rollNo} onChange={(e) => updateField('rollNo', e.target.value)} placeholder="Auto from student" error={fieldErrors.rollNo} />
+          <CreativeInput label="Class / Section" value={form.className} onChange={(e) => updateField('className', e.target.value)} placeholder="Auto from student" error={fieldErrors.className} />
+          <CreativeInput label="Exam Date" type="date" value={form.examDate} onChange={(e) => updateField('examDate', e.target.value)} error={fieldErrors.examDate} />
+          <CreativeInput label="Reporting Time" type="time" value={form.reportingTime} onChange={(e) => updateField('reportingTime', e.target.value)} error={fieldErrors.reportingTime} />
+          <div className="md:col-span-2">
+            <CreativeInput label="Exam Center / Venue" value={form.centerName} onChange={(e) => updateField('centerName', e.target.value)} placeholder="Main Examination Hall" error={fieldErrors.centerName} />
+          </div>
+          <div className="md:col-span-2">
+            <PrimaryButton type="submit" icon={Ticket} label="Save Admit Card" />
+          </div>
+        </form>
       <datalist id="admit-exam-options">
         {examTitles.map((examTitle) => (
           <option key={examTitle} value={examTitle} />
@@ -1333,9 +1348,10 @@ const AdmitCardSection = ({ form, setForm, students, examTitles, records, search
       ) : (
         <EmptyState icon={Ticket} title="No admit cards yet" description="First admit card save karte hi printable records yahan show hone lagenge." />
       )}
-    </Panel>
-  </div>
-);
+      </Panel>
+    </div>
+  );
+};
 
 const SectionTabs = ({ activeSection, onChange }) => {
   const tabs = [
@@ -1448,24 +1464,6 @@ const RecordBanner = ({ icon: Icon, title, subtitle, note, actions }) => (
   </div>
 );
 
-const ActionChoice = ({ active, icon: Icon, title, description, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`rounded-[1.75rem] border p-5 text-left transition ${
-      active
-        ? 'border-sky-400 bg-sky-50 shadow-[0_12px_30px_-20px_rgba(14,165,233,0.6)]'
-        : 'border-slate-200 bg-white hover:border-sky-300'
-    }`}
-  >
-    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-700">
-      <Icon size={20} />
-    </div>
-    <h4 className="mt-4 font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h4>
-    <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
-  </button>
-);
-
 const RecordCard = ({ icon: Icon, tone, title, subtitle, pills, actions }) => (
   <article className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4 sm:p-5">
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1502,46 +1500,48 @@ const SearchInput = ({ value, onChange, placeholder }) => (
   </div>
 );
 
-const CreativeInput = ({ label, ...props }) => (
-  <div className="space-y-2.5">
-    <label className="text-xs font-black uppercase tracking-[0.16em] text-slate-700">{label}</label>
-    <input
-      className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
-      {...props}
-    />
-  </div>
-);
+const CreativeInput = ({ label, onChange, type = 'text', className = '', error = '', ...props }) => {
+  const shouldUppercase = !['date', 'time', 'number'].includes(type);
+  const handleChange = (event) => {
+    if (!onChange) return;
+    if (shouldUppercase) {
+      event.target.value = formatExamFormText(event.target.value);
+    }
+    onChange(event);
+  };
 
-const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
+  return (
+    <div className="space-y-2.5">
+      <label className="text-xs font-black uppercase tracking-[0.16em] text-slate-700">{label}</label>
+      <input
+        type={type}
+        onChange={handleChange}
+        className={`w-full rounded-2xl border-2 bg-white px-4 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-4 ${
+          error ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-sky-500 focus:ring-sky-100'
+        } ${shouldUppercase ? 'uppercase' : ''} ${className}`}
+        {...props}
+      />
+      <FieldError text={error} />
+    </div>
+  );
+};
+
+const CreativeSelect = ({ label, options, renderOptionLabel, className = '', error = '', ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.16em] text-slate-700">{label}</label>
     <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+      className={`w-full rounded-2xl border-2 bg-white px-4 py-3.5 text-sm font-semibold uppercase text-slate-900 outline-none transition focus:ring-4 ${
+        error ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-sky-500 focus:ring-sky-100'
+      } ${className}`}
       {...props}
     >
       {options.map((option) => (
         <option key={option || 'empty-option'} value={option}>
-          {renderOptionLabel ? renderOptionLabel(option) : option || 'Select'}
+          {formatExamFormText(renderOptionLabel ? renderOptionLabel(option) : option || 'Select')}
         </option>
       ))}
     </select>
-  </div>
-);
-
-const FileUploadField = ({ label, fileName, onBrowse }) => (
-  <div className="space-y-2.5">
-    <label className="text-xs font-black uppercase tracking-[0.16em] text-slate-700">{label}</label>
-    <label className="flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl border-2 border-dashed border-slate-300 bg-white px-4 py-4 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50/40">
-      <div className="min-w-0">
-        <p className={`truncate ${fileName ? 'text-slate-900' : 'text-slate-400'}`}>
-          {fileName || 'Click to upload file'}
-        </p>
-      </div>
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">
-        <Upload size={18} />
-      </div>
-      <input type="file" className="hidden" onChange={onBrowse} />
-    </label>
+    <FieldError text={error} />
   </div>
 );
 
@@ -1598,6 +1598,92 @@ const EmptyState = ({ icon: Icon, title, description }) => (
 
 const normalizeClassValue = (value) => String(value || '').trim();
 
+const formatExamFormText = (value) => String(value || '').toUpperCase();
+
+const normalizeExamClassLabel = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/\s*\/\s*/g, '/')
+  .replace(/\s+/g, ' ');
+
+const getSubjectsForExamClass = (subjectsByClass, className) => {
+  const descriptor = parseClassDescriptor(className);
+  const keys = [
+    className,
+    descriptor.baseClass,
+    normalizeExamClassLabel(className),
+    normalizeExamClassLabel(descriptor.baseClass),
+  ].filter(Boolean);
+
+  const subjects = new Set();
+  keys.forEach((key) => {
+    const classSubjects = subjectsByClass?.[normalizeExamClassLabel(key)];
+    if (!classSubjects) return;
+    classSubjects.forEach((subjectName) => subjects.add(subjectName));
+  });
+
+  return [...subjects].sort((left, right) => left.localeCompare(right));
+};
+
+const buildExamSubjectCellKey = (className, dateValue, shiftIndex) => (
+  `${normalizeExamClassLabel(className)}__${dateValue}__${shiftIndex}`
+);
+
+const buildInitialExamSubjectGrid = (classColumns, dateColumns, shiftCount) => {
+  const subjectGrid = {};
+  classColumns.forEach((className) => {
+    dateColumns.forEach((dateValue) => {
+      Array.from({ length: Math.max(Number(shiftCount) || 1, 1) }).forEach((_, shiftIndex) => {
+        subjectGrid[buildExamSubjectCellKey(className, dateValue, shiftIndex)] = '';
+      });
+    });
+  });
+  return subjectGrid;
+};
+
+const validateDateSheetForm = (form) => {
+  const errors = {};
+  if (!form.classFrom) errors.classFrom = 'Please select start class.';
+  if (!form.classTo) errors.classTo = 'Please select end class.';
+  if (!String(form.examType || '').trim()) errors.examType = 'Please enter exam type.';
+  if (!form.shiftsPerDay) errors.shiftsPerDay = 'Please select shifts in a day.';
+  if (!form.shiftDurationHours) {
+    errors.shiftDurationHours = 'Please enter shift length.';
+  } else if (Number(form.shiftDurationHours) <= 0) {
+    errors.shiftDurationHours = 'Shift length must be greater than 0.';
+  }
+  if (!form.shiftDurationUnit) errors.shiftDurationUnit = 'Please select shift unit.';
+  if (!form.examStartDate) errors.examStartDate = 'Please select exam starting date.';
+  if (!form.examEndDate) errors.examEndDate = 'Please select exam ending date.';
+  if (form.examStartDate && form.examEndDate && new Date(form.examEndDate) < new Date(form.examStartDate)) {
+    errors.examEndDate = 'Ending date cannot be before starting date.';
+  }
+
+  const shiftCount = Math.max(Number(form.shiftsPerDay) || 1, 1);
+  const shiftStartTimes = normalizeShiftStartTimes(form.shiftStartTimes, shiftCount);
+  const shiftStartMeridians = normalizeShiftStartMeridians(form.shiftStartMeridians, shiftStartTimes, shiftCount);
+  if (shiftStartTimes.some((timeValue) => !timeValue)) {
+    errors.shiftStartTimes = 'Please select starting time for every shift.';
+  }
+  if (shiftStartMeridians.some((meridianValue) => !meridianValue)) {
+    errors.shiftStartMeridians = 'Please select AM/PM for every shift.';
+  }
+
+  return errors;
+};
+
+const validateAdmitCardForm = (form) => {
+  const errors = {};
+  if (!String(form.examTitle || '').trim()) errors.examTitle = 'Please enter exam title.';
+  if (!form.studentId) errors.studentId = 'Please select student.';
+  if (!String(form.rollNo || '').trim()) errors.rollNo = 'Roll number is required.';
+  if (!String(form.className || '').trim()) errors.className = 'Class / section is required.';
+  if (!form.examDate) errors.examDate = 'Please select exam date.';
+  if (!form.reportingTime) errors.reportingTime = 'Please select reporting time.';
+  if (!String(form.centerName || '').trim()) errors.centerName = 'Please enter exam center.';
+  return errors;
+};
+
 const sectionLabelMap = {
   home: 'Overview',
   datesheet: 'Date Sheet',
@@ -1638,6 +1724,7 @@ const buildDateSheetTemplateDataUri = ({
   shiftDurationUnit,
   examStartDate,
   examEndDate,
+  subjectGrid = {},
 }) => {
   const shiftColumns = buildShiftColumns(shiftStartTimes, shiftDurationHours, shiftDurationUnit);
   const dateColumns = buildExamDateColumns(examStartDate, examEndDate);
@@ -1650,7 +1737,7 @@ const buildDateSheetTemplateDataUri = ({
         <meta name="ProgId" content="Excel.Sheet" />
       </head>
       <body>
-        <table border="0" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-family:Arial,sans-serif;min-width:900px;">
+        <table border="0" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-family:Arial,sans-serif;min-width:1400px;">
           <tr>
             <th colspan="${totalColumns}" style="border:1px solid #0f172a;background:#0f766e;color:#ffffff;padding:12px 8px;font-size:18px;font-weight:700;text-align:center;text-transform:uppercase;">
               ${escapeTemplateValue(schoolName)}
@@ -1679,7 +1766,10 @@ const buildDateSheetTemplateDataUri = ({
           ${classColumns.map((column) => `
             <tr>
               <td style="border:1px solid #0f172a;padding:10px 8px;font-size:12px;font-weight:700;background:#f8fafc;">${escapeTemplateValue(column)}</td>
-              ${dateColumns.flatMap(() => visibleShiftColumns.map(() => '<td style="border:1px solid #0f172a;padding:10px 8px;font-size:12px;height:32px;"></td>')).join('')}
+              ${dateColumns.flatMap((dateValue) => visibleShiftColumns.map((_, shiftIndex) => {
+                const subjectName = subjectGrid[buildExamSubjectCellKey(column, dateValue, shiftIndex)] || '';
+                return `<td style="border:1px solid #0f172a;padding:16px 12px;font-size:12px;height:52px;text-align:center;">${escapeTemplateValue(subjectName)}</td>`;
+              })).join('')}
             </tr>
           `).join('')}
         </table>
@@ -1751,7 +1841,7 @@ const normalizeShiftStartMeridians = (shiftStartMeridians, shiftStartTimes, shif
   const shiftCount = Math.max(Number(shiftCountValue) || 1, 1);
   const currentMeridians = Array.isArray(shiftStartMeridians) ? shiftStartMeridians : [];
   const currentTimes = Array.isArray(shiftStartTimes) ? shiftStartTimes : [];
-  return Array.from({ length: shiftCount }, (_, index) => currentMeridians[index] || getTimeMeridian(currentTimes[index]));
+  return Array.from({ length: shiftCount }, (_, index) => currentMeridians[index] || (currentTimes[index] ? getTimeMeridian(currentTimes[index]) : ''));
 };
 
 const twelveHourOptions = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'));
@@ -1759,23 +1849,23 @@ const minuteOptions = Array.from({ length: 60 }, (_, index) => String(index).pad
 
 const getTimeHour12Value = (timeValue) => {
   const [hours] = String(timeValue || '').split(':').map(Number);
-  if (Number.isNaN(hours)) return '08';
+  if (Number.isNaN(hours)) return '';
   const normalizedHours = hours % 12 || 12;
   return String(normalizedHours).padStart(2, '0');
 };
 
 const getTimeMinuteValue = (timeValue) => {
   const [, minutes] = String(timeValue || '').split(':').map(Number);
-  if (Number.isNaN(minutes)) return '00';
+  if (Number.isNaN(minutes)) return '';
   return String(minutes).padStart(2, '0');
 };
 
-const buildTimeFromTwelveHourParts = (hourValue, minuteValue, meridian = 'AM') => {
+const buildTimeFromTwelveHourParts = (hourValue, minuteValue, meridian = '') => {
   const normalizedHour = Number(hourValue);
-  const normalizedMinute = Number(minuteValue);
+  const normalizedMinute = minuteValue === '' ? 0 : Number(minuteValue);
 
-  if (Number.isNaN(normalizedHour) || Number.isNaN(normalizedMinute)) {
-    return '08:00';
+  if (!hourValue || Number.isNaN(normalizedHour) || Number.isNaN(normalizedMinute)) {
+    return '';
   }
 
   let hours = normalizedHour % 12;
@@ -1786,8 +1876,8 @@ const buildTimeFromTwelveHourParts = (hourValue, minuteValue, meridian = 'AM') =
   return `${String(hours).padStart(2, '0')}:${String(normalizedMinute).padStart(2, '0')}`;
 };
 
-const calculateShiftEndTime = (startTime, shiftDurationHours, shiftDurationUnit = 'hours') => {
-  if (!startTime || !shiftDurationHours) return '';
+const calculateShiftEndTime = (startTime, shiftDurationHours, shiftDurationUnit = '') => {
+  if (!startTime || !shiftDurationHours || !shiftDurationUnit) return '';
   const [hours, minutes] = String(startTime).split(':').map(Number);
   if (Number.isNaN(hours) || Number.isNaN(minutes)) return '';
   const durationMinutes = resolveShiftDurationMinutes(shiftDurationHours, shiftDurationUnit);
@@ -1798,7 +1888,7 @@ const calculateShiftEndTime = (startTime, shiftDurationHours, shiftDurationUnit 
   return `${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
 };
 
-const buildShiftColumns = (shiftStartTimes, shiftDurationHours, shiftDurationUnit = 'hours') => (
+const buildShiftColumns = (shiftStartTimes, shiftDurationHours, shiftDurationUnit = '') => (
   normalizeShiftStartTimes(shiftStartTimes, shiftStartTimes?.length || 1).map((startTime, index) => {
     const endTime = calculateShiftEndTime(startTime, shiftDurationHours, shiftDurationUnit);
     return {
@@ -1808,16 +1898,16 @@ const buildShiftColumns = (shiftStartTimes, shiftDurationHours, shiftDurationUni
   })
 );
 
-const resolveShiftDurationMinutes = (shiftDurationValue, shiftDurationUnit = 'hours') => {
+const resolveShiftDurationMinutes = (shiftDurationValue, shiftDurationUnit = '') => {
   const numericValue = Number(shiftDurationValue);
-  if (Number.isNaN(numericValue)) return Number.NaN;
+  if (Number.isNaN(numericValue) || !shiftDurationUnit) return Number.NaN;
   return shiftDurationUnit === 'minutes'
     ? Math.round(numericValue)
     : Math.round(numericValue * 60);
 };
 
-const formatShiftDurationLabel = (shiftDurationValue, shiftDurationUnit = 'hours') => {
-  if (!shiftDurationValue) return 'Duration pending';
+const formatShiftDurationLabel = (shiftDurationValue, shiftDurationUnit = '') => {
+  if (!shiftDurationValue || !shiftDurationUnit) return 'Duration pending';
   return `${shiftDurationValue} ${shiftDurationUnit === 'minutes' ? 'minute(s)' : 'hour(s)'}`;
 };
 
@@ -1828,12 +1918,13 @@ const getTimeMeridian = (timeValue) => {
 };
 
 const convertTimeToMeridian = (timeValue, meridian) => {
-  const [hoursValue, minutesValue] = String(timeValue || '08:00').split(':');
+  if (!timeValue || !meridian) return timeValue || '';
+  const [hoursValue, minutesValue] = String(timeValue).split(':');
   let hours = Number(hoursValue);
   const minutes = Number(minutesValue);
 
   if (Number.isNaN(hours) || Number.isNaN(minutes)) {
-    return timeValue || '08:00';
+    return timeValue || '';
   }
 
   if (meridian === 'AM' && hours >= 12) {

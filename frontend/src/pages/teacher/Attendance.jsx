@@ -12,8 +12,8 @@ import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 
 const createSessionForm = () => ({
   date: new Date().toISOString().split('T')[0],
-  lectureNumber: '',
-  subject: '',
+  lectureNumber: 'Daily',
+  subject: 'Daily Attendance',
 });
 
 const TeacherAttendance = () => {
@@ -79,10 +79,6 @@ const TeacherAttendance = () => {
     return deriveTeacherClassesFromTimetables(classTimetables, teacher);
   }, [classTimetables, teacher]);
 
-  const teacherSubjectsByClass = useMemo(() => {
-    return deriveTeacherSubjectsByClass(classTimetables, teacher);
-  }, [classTimetables, teacher]);
-
   const teachingClasses = useMemo(() => {
     const classesWithStudents = new Set(
       students
@@ -108,46 +104,11 @@ const TeacherAttendance = () => {
       });
   }, [selectedClass, students]);
 
-  const selectedClassTimetableTemplate = useMemo(() => {
-    if (!selectedClass) return null;
-    const selectedClassRecord = classTimetables.find((record) => record.className === selectedClass);
-    return readTimetableTemplate(selectedClassRecord);
-  }, [classTimetables, selectedClass]);
-
-  const teacherKeys = useMemo(() => buildTeacherIdentityKeys(teacher), [teacher]);
-
-  const selectedClassSubjects = useMemo(() => (
-    teacherSubjectsByClass[selectedClass] || []
-  ), [selectedClass, teacherSubjectsByClass]);
-
-  const timetableSubject = useMemo(() => {
-    if (!selectedClassTimetableTemplate || !sessionForm.lectureNumber) return '';
-    return getTimetableSubjectForTeacherSession(
-      selectedClassTimetableTemplate,
-      sessionForm.date,
-      sessionForm.lectureNumber,
-      teacherKeys,
-    );
-  }, [selectedClassTimetableTemplate, sessionForm.date, sessionForm.lectureNumber, teacherKeys]);
-
-  useEffect(() => {
-    setSessionForm((current) => {
-      if (timetableSubject) {
-        return current.subject === timetableSubject ? current : { ...current, subject: timetableSubject };
-      }
-
-      return current;
-    });
-  }, [timetableSubject]);
-
   const teacherRecords = useMemo(() => {
     const query = recordSearch.trim().toLowerCase();
     return attendanceRecords
       .filter((record) => teachingClasses.includes(record.className))
-      .filter((record) => {
-        const allowedSubjects = teacherSubjectsByClass[record.className] || [];
-        return allowedSubjects.some((subjectName) => normalizeAttendanceText(subjectName) === normalizeAttendanceText(record.subject));
-      })
+      .filter((record) => normalizeAttendanceText(record.markedBy) === normalizeAttendanceText(teacherName))
       .filter((record) => selectedClass ? record.className === selectedClass : true)
       .filter((record) => {
         if (!query) return true;
@@ -162,7 +123,7 @@ const TeacherAttendance = () => {
         );
       })
       .sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
-  }, [attendanceRecords, recordSearch, selectedClass, teacherSubjectsByClass, teachingClasses]);
+  }, [attendanceRecords, recordSearch, selectedClass, teacherName, teachingClasses]);
 
   const today = new Date().toISOString().split('T')[0];
   const isSundaySession = getDayNameFromDate(sessionForm.date) === 'Sunday';
@@ -314,10 +275,7 @@ const TeacherAttendance = () => {
     }
 
     const unmarkedStudents = selectedClassStudents.filter((student) => !attendanceMap[String(student.id)]);
-    const canMarkSubject = selectedClassSubjects.some((subjectName) => (
-      normalizeAttendanceText(subjectName) === normalizeAttendanceText(sessionForm.subject)
-    ));
-    if (!selectedClass || !sessionForm.lectureNumber.trim() || !sessionForm.subject.trim() || !canMarkSubject || unmarkedStudents.length > 0) {
+    if (!selectedClass || unmarkedStudents.length > 0) {
       return;
     }
 
@@ -325,8 +283,8 @@ const TeacherAttendance = () => {
       await attendanceApi.saveSession({
         className: selectedClass,
         date: sessionForm.date,
-        lectureNumber: sessionForm.lectureNumber.trim(),
-        subject: sessionForm.subject.trim(),
+        lectureNumber: 'Daily',
+        subject: 'Daily Attendance',
         markedBy: teacherName,
         entries: selectedClassStudents.map((student) => ({
           studentId: Number(student.id),
@@ -409,37 +367,18 @@ const TeacherAttendance = () => {
           </section>
         ) : (
           <div className="mx-auto mt-8 grid w-full max-w-6xl justify-items-center gap-8">
-            <Panel title={`${selectedClass} Session Details`} description="Set date, lecture number, and subject before saving attendance.">
+            <Panel title={`${selectedClass} Session Details`} description="Set date once and mark the full class attendance for the day.">
               <form className="mt-8 space-y-8" onSubmit={handleSaveAttendance}>
-                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                   <InputField
                     label="Date"
                     type="date"
                     value={sessionForm.date}
                     onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })}
                   />
-                  <SelectField
-                    label="Lecture Number"
-                    value={sessionForm.lectureNumber}
-                    onChange={(e) => setSessionForm({ ...sessionForm, lectureNumber: e.target.value, subject: '' })}
-                    options={['', '1', '2', '3', '4', '5', '6', '7', '8']}
-                    renderOptionLabel={(value) => value || 'Select lecture'}
-                  />
-                  <InputField
-                    label="Subject"
-                    value={sessionForm.subject}
-                    onChange={(e) => setSessionForm({ ...sessionForm, subject: e.target.value })}
-                    placeholder="Subject name"
-                    disabled={Boolean(timetableSubject)}
-                  />
+                  <StaticField label="Attendance Type" value="Daily Attendance" />
                   <StaticField label="Teacher" value={teacherName} />
                 </div>
-
-                {timetableSubject ? (
-                  <div className="rounded-[1.6rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
-                    Lecture {sessionForm.lectureNumber} ke liye timetable ke hisab se subject "{timetableSubject}" auto-selected hai.
-                  </div>
-                ) : null}
 
                 {isHolidaySession ? (
                   <div className="rounded-[1.6rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
@@ -514,9 +453,6 @@ const TeacherAttendance = () => {
                   disabled={
                     isSundaySession ||
                     isHolidaySession ||
-                    !sessionForm.lectureNumber ||
-                    !sessionForm.subject ||
-                    !selectedClassSubjects.some((subjectName) => normalizeAttendanceText(subjectName) === normalizeAttendanceText(sessionForm.subject)) ||
                     selectedClassStudents.some((student) => !attendanceMap[String(student.id)])
                   }
                 />
@@ -628,42 +564,12 @@ const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
   const classSet = new Set();
 
   classTimetables.forEach((record) => {
-    const template = readTimetableTemplate(record);
-    const hasTeacherSlot = template?.rows?.some((row) =>
-      (row.slots || []).some((slot) => slotMatchesTeacher(slot, teacherKeys)),
-    );
-
-    if (hasTeacherSlot && record.className) {
+    if (attendanceTeacherMatches(record, teacherKeys) && record.className) {
       classSet.add(record.className);
     }
   });
 
   return [...classSet].sort(compareClassNames);
-};
-
-const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
-  if (!teacher) return {};
-
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
-  return classTimetables.reduce((accumulator, record) => {
-    const template = readTimetableTemplate(record);
-    if (!record?.className || !template?.rows?.length) return accumulator;
-
-    const subjectSet = new Set();
-    template.rows.forEach((row) => {
-      (row.slots || []).forEach((slot) => {
-        if (!slotMatchesTeacher(slot, teacherKeys)) return;
-        const subjectName = formatAttendanceText(slot?.subjectName);
-        if (subjectName) subjectSet.add(subjectName);
-      });
-    });
-
-    if (subjectSet.size) {
-      accumulator[record.className] = [...subjectSet].sort((left, right) => left.localeCompare(right));
-    }
-
-    return accumulator;
-  }, {});
 };
 
 const buildTeacherIdentityKeys = (teacher) => {
@@ -679,32 +585,17 @@ const buildTeacherIdentityKeys = (teacher) => {
     .filter(Boolean);
 };
 
-const slotMatchesTeacher = (slot, teacherKeys) => {
-  const teacherValue = String(slot?.teacherName || '').trim().toLowerCase();
-  return Boolean(teacherValue) && teacherKeys.some((key) => key === teacherValue);
+const resolveTimetableAttendanceTeacher = (record) => {
+  return formatAttendanceText(
+    record?.templateData?.attendanceTeacher
+      || record?.templateMeta?.attendanceTeacher
+      || '',
+  );
 };
 
-const readTimetableTemplate = (record) => {
-  if (record?.templateData?.rows?.length) {
-    return record.templateData;
-  }
-
-  return null;
-};
-
-const getTimetableSubjectForTeacherSession = (template, dateValue, lectureNumber, teacherKeys) => {
-  if (!template?.rows?.length || !template?.lecturePlan?.length || !lectureNumber) return '';
-
-  const selectedDay = getDayNameFromDate(dateValue);
-  const dayRow = template.rows.find((row) => normalizeAttendanceText(row.day) === normalizeAttendanceText(selectedDay));
-  if (!dayRow) return '';
-
-  const lectureIndex = template.lecturePlan.findIndex((lecture) => String(lecture.lectureNumber) === String(lectureNumber));
-  if (lectureIndex < 0) return '';
-
-  const slot = dayRow.slots?.[lectureIndex];
-  if (!slotMatchesTeacher(slot, teacherKeys)) return '';
-  return formatAttendanceText(slot?.subjectName);
+const attendanceTeacherMatches = (record, teacherKeys) => {
+  const attendanceTeacher = resolveTimetableAttendanceTeacher(record).toLowerCase();
+  return Boolean(attendanceTeacher) && teacherKeys.some((key) => key === attendanceTeacher);
 };
 
 const getDayNameFromDate = (dateValue) => {
