@@ -12,12 +12,11 @@ import {
   Search,
   ShieldCheck,
   Trash2,
-  Upload,
   UserRound,
   X,
 } from 'lucide-react';
 import { db } from '../../utils/db';
-import { courseBookApi, studentApi, teacherApi, timetableApi, uploadApi } from '../../utils/api';
+import { courseBookApi, feeApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
 
 const initialExamSlotForm = {
   examTitle: '',
@@ -48,6 +47,7 @@ const TimetableManagement = () => {
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [courseBooks, setCourseBooks] = useState([]);
+  const [schoolClasses, setSchoolClasses] = useState([]);
   const [classTimetables, setClassTimetables] = useState([]);
   const [examSlots, setExamSlots] = useState(() => db.getAll('timetable_exam_slots'));
   const [selectedClass, setSelectedClass] = useState('');
@@ -77,10 +77,11 @@ const TimetableManagement = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [studentResponse, teacherResponse, courseBookResponse, timetableResponse, draftResponse] = await Promise.all([
+        const [studentResponse, teacherResponse, courseBookResponse, schoolClassResponse, timetableResponse, draftResponse] = await Promise.all([
           studentApi.getAll(),
           teacherApi.getAll(),
           courseBookApi.getAll(),
+          feeApi.getClasses(),
           timetableApi.getClassTimetables(),
           timetableApi.getTemplateDrafts(),
         ]);
@@ -88,6 +89,7 @@ const TimetableManagement = () => {
         setStudents(studentResponse);
         setTeachers(teacherResponse);
         setCourseBooks(courseBookResponse);
+        setSchoolClasses(schoolClassResponse);
         setClassTimetables(timetableResponse);
         setSavedTemplateDrafts(draftResponse);
         setExamSlots(db.getAll('timetable_exam_slots'));
@@ -96,6 +98,7 @@ const TimetableManagement = () => {
         setStudents([]);
         setTeachers([]);
         setCourseBooks([]);
+        setSchoolClasses([]);
         setClassTimetables([]);
         setSavedTemplateDrafts([]);
         setExamSlots(db.getAll('timetable_exam_slots'));
@@ -122,10 +125,15 @@ const TimetableManagement = () => {
   const studentClassOptions = useMemo(() => {
     return [
       ...new Set(
-        students.flatMap((student) => buildStudentTimetableClassCandidates(student)),
+        [
+          ...schoolClasses,
+          ...students.flatMap((student) => buildStudentTimetableClassCandidates(student)),
+          ...classTimetables.map((record) => record.className),
+          ...savedTemplateDrafts.map((record) => record.className),
+        ],
       ),
     ].map((value) => String(value || '').trim()).filter(Boolean).sort(compareClassNames);
-  }, [students]);
+  }, [classTimetables, savedTemplateDrafts, schoolClasses, students]);
 
   const classOptions = useMemo(() => {
     return teacherSession ? teacherClassOptions : studentClassOptions;
@@ -221,35 +229,6 @@ const TimetableManagement = () => {
   const teacherCoverage = classOptions.length;
   const roomCoverage = new Set(filteredExamSlots.map((slot) => slot.roomId).filter(Boolean)).size;
   const examCount = filteredExamSlots.length;
-
-  const handleClassTimetableUpload = async (e) => {
-    const file = e.target.files?.[0];
-    const input = e.target;
-    if (!file || !selectedClass) return;
-    if (selectedClassRecord) {
-      setLoadError('Ek class ke liye ek hi timetable allowed hai. Naya timetable add karne se pehle purana delete karein.');
-      input.value = '';
-      return;
-    }
-
-    try {
-      const uploadedFile = await uploadApi.uploadFile(file, '/erp/timetables/classes');
-      const now = new Date().toISOString();
-      const payload = {
-        className: selectedClass,
-        fileName: uploadedFile.name || file.name,
-        fileData: uploadedFile.url,
-        fileType: file.type || uploadedFile.fileType || 'application/octet-stream',
-        uploadedAt: now,
-      };
-      await timetableApi.saveClassTimetable(payload);
-      await refreshTimetables();
-      setLoadError('');
-      input.value = '';
-    } catch (error) {
-      setLoadError(error.message || 'Unable to upload the class timetable.');
-    }
-  };
 
   const handleSaveExamSlot = (e) => {
     e.preventDefault();
@@ -461,7 +440,7 @@ const TimetableManagement = () => {
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Uploaded Plans" value={totalClassSlots} icon={FileText} />
+              <MetricCard label="Saved Plans" value={totalClassSlots} icon={FileText} />
               <MetricCard label="Classes Listed" value={teacherCoverage} icon={UserRound} />
               <MetricCard label="Rooms Used" value={roomCoverage} icon={DoorOpen} />
               <MetricCard label="Exam Slots" value={examCount} icon={ShieldCheck} />
@@ -476,7 +455,7 @@ const TimetableManagement = () => {
               title="Class & Teacher Timetable"
               text={teacherSession
                 ? 'Open the timetable files for the classes you teach.'
-                : 'Open class-wise timetable files, upload new schedules, and manage existing uploads.'}
+                : 'Open class and section-wise timetables, generate new schedules, and manage saved plans.'}
               onClick={() => setActivePage('class')}
             />
             <ActionCard
@@ -514,7 +493,7 @@ const TimetableManagement = () => {
                 title={teacherSession ? 'Teaching Classes' : 'School Classes'}
                 description={teacherSession
                   ? 'Select one of your teaching classes to view its timetable.'
-                  : 'Select any class to open its timetable upload page.'}
+                  : 'Select any class and section to generate or manage its timetable.'}
               >
                 <div className="mt-6">
                   <SearchInput value={classSearch} onChange={setClassSearch} placeholder="Search class..." />
@@ -538,11 +517,11 @@ const TimetableManagement = () => {
                         <div className="min-w-0">
                           <h4 className="truncate text-base font-black text-slate-950">{className}</h4>
                           <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                            {record ? 'Timetable Uploaded' : 'No Timetable Uploaded'}
+                            {record ? 'Timetable Saved' : 'No Timetable Saved'}
                           </p>
                         </div>
                         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${record ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-300'}`}>
-                          {record ? <FileText size={18} /> : <Upload size={18} />}
+                          {record ? <FileText size={18} /> : <CalendarClock size={18} />}
                         </div>
                       </button>
                     );
@@ -565,7 +544,7 @@ const TimetableManagement = () => {
                       <CalendarClock size={34} />
                     </div>
                     <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">Choose a class</h4>
-                    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">Click a class from the school class list to upload or manage its timetable.</p>
+                    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">Click a class from the school class list to generate or manage its timetable.</p>
                   </div>
                 ) : teacherSession ? (
                   selectedTeacherClassRecord ? (
@@ -580,15 +559,15 @@ const TimetableManagement = () => {
                             <FileText size={24} />
                           </div>
                           <div className="min-w-0">
-                            <h4 className="truncate text-lg font-black tracking-tight text-slate-950">{selectedTeacherClassRecord.fileName || 'Uploaded timetable'}</h4>
+                            <h4 className="truncate text-lg font-black tracking-tight text-slate-950">{selectedTeacherClassRecord.fileName || 'Saved timetable'}</h4>
                             <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                              Uploaded {formatUploadDate(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)}
+                              Saved {formatSavedDate(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)}
                             </p>
                             <p className="mt-2 text-xs font-bold text-slate-500">Click to open your generated timetable</p>
                           </div>
                         </button>
                         <div className="flex flex-wrap items-center gap-2">
-                          <InfoPill icon={Clock3} text={formatUploadTime(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)} />
+                          <InfoPill icon={Clock3} text={formatSavedTime(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)} />
                           <InfoPill icon={FileText} text="Structured timetable" />
                         </div>
                       </div>
@@ -599,7 +578,7 @@ const TimetableManagement = () => {
                         <CalendarClock size={34} />
                       </div>
                       <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">No teacher timetable available</h4>
-                      <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">Raw image, PDF, ya document upload student view me rehta hai. Teacher side par tabhi timetable dikhega jab lecture, subject, aur teacher-wise structured data available ho.</p>
+                      <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">Teacher side par tabhi timetable dikhega jab lecture, subject, aur teacher-wise structured data available ho.</p>
                     </div>
                   )
                 ) : (
@@ -616,16 +595,16 @@ const TimetableManagement = () => {
                               <FileText size={24} />
                             </div>
                             <div className="min-w-0">
-                              <h4 className="truncate text-lg font-black tracking-tight text-slate-950">{selectedClassRecord.fileName || 'Uploaded timetable'}</h4>
+                              <h4 className="truncate text-lg font-black tracking-tight text-slate-950">{selectedClassRecord.fileName || 'Saved timetable'}</h4>
                               <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                                Uploaded {formatUploadDate(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)}
+                                Saved {formatSavedDate(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)}
                               </p>
-                              <p className="mt-2 text-xs font-bold text-slate-500">Click to open uploaded timetable</p>
+                              <p className="mt-2 text-xs font-bold text-slate-500">Click to open saved timetable</p>
                             </div>
                           </button>
                         <div className="flex flex-wrap items-center gap-2">
-                          <InfoPill icon={Clock3} text={formatUploadTime(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)} />
-                          <InfoPill icon={FileText} text="Upload complete" />
+                          <InfoPill icon={Clock3} text={formatSavedTime(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)} />
+                          <InfoPill icon={FileText} text="Saved timetable" />
                           {isSelectedClassEditableTimetable ? (
                             <button
                               type="button"
@@ -638,7 +617,7 @@ const TimetableManagement = () => {
                           ) : null}
                           <button
                             type="button"
-                            onClick={() => handleDelete('timetable_class_slots', selectedClassRecord.id, 'Delete this uploaded timetable?')}
+                            onClick={() => handleDelete('timetable_class_slots', selectedClassRecord.id, 'Delete this saved timetable?')}
                             className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
                             >
                               <Trash2 size={18} />
@@ -648,10 +627,10 @@ const TimetableManagement = () => {
                       ) : (
                         <div className="py-8 text-center">
                           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
-                            <Upload size={28} />
+                            <CalendarClock size={28} />
                           </div>
-                          <h4 className="mt-5 font-serif text-2xl font-black italic tracking-tight text-slate-950">No timetable uploaded</h4>
-                          <p className="mx-auto mt-2 max-w-md text-sm leading-7 text-slate-500">Add the timetable file for this class to make it available here.</p>
+                          <h4 className="mt-5 font-serif text-2xl font-black italic tracking-tight text-slate-950">No timetable saved</h4>
+                          <p className="mx-auto mt-2 max-w-md text-sm leading-7 text-slate-500">Generate a timetable for this class to make it available here.</p>
                         </div>
                         )}
                       </div>
@@ -664,25 +643,7 @@ const TimetableManagement = () => {
                       </div>
                     ) : null}
 
-                    <div className="grid gap-4 md:grid-cols-2">
-                          <button
-                            type="button"
-                            onClick={() => setClassTimetableAction('upload')}
-                            className={`rounded-[1.8rem] border p-6 text-left transition ${
-                              classTimetableAction === 'upload'
-                                ? 'border-emerald-400 bg-emerald-50 ring-4 ring-emerald-100'
-                                : 'border-slate-200 bg-white hover:border-emerald-300'
-                            }`}
-                          >
-                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
-                              <Upload size={22} />
-                            </div>
-                            <h4 className="mt-4 font-serif text-2xl font-black italic tracking-tight text-slate-950">Upload File Of Timetable</h4>
-                            <p className="mt-2 text-sm leading-7 text-slate-500">
-                              Upload PDF, image, spreadsheet, or document file for this selected class timetable.
-                            </p>
-                          </button>
-
+                    <div className="grid gap-4">
                           <button
                             type="button"
                             onClick={() => setClassTimetableAction('generate')}
@@ -701,22 +662,6 @@ const TimetableManagement = () => {
                             </p>
                           </button>
                     </div>
-
-                    {classTimetableAction === 'upload' ? (
-                      <label className="flex cursor-pointer flex-col items-center justify-center rounded-[1.8rem] border-2 border-dashed border-emerald-200 bg-emerald-50/60 px-6 py-10 text-center transition hover:border-emerald-400 hover:bg-emerald-50">
-                        <Upload className="text-emerald-700" size={30} />
-                        <span className="mt-4 text-sm font-black uppercase tracking-[0.18em] text-emerald-800">
-                          Add New Timetable
-                        </span>
-                        <span className="mt-2 text-sm text-slate-500">Upload PDF, image, spreadsheet, or document file</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx,.csv,image/*,application/pdf"
-                          onChange={handleClassTimetableUpload}
-                        />
-                      </label>
-                    ) : null}
 
                     {classTimetableAction === 'generate' ? (
                       <div className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
@@ -1064,7 +1009,11 @@ const buildStudentTimetableClassCandidates = (student) => {
   const assignedClass = String(student.assignedClass || '').trim();
   const combinedClass = [className, section].filter(Boolean).join(' / ');
 
-  return [assignedClass, combinedClass, className].filter(Boolean);
+  if (assignedClass || combinedClass) {
+    return [assignedClass, combinedClass].filter(Boolean);
+  }
+
+  return [className].filter(Boolean);
 };
 
 const slugifyTimetableValue = (value) => String(value || '')
@@ -1432,7 +1381,7 @@ const getClassSortValue = (className) => {
   return { rank: 1000, section };
 };
 
-const formatUploadDate = (value) => {
+const formatSavedDate = (value) => {
   if (!value) return 'date pending';
   return new Date(value).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -1441,7 +1390,7 @@ const formatUploadDate = (value) => {
   });
 };
 
-const formatUploadTime = (value) => {
+const formatSavedTime = (value) => {
   if (!value) return 'Time pending';
   return new Date(value).toLocaleTimeString('en-IN', {
     hour: '2-digit',
@@ -1540,9 +1489,9 @@ const FilePreviewModal = ({ record, onClose }) => {
         <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-7">
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">{record.className}</p>
-            <h3 className="mt-1 truncate font-serif text-2xl font-black italic tracking-tight text-slate-950">{record.fileName || 'Uploaded timetable'}</h3>
+            <h3 className="mt-1 truncate font-serif text-2xl font-black italic tracking-tight text-slate-950">{record.fileName || 'Saved timetable'}</h3>
             <p className="mt-1 text-xs font-bold text-slate-500">
-              Uploaded {formatUploadDate(record.uploadedAt || record.createdAt)} at {formatUploadTime(record.uploadedAt || record.createdAt)}
+              Saved {formatSavedDate(record.uploadedAt || record.createdAt)} at {formatSavedTime(record.uploadedAt || record.createdAt)}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1571,9 +1520,9 @@ const FilePreviewModal = ({ record, onClose }) => {
           {canPreview ? (
             <div className="min-h-[65vh] overflow-hidden rounded-[1.6rem] border border-slate-200 bg-white">
               {isImageFile(record) ? (
-                <img src={record.fileData} alt={record.fileName || 'Uploaded timetable'} className="mx-auto max-h-[72vh] w-auto max-w-full object-contain" />
+                <img src={record.fileData} alt={record.fileName || 'Saved timetable'} className="mx-auto max-h-[72vh] w-auto max-w-full object-contain" />
               ) : (
-                <iframe title={record.fileName || 'Uploaded timetable'} src={record.fileData} className="h-[72vh] w-full bg-white" />
+                <iframe title={record.fileName || 'Saved timetable'} src={record.fileData} className="h-[72vh] w-full bg-white" />
               )}
             </div>
           ) : (
@@ -1583,7 +1532,7 @@ const FilePreviewModal = ({ record, onClose }) => {
               </div>
               <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">Preview not available</h4>
               <p className="mt-3 max-w-md text-sm leading-7 text-slate-500">
-                This file type may not render inside the browser. Use download to open the uploaded timetable file.
+                This file type may not render inside the browser. Use download to open the saved timetable file.
               </p>
             </div>
           )}

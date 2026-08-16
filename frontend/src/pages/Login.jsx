@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GraduationCap, Lock, User, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
+import { GraduationCap, Lock, User, ArrowRight, ShieldCheck, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { instituteApi, studentApi, teacherApi } from '../utils/api';
 import { activateDemoSession, demoCredentials, getSchoolDemoSummary, seedDemoData } from '../utils/demoData';
 
@@ -8,7 +8,9 @@ const schoolDemoSummary = getSchoolDemoSummary();
 const Login = () => {
   const navigate = useNavigate();
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loginRole, setLoginRole] = useState('admin');
+  const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
     password: ''
@@ -18,6 +20,7 @@ const Login = () => {
     seedDemoData();
     const demoInstitution = activateDemoSession('sunrise_demo');
     setError('');
+    setFieldErrors({});
 
     if (demoInstitution) {
       navigate('/college');
@@ -27,6 +30,7 @@ const Login = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
 
     if (loginRole === 'admin') {
       try {
@@ -47,6 +51,9 @@ const Login = () => {
         return;
       } catch (apiError) {
         setError(apiError.message);
+        setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
+          ? apiError.fieldErrors
+          : { username: apiError.message, password: apiError.message });
         return;
       }
     }
@@ -75,6 +82,9 @@ const Login = () => {
         return;
       } catch (apiError) {
         setError(apiError.message);
+        setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
+          ? apiError.fieldErrors
+          : { username: apiError.message, password: apiError.message });
         return;
       }
     }
@@ -101,6 +111,9 @@ const Login = () => {
       return;
     } catch (apiError) {
       setError(apiError.message);
+      setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
+        ? apiError.fieldErrors
+        : { username: apiError.message, password: apiError.message });
     }
   };
 
@@ -144,6 +157,7 @@ const Login = () => {
                 onClick={() => {
                   setLoginRole('admin');
                   setError('');
+                  setFieldErrors({});
                 }}
                 className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition ${
                   loginRole === 'admin' ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-white'
@@ -156,6 +170,7 @@ const Login = () => {
                 onClick={() => {
                   setLoginRole('teacher');
                   setError('');
+                  setFieldErrors({});
                 }}
                 className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition ${
                   loginRole === 'teacher' ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-white'
@@ -168,6 +183,7 @@ const Login = () => {
                 onClick={() => {
                   setLoginRole('student');
                   setError('');
+                  setFieldErrors({});
                 }}
                 className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition ${
                   loginRole === 'student' ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-white'
@@ -201,7 +217,11 @@ const Login = () => {
               icon={User} 
               placeholder={loginRole === 'admin' ? 'e.g. stanford_01' : loginRole === 'teacher' ? 'TCH-EMP-1001 or +91 98XXXXXXX' : 'EDU-1001, 2026-BTECH-014, or +91 98XXXXXXX'} 
               value={formData.username}
-              onChange={(e) => setFormData({...formData, username: e.target.value})}
+              onChange={(e) => {
+                setFormData({...formData, username: e.target.value});
+                setFieldErrors((current) => ({ ...current, username: '' }));
+              }}
+              error={fieldErrors.username}
               required 
             />
             
@@ -209,10 +229,25 @@ const Login = () => {
               <InputGroup 
                 label="Password" 
                 icon={Lock} 
-                type="password" 
+                type={showPassword ? 'text' : 'password'} 
                 placeholder="••••••••" 
                 value={formData.password}
-                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                onChange={(e) => {
+                  setFormData({...formData, password: e.target.value});
+                  setFieldErrors((current) => ({ ...current, password: '' }));
+                }}
+                error={fieldErrors.password}
+                rightElement={
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-50"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                }
                 required 
               />
               <div className="text-right">
@@ -265,19 +300,25 @@ const Login = () => {
   );
 };
 
-const InputGroup = ({ label, icon: Icon, type = "text", ...props }) => (
+const InputGroup = ({ label, icon: Icon, type = "text", error, rightElement, ...props }) => (
   <div className="space-y-2 text-left">
-    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</label>
+    <label className={`text-[10px] font-black uppercase tracking-widest ${error ? 'text-rose-500' : 'text-slate-400'}`}>{label}</label>
     <div className="relative group">
-      <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-600 transition-colors">
+      <div className={`absolute left-5 top-1/2 -translate-y-1/2 transition-colors ${error ? 'text-rose-400' : 'text-slate-300 group-focus-within:text-blue-600'}`}>
         <Icon size={18} />
       </div>
       <input 
         type={type}
-        className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-5 py-4 font-bold text-sm outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-500 transition-all placeholder:text-slate-200"
+        className={`w-full bg-slate-50 border rounded-2xl pl-12 ${rightElement ? 'pr-14' : 'pr-5'} py-4 font-bold text-sm outline-none transition-all placeholder:text-slate-200 ${
+          error
+            ? 'border-rose-300 text-rose-700 focus:border-rose-500 focus:ring-4 focus:ring-rose-50'
+            : 'border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50'
+        }`}
         {...props}
       />
+      {rightElement}
     </div>
+    {error && <p className="text-[11px] font-bold leading-5 text-rose-600">{error}</p>}
   </div>
 );
 
