@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
-  ArrowRight,
   CalendarClock,
   Clock3,
   Download,
@@ -23,7 +22,7 @@ const initialExamSlotForm = {
   className: '',
   subjectName: '',
   examDate: '',
-  dayOfWeek: 'Monday',
+  dayOfWeek: '',
   timeFrom: '',
   timeTo: '',
   roomId: '',
@@ -34,16 +33,16 @@ const initialExamSlotForm = {
 
 const initialTemplateForm = {
   schoolName: '',
-  lectureCount: '8',
-  firstLectureStart: '08:00',
-  lectureLength: '45',
-  lunchLength: '30',
+  lectureCount: '',
+  firstLectureStart: '',
+  lectureLength: '',
+  lunchLength: '',
 };
 
 const TimetableManagement = () => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [activePage, setActivePage] = useState('home');
+  const [activePage, setActivePage] = useState('class');
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [courseBooks, setCourseBooks] = useState([]);
@@ -54,13 +53,9 @@ const TimetableManagement = () => {
   const [examSlotForm, setExamSlotForm] = useState(initialExamSlotForm);
   const [classSearch, setClassSearch] = useState('');
   const [examSearch, setExamSearch] = useState('');
-  const [previewRecord, setPreviewRecord] = useState(null);
   const [classTimetableAction, setClassTimetableAction] = useState('');
   const [savedTemplateDrafts, setSavedTemplateDrafts] = useState([]);
-  const [templateForm, setTemplateForm] = useState(() => ({
-    ...initialTemplateForm,
-    schoolName: session?.instituteName || '',
-  }));
+  const [templateForm, setTemplateForm] = useState(initialTemplateForm);
   const [generatedTemplateDraft, setGeneratedTemplateDraft] = useState(null);
   const [loadError, setLoadError] = useState('');
 
@@ -225,11 +220,6 @@ const TimetableManagement = () => {
       .sort((a, b) => new Date(a.examDate || 0) - new Date(b.examDate || 0) || sortByDayAndTime(a, b));
   }, [examSearch, examSlots, teacherClassOptions, teacherName, teacherSession]);
 
-  const totalClassSlots = visibleClassTimetables.length;
-  const teacherCoverage = classOptions.length;
-  const roomCoverage = new Set(filteredExamSlots.map((slot) => slot.roomId).filter(Boolean)).size;
-  const examCount = filteredExamSlots.length;
-
   const handleSaveExamSlot = (e) => {
     e.preventDefault();
     const payload = {
@@ -249,8 +239,7 @@ const TimetableManagement = () => {
     refreshTimetables();
   };
 
-  const handleDelete = async (module, id, message) => {
-    if (!window.confirm(message)) return;
+  const handleDelete = async (module, id) => {
     try {
       if (module === 'timetable_class_slots') {
         await timetableApi.deleteClassTimetable(id);
@@ -259,7 +248,6 @@ const TimetableManagement = () => {
       } else {
         replaceModuleRecords(module, db.getAll(module).filter((record) => record.id !== id));
       }
-      if (previewRecord?.id === id) setPreviewRecord(null);
       await refreshTimetables();
       setLoadError('');
     } catch (error) {
@@ -274,10 +262,20 @@ const TimetableManagement = () => {
       return;
     }
 
-    const lectureCount = Math.max(1, Number(templateForm.lectureCount) || 0);
-    const lectureLength = Math.max(1, Number(templateForm.lectureLength) || 0);
-    const lunchLength = Math.max(0, Number(templateForm.lunchLength) || 0);
-    const schoolName = templateForm.schoolName.trim() || session?.instituteName || 'School Timetable';
+    if (!templateForm.schoolName.trim() || !templateForm.lectureCount || !templateForm.firstLectureStart || !templateForm.lectureLength || templateForm.lunchLength === '') {
+      setLoadError('Please fill school name, total lectures, first lecture start, lecture length, and lunch length.');
+      return;
+    }
+
+    const lectureCount = Number(templateForm.lectureCount);
+    const lectureLength = Number(templateForm.lectureLength);
+    const lunchLength = Number(templateForm.lunchLength);
+    if (lectureCount < 1 || lectureLength < 1 || lunchLength < 0) {
+      setLoadError('Please enter valid numbers for lectures, lecture length, and lunch length.');
+      return;
+    }
+
+    const schoolName = templateForm.schoolName.trim();
     const lecturePlan = buildLecturePlan(templateForm.firstLectureStart, lectureCount, lectureLength, lunchLength);
     setGeneratedTemplateDraft({
       className: selectedClass,
@@ -301,11 +299,11 @@ const TimetableManagement = () => {
     setGeneratedTemplateDraft({
       ...selectedClassEditableTemplate,
       className: selectedClass,
-      schoolName: selectedClassEditableTemplate.schoolName || session?.instituteName || 'School Timetable',
+      schoolName: selectedClassEditableTemplate.schoolName || '',
       lectureCount: selectedClassEditableTemplate.lectureCount || String(selectedClassEditableTemplate.lecturePlan?.length || ''),
-      firstLectureStart: selectedClassEditableTemplate.firstLectureStart || selectedClassEditableTemplate.lecturePlan?.[0]?.timeFrom || '08:00',
+      firstLectureStart: selectedClassEditableTemplate.firstLectureStart || selectedClassEditableTemplate.lecturePlan?.[0]?.timeFrom || '',
       lectureLength: selectedClassEditableTemplate.lectureLength || calculateLectureLength(selectedClassEditableTemplate.lecturePlan),
-      lunchLength: selectedClassEditableTemplate.lunchLength ?? 30,
+      lunchLength: selectedClassEditableTemplate.lunchLength ?? '',
     });
     setClassTimetableAction('');
     setActivePage('template-editor');
@@ -338,10 +336,8 @@ const TimetableManagement = () => {
       const normalizedTemplateDraft = normalizeGeneratedTemplateDraft(generatedTemplateDraft);
       const missingSubjects = findUnusedTimetableSubjects(normalizedTemplateDraft, selectedClassSubjectOptions);
       if (missingSubjects.length) {
-        const shouldContinue = window.confirm(
-          `The following subjects have not been scheduled anywhere in this timetable: ${missingSubjects.join(', ')}. Please review the timetable to ensure complete subject coverage before final submission.\n\nDo you want to continue saving this timetable?`,
-        );
-        if (!shouldContinue) return;
+        setLoadError(`Please schedule these subjects before final save: ${missingSubjects.join(', ')}.`);
+        return;
       }
       const now = new Date().toISOString();
       const payload = {
@@ -400,13 +396,27 @@ const TimetableManagement = () => {
     setActivePage('class');
   };
 
+  const handleBack = () => {
+    if (activePage === 'template-editor') {
+      setActivePage('class');
+      return;
+    }
+
+    if (activePage === 'exam') {
+      setActivePage('class');
+      return;
+    }
+
+    navigate(session?.role === 'teacher' ? '/teacher' : '/college');
+  };
+
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f7fbff_0%,#effaf5_36%,#f8fafc_100%)] text-slate-900">
       <div className="border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate(session?.role === 'teacher' ? '/teacher' : '/college')}
+              onClick={handleBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft size={14} />
@@ -426,65 +436,36 @@ const TimetableManagement = () => {
             {loadError}
           </div>
         ) : null}
-        <section className="overflow-hidden rounded-4xl bg-[linear-gradient(145deg,#0f766e_0%,#047857_48%,#111827_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(6,78,59,0.8)] lg:px-10 lg:py-10">
-          <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-emerald-200">Schedule Operations</p>
-              <h2 className="mt-4 max-w-3xl font-serif text-4xl font-black italic leading-none tracking-tight">
-                Visualize class periods, teacher allocation, rooms, and exam schedules.
-              </h2>
-              <p className="mt-5 max-w-2xl text-sm leading-7 text-emerald-50/80">
-                {teacherSession
-                  ? `Only timetable records for ${teacherName || 'this teacher'} and assigned teaching classes are shown here.`
-                  : 'Build weekly teaching slots with substitution coverage, then prepare exam timetables with invigilators, duration, and seating range.'}
-              </p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Saved Plans" value={totalClassSlots} icon={FileText} />
-              <MetricCard label="Classes Listed" value={teacherCoverage} icon={UserRound} />
-              <MetricCard label="Rooms Used" value={roomCoverage} icon={DoorOpen} />
-              <MetricCard label="Exam Slots" value={examCount} icon={ShieldCheck} />
-            </div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">Timetable Page</p>
+            <h2 className="mt-2 font-serif text-3xl font-black italic tracking-tight text-slate-950">
+              {activePage === 'class' ? 'Class And Teacher Timetable' : activePage === 'template-editor' ? 'Edit Timetable Template' : 'Exam Timetable'}
+            </h2>
           </div>
-        </section>
-
-        {activePage === 'home' ? (
-          <section className="mt-8 grid gap-5 md:grid-cols-2">
-            <ActionCard
-              icon={CalendarClock}
-              title="Class & Teacher Timetable"
-              text={teacherSession
-                ? 'Open the timetable files for the classes you teach.'
-                : 'Open class and section-wise timetables, generate new schedules, and manage saved plans.'}
-              onClick={() => setActivePage('class')}
-            />
-            <ActionCard
-              icon={ShieldCheck}
-              title="Exam Timetable"
-              text={teacherSession
-                ? 'Review exam timetable entries connected to your teaching classes or invigilation duty.'
-                : 'Create assessment schedules with invigilator, duration, and seating range.'}
-              onClick={() => setActivePage('exam')}
-            />
-          </section>
-        ) : (
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">Timetable Page</p>
-              <h2 className="mt-2 font-serif text-3xl font-black italic tracking-tight text-slate-950">
-                {activePage === 'class' ? 'Class And Teacher Timetable' : activePage === 'template-editor' ? 'Edit Timetable Template' : 'Exam Timetable'}
-              </h2>
+          {activePage !== 'template-editor' ? (
+            <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1.5">
+              <button
+                type="button"
+                onClick={() => setActivePage('class')}
+                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition ${
+                  activePage === 'class' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-emerald-50 hover:text-emerald-700'
+                }`}
+              >
+                Class
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivePage('exam')}
+                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition ${
+                  activePage === 'exam' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-emerald-50 hover:text-emerald-700'
+                }`}
+              >
+                Exam
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setActivePage(activePage === 'template-editor' ? 'class' : 'home')}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
-            >
-              <ArrowLeft size={15} />
-              {activePage === 'template-editor' ? 'Back To Timetable' : 'Back To Cards'}
-            </button>
-          </div>
-        )}
+          ) : null}
+        </div>
 
         {activePage === 'class' ? (
           <TwoColumnPage
@@ -550,9 +531,10 @@ const TimetableManagement = () => {
                   selectedTeacherClassRecord ? (
                     <div className="mt-8 rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
                       <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewRecord(selectedTeacherClassRecord)}
+                        <a
+                          href={selectedTeacherClassRecord.fileData || '#'}
+                          target="_blank"
+                          rel="noreferrer"
                           className="flex min-w-0 flex-1 items-center gap-4 rounded-[1.4rem] p-2 text-left transition hover:bg-white"
                         >
                           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700">
@@ -565,7 +547,7 @@ const TimetableManagement = () => {
                             </p>
                             <p className="mt-2 text-xs font-bold text-slate-500">Click to open your generated timetable</p>
                           </div>
-                        </button>
+                        </a>
                         <div className="flex flex-wrap items-center gap-2">
                           <InfoPill icon={Clock3} text={formatSavedTime(selectedTeacherClassRecord.uploadedAt || selectedTeacherClassRecord.createdAt)} />
                           <InfoPill icon={FileText} text="Structured timetable" />
@@ -586,9 +568,10 @@ const TimetableManagement = () => {
                     <div className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
                       {selectedClassRecord ? (
                         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                          <button
-                            type="button"
-                            onClick={() => setPreviewRecord(selectedClassRecord)}
+                          <a
+                            href={selectedClassRecord.fileData || '#'}
+                            target="_blank"
+                            rel="noreferrer"
                             className="flex min-w-0 flex-1 items-center gap-4 rounded-[1.4rem] p-2 text-left transition hover:bg-white"
                           >
                             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700">
@@ -601,7 +584,7 @@ const TimetableManagement = () => {
                               </p>
                               <p className="mt-2 text-xs font-bold text-slate-500">Click to open saved timetable</p>
                             </div>
-                          </button>
+                          </a>
                         <div className="flex flex-wrap items-center gap-2">
                           <InfoPill icon={Clock3} text={formatSavedTime(selectedClassRecord.uploadedAt || selectedClassRecord.createdAt)} />
                           <InfoPill icon={FileText} text="Saved timetable" />
@@ -617,7 +600,7 @@ const TimetableManagement = () => {
                           ) : null}
                           <button
                             type="button"
-                            onClick={() => handleDelete('timetable_class_slots', selectedClassRecord.id, 'Delete this saved timetable?')}
+                            onClick={() => handleDelete('timetable_class_slots', selectedClassRecord.id)}
                             className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
                             >
                               <Trash2 size={18} />
@@ -678,7 +661,7 @@ const TimetableManagement = () => {
                             label="School Name"
                             value={templateForm.schoolName}
                             onChange={(e) => setTemplateForm({ ...templateForm, schoolName: e.target.value })}
-                            placeholder="Enter school name"
+                            placeholder="Write school name"
                           />
                           <InputField
                             label="Total Lectures"
@@ -687,7 +670,7 @@ const TimetableManagement = () => {
                             max="12"
                             value={templateForm.lectureCount}
                             onChange={(e) => setTemplateForm({ ...templateForm, lectureCount: e.target.value })}
-                            placeholder="8"
+                            placeholder="Write total lectures"
                           />
                           <InputField
                             label="First Lecture Start"
@@ -701,7 +684,7 @@ const TimetableManagement = () => {
                             min="1"
                             value={templateForm.lectureLength}
                             onChange={(e) => setTemplateForm({ ...templateForm, lectureLength: e.target.value })}
-                            placeholder="45"
+                            placeholder="Write minutes per lecture"
                           />
                           <div className="md:col-span-2">
                             <InputField
@@ -710,7 +693,7 @@ const TimetableManagement = () => {
                               min="0"
                               value={templateForm.lunchLength}
                               onChange={(e) => setTemplateForm({ ...templateForm, lunchLength: e.target.value })}
-                              placeholder="30"
+                              placeholder="Write lunch minutes"
                             />
                           </div>
                         </div>
@@ -875,7 +858,7 @@ const TimetableManagement = () => {
                                       prefix="S"
                                       value={slot.subjectName}
                                       onChange={(e) => handleDraftCellChange(dayIndex, column.lectureIndex, 'subjectName', e.target.value)}
-                                      placeholder="Subject"
+                                      placeholder="Write subject name"
                                       suggestions={selectedClassSubjectOptions}
                                       datalistId={`subject-options-${slugifyTimetableValue(selectedClass || generatedTemplateDraft.className)}`}
                                     />
@@ -929,18 +912,18 @@ const TimetableManagement = () => {
               ) : (
                 <Panel title="Create Exam Slot" description="Plan assessment periods with invigilator, duration, seating range, room, and time.">
                   <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSaveExamSlot}>
-                    <InputField label="Exam Title" value={examSlotForm.examTitle} onChange={(e) => setExamSlotForm({ ...examSlotForm, examTitle: e.target.value })} placeholder="Mid Term Examination" />
+                    <InputField label="Exam Title" value={examSlotForm.examTitle} onChange={(e) => setExamSlotForm({ ...examSlotForm, examTitle: e.target.value })} placeholder="Write exam title" />
                     <SelectField label="Class" value={examSlotForm.className} onChange={(e) => setExamSlotForm({ ...examSlotForm, className: e.target.value })} options={['', ...classOptions]} />
-                    <InputField label="Subject" value={examSlotForm.subjectName} onChange={(e) => setExamSlotForm({ ...examSlotForm, subjectName: e.target.value })} placeholder="Science" />
+                    <InputField label="Subject" value={examSlotForm.subjectName} onChange={(e) => setExamSlotForm({ ...examSlotForm, subjectName: e.target.value })} placeholder="Write subject name" />
                     <InputField label="Exam Date" type="date" value={examSlotForm.examDate} onChange={(e) => setExamSlotForm({ ...examSlotForm, examDate: e.target.value })} />
-                    <SelectField label="Day Of Week" value={examSlotForm.dayOfWeek} onChange={(e) => setExamSlotForm({ ...examSlotForm, dayOfWeek: e.target.value })} options={weekDays} />
-                    <InputField label="Room ID" value={examSlotForm.roomId} onChange={(e) => setExamSlotForm({ ...examSlotForm, roomId: e.target.value })} placeholder="Exam Hall A" />
+                    <SelectField label="Day Of Week" value={examSlotForm.dayOfWeek} onChange={(e) => setExamSlotForm({ ...examSlotForm, dayOfWeek: e.target.value })} options={['', ...weekDays]} />
+                    <InputField label="Room ID" value={examSlotForm.roomId} onChange={(e) => setExamSlotForm({ ...examSlotForm, roomId: e.target.value })} placeholder="Write room name or ID" />
                     <InputField label="Time From" type="time" value={examSlotForm.timeFrom} onChange={(e) => setExamSlotForm({ ...examSlotForm, timeFrom: e.target.value })} />
                     <InputField label="Time To" type="time" value={examSlotForm.timeTo} onChange={(e) => setExamSlotForm({ ...examSlotForm, timeTo: e.target.value })} />
-                    <InputField label="Invigilator Name" value={examSlotForm.invigilatorName} onChange={(e) => setExamSlotForm({ ...examSlotForm, invigilatorName: e.target.value })} placeholder="Neha Agarwal" />
-                    <InputField label="Exam Duration" value={examSlotForm.examDuration} onChange={(e) => setExamSlotForm({ ...examSlotForm, examDuration: e.target.value })} placeholder="3 Hours" />
+                    <InputField label="Invigilator Name" value={examSlotForm.invigilatorName} onChange={(e) => setExamSlotForm({ ...examSlotForm, invigilatorName: e.target.value })} placeholder="Write invigilator name" />
+                    <InputField label="Exam Duration" value={examSlotForm.examDuration} onChange={(e) => setExamSlotForm({ ...examSlotForm, examDuration: e.target.value })} placeholder="Write exam duration" />
                     <div className="md:col-span-2">
-                      <InputField label="Student Seating Range" value={examSlotForm.studentSeatingRange} onChange={(e) => setExamSlotForm({ ...examSlotForm, studentSeatingRange: e.target.value })} placeholder="Roll 001-045" />
+                      <InputField label="Student Seating Range" value={examSlotForm.studentSeatingRange} onChange={(e) => setExamSlotForm({ ...examSlotForm, studentSeatingRange: e.target.value })} placeholder="Write seating range" />
                     </div>
                     <div className="md:col-span-2">
                       <PrimaryButton type="submit" icon={ShieldCheck} label="Save Exam Timetable Slot" />
@@ -967,7 +950,7 @@ const TimetableManagement = () => {
                       <InfoPill icon={GraduationCap} text={slot.studentSeatingRange || 'Seating pending'} />
                       <InfoPill icon={DoorOpen} text={slot.roomId} />
                       {!teacherSession ? (
-                        <button onClick={() => handleDelete('timetable_exam_slots', slot.id, 'Delete this exam timetable slot?')} className="ml-auto text-slate-400 transition hover:text-rose-600">
+                        <button onClick={() => handleDelete('timetable_exam_slots', slot.id)} className="ml-auto text-slate-400 transition hover:text-rose-600">
                           <Trash2 size={18} />
                         </button>
                       ) : null}
@@ -980,7 +963,6 @@ const TimetableManagement = () => {
         ) : null}
       </main>
 
-      {previewRecord ? <FilePreviewModal record={previewRecord} onClose={() => setPreviewRecord(null)} /> : null}
     </div>
   );
 };
@@ -1022,7 +1004,7 @@ const slugifyTimetableValue = (value) => String(value || '')
   .replace(/^-+|-+$/g, '');
 
 const buildLecturePlan = (startTime, lectureCount, lectureLength, lunchLength) => {
-  let currentMinutes = parseTimeToMinutes(startTime || '08:00');
+  let currentMinutes = parseTimeToMinutes(startTime);
 
   return Array.from({ length: lectureCount }, (_, index) => {
     const lectureNumber = index + 1;
@@ -1066,7 +1048,7 @@ const buildTimetableDisplayColumns = (lecturePlan = []) => {
 };
 
 const parseTimeToMinutes = (value) => {
-  const [hour = '8', minute = '0'] = String(value || '08:00').split(':');
+  const [hour = '0', minute = '0'] = String(value || '').split(':');
   return (Number(hour) * 60) + Number(minute);
 };
 
@@ -1079,7 +1061,7 @@ const formatMinutesToTime = (totalMinutes) => {
 const calculateLectureLength = (lecturePlan = []) => {
   const firstLecture = lecturePlan[0];
   if (!firstLecture?.timeFrom || !firstLecture?.timeTo) {
-    return 45;
+    return '';
   }
 
   return Math.max(1, parseTimeToMinutes(firstLecture.timeTo) - parseTimeToMinutes(firstLecture.timeFrom));
@@ -1398,56 +1380,6 @@ const formatSavedTime = (value) => {
   });
 };
 
-const isImageFile = (record) => {
-  return record.fileType?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(record.fileName || '');
-};
-
-const isPdfFile = (record) => {
-  return record.fileType === 'application/pdf' || /\.pdf$/i.test(record.fileName || '');
-};
-
-const isHtmlFile = (record) => {
-  return record.fileType === 'text/html' || /\.(html?)$/i.test(record.fileName || '');
-};
-
-const isPreviewableFile = (record) => {
-  return Boolean(record.fileData) && (isImageFile(record) || isPdfFile(record) || isHtmlFile(record));
-};
-
-const MetricCard = ({ label, value, icon }) => (
-  <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-50/80">{label}</p>
-        <p className="mt-3 text-3xl font-black tracking-tight text-white">{value}</p>
-      </div>
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200/20 bg-emerald-200/10 text-emerald-50">
-        {React.createElement(icon, { size: 20 })}
-      </div>
-    </div>
-  </div>
-);
-
-const ActionCard = ({ icon, title, text, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className="group flex min-h-56 flex-col justify-between rounded-4xl border border-slate-200/80 bg-white p-6 text-left shadow-[0_20px_60px_-38px_rgba(15,23,42,0.45)] transition hover:-translate-y-1 hover:border-emerald-300 lg:p-8"
-  >
-    <div>
-      <div className="flex items-start justify-between gap-5">
-        <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700 transition group-hover:bg-emerald-600 group-hover:text-white">
-          {React.createElement(icon, { size: 24 })}
-        </div>
-        <ArrowRight className="text-slate-300 transition group-hover:text-emerald-700" size={20} />
-      </div>
-      <h3 className="mt-7 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h3>
-      <p className="mt-3 text-sm leading-7 text-slate-500">{text}</p>
-    </div>
-    <span className="mt-6 text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">Open Page</span>
-  </button>
-);
-
 const TwoColumnPage = ({ left, right }) => (
   <div className="mt-8 grid gap-8 xl:grid-cols-[0.95fr_1.05fr]">
     {left}
@@ -1479,68 +1411,6 @@ const RecordCard = ({ icon, title, subtitle, children }) => (
     </div>
   </article>
 );
-
-const FilePreviewModal = ({ record, onClose }) => {
-  const canPreview = isPreviewableFile(record);
-
-  return (
-    <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-4xl bg-white shadow-[0_30px_90px_-35px_rgba(15,23,42,0.75)]">
-        <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-7">
-          <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">{record.className}</p>
-            <h3 className="mt-1 truncate font-serif text-2xl font-black italic tracking-tight text-slate-950">{record.fileName || 'Saved timetable'}</h3>
-            <p className="mt-1 text-xs font-bold text-slate-500">
-              Saved {formatSavedDate(record.uploadedAt || record.createdAt)} at {formatSavedTime(record.uploadedAt || record.createdAt)}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {record.fileData ? (
-              <a
-                href={record.fileData}
-                download={record.fileName || 'class-timetable'}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white transition hover:bg-emerald-600"
-                title="Download"
-              >
-                <Download size={18} />
-              </a>
-            ) : null}
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
-              title="Close"
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-auto bg-slate-100 p-4 lg:p-6">
-          {canPreview ? (
-            <div className="min-h-[65vh] overflow-hidden rounded-[1.6rem] border border-slate-200 bg-white">
-              {isImageFile(record) ? (
-                <img src={record.fileData} alt={record.fileName || 'Saved timetable'} className="mx-auto max-h-[72vh] w-auto max-w-full object-contain" />
-              ) : (
-                <iframe title={record.fileName || 'Saved timetable'} src={record.fileData} className="h-[72vh] w-full bg-white" />
-              )}
-            </div>
-          ) : (
-            <div className="flex min-h-[55vh] flex-col items-center justify-center rounded-[1.6rem] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
-              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700">
-                <FileText size={34} />
-              </div>
-              <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">Preview not available</h4>
-              <p className="mt-3 max-w-md text-sm leading-7 text-slate-500">
-                This file type may not render inside the browser. Use download to open the saved timetable file.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const InputField = ({ label, ...props }) => (
   <div className="space-y-2.5">

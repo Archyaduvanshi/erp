@@ -131,10 +131,10 @@ const Dashboard = () => {
           />
 
           <ModuleCard
-            icon={<FileText className="text-indigo-700" size={42} />}
-            title="Examination Management"
-            desc="Schedule exams, manage results, and generate report cards"
-            onClick={() => navigate('/college/examinations')}
+            icon={<CalendarDays className="text-emerald-700" size={42} />}
+            title="Attendance Management"
+            desc="Track daily student attendance with date, status, and marked-by records"
+            onClick={() => navigate('/college/attendance')}
           />
 
           <ModuleCard
@@ -144,11 +144,39 @@ const Dashboard = () => {
             onClick={() => navigate('/college/courses')}
           />
 
+           <ModuleCard
+            icon={<CalendarDays className="text-teal-700" size={42} />}
+            title="Timetable Management"
+            desc="Schedule class periods, teachers, rooms, substitutions, and exams"
+            onClick={() => navigate('/college/timetable')}
+          />
+
+          <ModuleCard
+            icon={<FileText className="text-indigo-700" size={42} />}
+            title="Examination Management"
+            desc="Schedule exams, manage results, and generate report cards"
+            onClick={() => navigate('/college/examinations')}
+          />
+
           <ModuleCard
             icon={<Library className="text-purple-700" size={42} />}
             title="Library Management"
             desc="Track book inventory, issues, returns, and late fines"
             onClick={() => navigate('/college/library')}
+          />
+
+          <ModuleCard
+            icon={<Bus className="text-sky-700" size={42} />}
+            title="Transport Management"
+            desc="Manage drivers, buses, routes, and student transport assignments"
+            onClick={() => navigate('/college/transport')}
+          />
+
+          <ModuleCard
+            icon={<GraduationCap className="text-cyan-700" size={42} />}
+            title="Hostel Management"
+            desc="Allocate rooms, manage residents, and attendance"
+            onClick={() => navigate('/college/hostel')}
           />
 
           <ModuleCard
@@ -166,38 +194,10 @@ const Dashboard = () => {
           />
 
           <ModuleCard
-            icon={<Bus className="text-sky-700" size={42} />}
-            title="Transport Management"
-            desc="Manage drivers, buses, routes, and student transport assignments"
-            onClick={() => navigate('/college/transport')}
-          />
-
-          <ModuleCard
-            icon={<CalendarDays className="text-emerald-700" size={42} />}
-            title="Attendance Management"
-            desc="Track daily student attendance with date, status, and marked-by records"
-            onClick={() => navigate('/college/attendance')}
-          />
-
-          <ModuleCard
-            icon={<CalendarDays className="text-teal-700" size={42} />}
-            title="Timetable Management"
-            desc="Schedule class periods, teachers, rooms, substitutions, and exams"
-            onClick={() => navigate('/college/timetable')}
-          />
-
-          <ModuleCard
             icon={<Megaphone className="text-violet-700" size={42} />}
             title="Notice Management"
             desc="Create, schedule, pin, publish, and archive campus notices"
             onClick={() => navigate('/college/notices')}
-          />
-
-          <ModuleCard
-            icon={<GraduationCap className="text-cyan-700" size={42} />}
-            title="Hostel Management"
-            desc="Allocate rooms, manage residents, and attendance"
-            onClick={() => navigate('/college/hostel')}
           />
 
           <ModuleCard
