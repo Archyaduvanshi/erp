@@ -6,17 +6,11 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
-  IdCard,
-  MapPin,
-  Phone,
   Plus,
   Route,
   Search,
   Trash2,
-  UserPlus,
-  UserX,
   Users,
-  X,
 } from 'lucide-react';
 import { studentApi, transportApi } from '../../utils/api';
 
@@ -27,7 +21,7 @@ const initialDriverForm = {
   salary: '',
   busNumber: '',
   routeName: '',
-  vehicleType: 'School Bus',
+  vehicleType: '',
   seatCapacity: '',
   pickupPoints: '',
 };
@@ -41,10 +35,67 @@ const initialStudentForm = {
 };
 
 const LICENSE_FORMAT_HINT = 'Use format SS-YY-XXXXXXXXXX, like DL-01-1234567890.';
-const BUS_NUMBER_FORMAT_HINT = 'Use format SS XX YY ZZZZ, like UP 16 AB 1234.';
+const BUS_NUMBER_FORMAT_HINT = 'Use format SS NN AA NNNN, like UP 16 AB 1234.';
+const PHONE_FORMAT_HINT = 'Mobile number must contain exactly 10 digits.';
+
+const DRIVER_REQUIRED_FIELDS = {
+  driverName: 'Driver Name',
+  driverPhone: 'Driver Phone',
+  driverLicense: 'License Number',
+  salary: 'Salary',
+  busNumber: 'Bus Number',
+  routeName: 'Route Name',
+  vehicleType: 'Vehicle Type',
+  seatCapacity: 'Seat Capacity',
+  pickupPoints: 'Bus Start Point',
+};
+
+const onlyDigits = (value) => String(value || '').replace(/\D/g, '');
+const normalizeLicenseNumber = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
+const normalizeBusNumber = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ');
 
 const isValidDrivingLicense = (value) => /^[A-Z]{2}[\s-]?\d{2}[\s-]?\d{10}$/.test(String(value || '').trim().toUpperCase());
 const isValidBusNumber = (value) => /^[A-Z]{2}[\s-]?\d{2}[\s-]?[A-Z]{2}[\s-]?\d{4}$/.test(String(value || '').trim().toUpperCase());
+
+const formatDriverFieldValue = (field, value) => {
+  if (field === 'driverPhone') return onlyDigits(value).slice(0, 10);
+  if (field === 'driverLicense') return normalizeLicenseNumber(value);
+  if (field === 'busNumber') return normalizeBusNumber(value);
+  if (['driverName', 'routeName', 'pickupPoints'].includes(field)) return String(value || '').toUpperCase();
+  return value;
+};
+
+const getDriverFieldError = (field, value) => {
+  const trimmedValue = String(value || '').trim();
+  if (!trimmedValue) {
+    return `Please fill ${DRIVER_REQUIRED_FIELDS[field]}.`;
+  }
+  if (field === 'driverPhone' && onlyDigits(trimmedValue).length !== 10) return PHONE_FORMAT_HINT;
+  if (field === 'driverLicense' && !isValidDrivingLicense(trimmedValue)) return LICENSE_FORMAT_HINT;
+  if (field === 'busNumber' && !isValidBusNumber(trimmedValue)) return BUS_NUMBER_FORMAT_HINT;
+  if (['salary', 'seatCapacity'].includes(field) && Number(trimmedValue) <= 0) {
+    return `${DRIVER_REQUIRED_FIELDS[field]} must be greater than 0.`;
+  }
+  return '';
+};
+
+const validateDriverForm = (form) => Object.keys(DRIVER_REQUIRED_FIELDS).reduce((errors, field) => {
+  const error = getDriverFieldError(field, form[field]);
+  return error ? { ...errors, [field]: error } : errors;
+}, {});
+
+const normalizeDriverPayload = (form) => ({
+  ...form,
+  driverName: form.driverName.trim(),
+  driverPhone: onlyDigits(form.driverPhone),
+  driverLicense: form.driverLicense.trim().toUpperCase(),
+  salary: form.salary.trim(),
+  busNumber: form.busNumber.trim().toUpperCase(),
+  routeName: form.routeName.trim(),
+  vehicleType: form.vehicleType.trim(),
+  seatCapacity: form.seatCapacity.trim(),
+  pickupPoints: form.pickupPoints.trim(),
+});
 
 const TransportManagement = () => {
   const navigate = useNavigate();
@@ -58,6 +109,8 @@ const TransportManagement = () => {
   const [recordSearch, setRecordSearch] = useState('');
   const [driverForm, setDriverForm] = useState(initialDriverForm);
   const [studentForm, setStudentForm] = useState(initialStudentForm);
+  const [selectedStudentDriverId, setSelectedStudentDriverId] = useState('');
+  const [isStudentTransportFormOpen, setIsStudentTransportFormOpen] = useState(false);
   const [attendanceDriverId, setAttendanceDriverId] = useState('');
   const [attendanceDate, setAttendanceDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [attendanceMap, setAttendanceMap] = useState({});
@@ -115,8 +168,6 @@ const TransportManagement = () => {
     });
   }, [studentSearch, transportStudents]);
 
-  const selectedStudent = students.find((student) => String(student.id) === String(studentForm.studentId)) || null;
-  const selectedDriver = drivers.find((driver) => String(driver.id) === String(studentForm.assignedDriverId)) || null;
   const attendanceDriver = drivers.find((driver) => String(driver.id) === String(attendanceDriverId)) || null;
   const classOptions = useMemo(() => (
     [...new Set(students.map((student) => student.className).filter(Boolean))].sort((left, right) => left.localeCompare(right))
@@ -246,13 +297,8 @@ const TransportManagement = () => {
 
   const handleDriverSave = async (e) => {
     e.preventDefault();
-    const nextDriverErrors = {};
-    if (driverForm.driverLicense && !isValidDrivingLicense(driverForm.driverLicense)) {
-      nextDriverErrors.driverLicense = LICENSE_FORMAT_HINT;
-    }
-    if (driverForm.busNumber && !isValidBusNumber(driverForm.busNumber)) {
-      nextDriverErrors.busNumber = BUS_NUMBER_FORMAT_HINT;
-    }
+    const normalizedDriverForm = normalizeDriverPayload(driverForm);
+    const nextDriverErrors = validateDriverForm(normalizedDriverForm);
     setDriverFormErrors(nextDriverErrors);
     if (Object.keys(nextDriverErrors).length > 0) {
       setLoadError('Please fix the invalid driver fields before saving.');
@@ -262,9 +308,9 @@ const TransportManagement = () => {
     setIsSaving(true);
     try {
       await transportApi.createDriver({
-        ...driverForm,
+        ...normalizedDriverForm,
         status: 'Active',
-        routeCode: `ROUTE-${driverForm.routeName.trim().replace(/\s+/g, '-').toUpperCase() || Math.floor(100 + Math.random() * 900)}`,
+        routeCode: `ROUTE-${normalizedDriverForm.routeName.replace(/\s+/g, '-').toUpperCase()}`,
       });
       setDriverForm(initialDriverForm);
       setDriverFormErrors({});
@@ -348,13 +394,33 @@ const TransportManagement = () => {
     }
   };
 
+  const handleTransportBack = () => {
+    if (activeSection === 'students' && selectedStudentDriverId) {
+      setSelectedStudentDriverId('');
+      setIsStudentTransportFormOpen(false);
+      setStudentForm(initialStudentForm);
+      setStudentSearch('');
+      return;
+    }
+    if (activeSection === 'students' && isStudentTransportFormOpen) {
+      setIsStudentTransportFormOpen(false);
+      setStudentForm(initialStudentForm);
+      return;
+    }
+    if (activeSection !== 'home') {
+      setActiveSection('home');
+      return;
+    }
+    navigate('/college');
+  };
+
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#ecfeff_45%,#f8fafc_100%)] text-slate-900 selection:bg-sky-400 selection:text-slate-950">
       <div className="border-b border-slate-200/70 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/college')}
+              onClick={handleTransportBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-sky-300 hover:text-sky-700"
             >
               <ArrowLeft size={14} />
@@ -366,19 +432,7 @@ const TransportManagement = () => {
             </div>
           </div>
 
-          {activeSection !== 'home' ? (
-            <button
-              onClick={() => setActiveSection('home')}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-slate-600 transition hover:border-sky-300 hover:text-sky-700"
-            >
-              <X size={14} />
-              Close Section
-            </button>
-          ) : (
-            <div className="hidden rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 md:inline-flex">
-              Database Backed Transport Workspace
-            </div>
-          )}
+          <div />
         </div>
       </div>
 
@@ -397,7 +451,13 @@ const TransportManagement = () => {
             todayPresentCount={todayPresentCount}
             todayAbsentCount={todayAbsentCount}
             onOpenDrivers={() => setActiveSection('drivers')}
-            onOpenStudents={() => setActiveSection('students')}
+            onOpenStudents={() => {
+              setSelectedStudentDriverId('');
+              setIsStudentTransportFormOpen(false);
+              setStudentForm(initialStudentForm);
+              setStudentSearch('');
+              setActiveSection('students');
+            }}
             onOpenAttendance={() => setActiveSection('attendance')}
           />
         )}
@@ -414,7 +474,6 @@ const TransportManagement = () => {
             onSave={handleDriverSave}
             isSaving={isSaving}
             onDelete={handleDeleteDriver}
-            onBack={() => setActiveSection('home')}
           />
         )}
 
@@ -422,20 +481,21 @@ const TransportManagement = () => {
           <StudentSection
             studentForm={studentForm}
             setStudentForm={setStudentForm}
-            students={students}
             classOptions={classOptions}
             sectionOptions={sectionOptions}
             filteredStudentOptions={filteredStudentOptions}
-            selectedStudent={selectedStudent}
             drivers={drivers}
-            selectedDriver={selectedDriver}
+            transportStudents={transportStudents}
             filteredTransportStudents={filteredTransportStudents}
+            selectedDriverId={selectedStudentDriverId}
+            setSelectedDriverId={setSelectedStudentDriverId}
+            isStudentFormOpen={isStudentTransportFormOpen}
+            setIsStudentFormOpen={setIsStudentTransportFormOpen}
             onSearch={setStudentSearch}
             searchValue={studentSearch}
             onSave={handleStudentSave}
             isSaving={isSaving}
             onDelete={handleDeleteAssignment}
-            onBack={() => setActiveSection('home')}
           />
         )}
 
@@ -454,7 +514,6 @@ const TransportManagement = () => {
             recordSearch={recordSearch}
             setRecordSearch={setRecordSearch}
             monthlyAttendanceRegister={monthlyAttendanceRegister}
-            onBack={() => setActiveSection('home')}
           />
         )}
       </div>
@@ -502,57 +561,99 @@ const TransportHome = ({
   </div>
 );
 
-const DriverSection = ({ driverForm, setDriverForm, driverFormErrors, setDriverFormErrors, filteredDrivers, onSearch, searchValue, onSave, isSaving, onDelete, onBack }) => (
-  <div className="space-y-8">
-    <SectionHeader
-      eyebrow="Driver Section"
-      title="Drivers, buses, and routes"
-      description="Save every driver with bus and route details, then remove records whenever the transport roster changes."
-      onBack={onBack}
-    />
+const DriverSection = ({ driverForm, setDriverForm, driverFormErrors, setDriverFormErrors, filteredDrivers, onSearch, searchValue, onSave, isSaving, onDelete }) => {
+  const updateDriverField = (field, rawValue) => {
+    const value = formatDriverFieldValue(field, rawValue);
+    setDriverForm({ ...driverForm, [field]: value });
+    setDriverFormErrors({
+      ...driverFormErrors,
+      [field]: getDriverFieldError(field, value),
+    });
+  };
 
-    <div className="grid gap-8 xl:grid-cols-[0.95fr_1.05fr]">
+  return (
+    <div className="space-y-8">
+      <SectionHeader
+        eyebrow="Driver Section"
+        title="Drivers, buses, and routes"
+        description="Save every driver with bus and route details, then remove records whenever the transport roster changes."
+      />
+
       <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-        <FormTitle title="Add Driver Record" description="This saves the driver with the bus number and route name together." />
-        <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={onSave}>
-          <CreativeInput label="Driver Name" value={driverForm.driverName} onChange={(e) => setDriverForm({ ...driverForm, driverName: e.target.value })} placeholder="Ramesh Kumar" />
-          <CreativeInput label="Driver Phone" value={driverForm.driverPhone} onChange={(e) => setDriverForm({ ...driverForm, driverPhone: e.target.value })} placeholder="+91 9876543210" />
+        <FormTitle title="Add Driver Record" description="All fields are required. Typed text appears in capital letters." />
+        <form className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3" onSubmit={onSave} noValidate>
+          <CreativeInput
+            label="Driver Name"
+            value={driverForm.driverName}
+            onChange={(e) => updateDriverField('driverName', e.target.value)}
+            placeholder="Enter driver full name"
+            error={driverFormErrors.driverName}
+          />
+          <CreativeInput
+            label="Driver Phone"
+            value={driverForm.driverPhone}
+            onChange={(e) => updateDriverField('driverPhone', e.target.value)}
+            placeholder="Enter 10 digit mobile number"
+            inputMode="numeric"
+            maxLength={10}
+            error={driverFormErrors.driverPhone}
+          />
           <CreativeInput
             label="License Number"
             value={driverForm.driverLicense}
-            onChange={(e) => {
-              const value = e.target.value.toUpperCase();
-              setDriverForm({ ...driverForm, driverLicense: value });
-              setDriverFormErrors({
-                ...driverFormErrors,
-                driverLicense: value && !isValidDrivingLicense(value) ? LICENSE_FORMAT_HINT : '',
-              });
-            }}
-            placeholder="DL-01-1234567890"
+            onChange={(e) => updateDriverField('driverLicense', e.target.value)}
+            placeholder="Enter license number"
             error={driverFormErrors.driverLicense}
           />
-          <CreativeInput label="Salary" type="number" min="0" value={driverForm.salary} onChange={(e) => setDriverForm({ ...driverForm, salary: e.target.value })} placeholder="18000" />
+          <CreativeInput
+            label="Salary"
+            type="number"
+            min="1"
+            value={driverForm.salary}
+            onChange={(e) => updateDriverField('salary', e.target.value)}
+            placeholder="Enter monthly salary"
+            error={driverFormErrors.salary}
+          />
           <CreativeInput
             label="Bus Number"
             value={driverForm.busNumber}
-            onChange={(e) => {
-              const value = e.target.value.toUpperCase();
-              setDriverForm({ ...driverForm, busNumber: value });
-              setDriverFormErrors({
-                ...driverFormErrors,
-                busNumber: value && !isValidBusNumber(value) ? BUS_NUMBER_FORMAT_HINT : '',
-              });
-            }}
-            placeholder="UP 16 AB 1234"
+            onChange={(e) => updateDriverField('busNumber', e.target.value)}
+            placeholder="Enter bus registration number"
             error={driverFormErrors.busNumber}
           />
-          <CreativeInput label="Route Name" value={driverForm.routeName} onChange={(e) => setDriverForm({ ...driverForm, routeName: e.target.value })} placeholder="North Campus Route" />
-          <CreativeSelect label="Vehicle Type" value={driverForm.vehicleType} onChange={(e) => setDriverForm({ ...driverForm, vehicleType: e.target.value })} options={['School Bus', 'Mini Bus', 'Van']} />
-          <CreativeInput label="Seat Capacity" type="number" value={driverForm.seatCapacity} onChange={(e) => setDriverForm({ ...driverForm, seatCapacity: e.target.value })} placeholder="42" />
-          <div className="md:col-span-2">
-            <CreativeTextarea label="Bus Start Point" value={driverForm.pickupPoints} onChange={(e) => setDriverForm({ ...driverForm, pickupPoints: e.target.value })} placeholder="Transport Nagar Depot, Main Campus Gate" />
+          <CreativeInput
+            label="Route Name"
+            value={driverForm.routeName}
+            onChange={(e) => updateDriverField('routeName', e.target.value)}
+            placeholder="Enter route name"
+            error={driverFormErrors.routeName}
+          />
+          <CreativeSelect
+            label="Vehicle Type"
+            value={driverForm.vehicleType}
+            onChange={(e) => updateDriverField('vehicleType', e.target.value)}
+            options={['', 'School Bus', 'Mini Bus', 'Van']}
+            error={driverFormErrors.vehicleType}
+          />
+          <CreativeInput
+            label="Seat Capacity"
+            type="number"
+            min="1"
+            value={driverForm.seatCapacity}
+            onChange={(e) => updateDriverField('seatCapacity', e.target.value)}
+            placeholder="Enter total seat capacity"
+            error={driverFormErrors.seatCapacity}
+          />
+          <div className="md:col-span-2 lg:col-span-3">
+            <CreativeTextarea
+              label="Bus Start Point"
+              value={driverForm.pickupPoints}
+              onChange={(e) => updateDriverField('pickupPoints', e.target.value)}
+              placeholder="Enter bus start point"
+              error={driverFormErrors.pickupPoints}
+            />
           </div>
-          <div className="md:col-span-2">
+          <div className="md:col-span-2 lg:col-span-3">
             <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Driver...' : 'Save Driver Record'} disabled={isSaving} />
           </div>
         </form>
@@ -560,183 +661,332 @@ const DriverSection = ({ driverForm, setDriverForm, driverFormErrors, setDriverF
 
       <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <FormTitle title="Saved Drivers" description="Each card includes the linked bus and route details." />
+          <FormTitle title="Saved Drivers" description="Saved driver records are shown below the form in table format." />
           <SearchInput value={searchValue} onChange={onSearch} placeholder="Search driver, salary, bus, route, phone..." />
         </div>
 
         {filteredDrivers.length > 0 ? (
-          <div className="mt-8 grid gap-5">
-            {filteredDrivers.map((driver) => (
-              <article key={driver.id} className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-700">
-                        <Users size={20} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black tracking-tight text-slate-950">{driver.driverName}</h3>
-                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-700">{driver.routeName || 'Route pending'}</p>
-                      </div>
-                    </div>
-                    <InfoPill icon={Bus} text={driver.busNumber || 'Bus number not added'} />
-                    <InfoPill icon={Phone} text={driver.driverPhone || 'Phone not added'} />
-                    <InfoPill icon={IdCard} text={driver.driverLicense || 'License not added'} />
-                    <InfoPill icon={Route} text={driver.salary ? `Salary INR ${driver.salary}` : 'Salary not added'} />
-                    <InfoPill icon={MapPin} text={driver.pickupPoints || 'Bus start point not added'} />
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
-                      {driver.vehicleType || 'Vehicle'} {driver.seatCapacity ? `| ${driver.seatCapacity} seats` : ''}
-                    </span>
-                    <button
-                      onClick={() => onDelete(driver.id)}
-                      className="inline-flex h-11 w-11 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
+          <div className="mt-8 overflow-x-auto rounded-[1.6rem] border border-slate-200">
+            <table className="min-w-[980px] w-full divide-y divide-slate-200 text-left">
+              <thead className="bg-slate-50">
+                <tr>
+                  {['Driver', 'Mobile', 'License', 'Bus Number', 'Route', 'Vehicle', 'Salary', 'Start Point', 'Action'].map((heading) => (
+                    <th key={heading} className="px-4 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {filteredDrivers.map((driver) => (
+                  <tr key={driver.id} className="align-top transition hover:bg-sky-50/50">
+                    <td className="px-4 py-4 text-sm font-black text-slate-950">{driver.driverName || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold text-slate-700">{driver.driverPhone || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold text-slate-700">{driver.driverLicense || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-black uppercase text-sky-700">{driver.busNumber || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold text-slate-700">{driver.routeName || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold text-slate-700">
+                      {driver.vehicleType || '-'}{driver.seatCapacity ? `, ${driver.seatCapacity} Seats` : ''}
+                    </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-slate-700">{driver.salary ? `INR ${driver.salary}` : '-'}</td>
+                    <td className="max-w-[220px] px-4 py-4 text-sm font-semibold leading-6 text-slate-700">{driver.pickupPoints || '-'}</td>
+                    <td className="px-4 py-4">
+                      <button
+                        type="button"
+                        onClick={() => onDelete(driver.id)}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                        aria-label={`Delete ${driver.driverName || 'driver'}`}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <EmptyState icon={Users} title="No driver records yet" description="Add the first driver with bus and route details to start transport mapping." />
         )}
       </section>
     </div>
-  </div>
-);
+  );
+};
 
 const StudentSection = ({
   studentForm,
   setStudentForm,
-  students,
   classOptions,
   sectionOptions,
   filteredStudentOptions,
-  selectedStudent,
   drivers,
-  selectedDriver,
+  transportStudents,
   filteredTransportStudents,
+  selectedDriverId,
+  setSelectedDriverId,
+  isStudentFormOpen,
+  setIsStudentFormOpen,
   onSearch,
   searchValue,
   onSave,
   isSaving,
   onDelete,
-  onBack,
-}) => (
-  <div className="space-y-8">
-    <SectionHeader
-      eyebrow="Student Section"
-      title="Students under drivers"
-      description="Assign students to a saved driver and automatically show the related bus number and route name."
-      onBack={onBack}
-    />
+}) => {
+  const selectedDriver = drivers.find((driver) => String(driver.id) === String(selectedDriverId)) || null;
+  const selectedDriverAssignments = transportStudents.filter((record) => String(record.assignedDriverId || '') === String(selectedDriverId));
+  const visibleDriverAssignments = filteredTransportStudents.filter((record) => String(record.assignedDriverId || '') === String(selectedDriverId));
 
-    <div className="grid gap-8 xl:grid-cols-[0.95fr_1.05fr]">
-      <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-        <FormTitle title="Add Student Transport" description="Pick a student, choose a driver, and save the assignment." />
-        <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={onSave}>
+  const openDriverStudents = (driverId) => {
+    setSelectedDriverId(String(driverId));
+    setIsStudentFormOpen(false);
+    onSearch('');
+    setStudentForm({ ...studentForm, assignedDriverId: String(driverId), className: '', section: '', studentId: '', pickupStop: '' });
+  };
+
+  const openStudentForm = () => {
+    setIsStudentFormOpen(true);
+    setStudentForm({ ...studentForm, assignedDriverId: selectedDriverId, className: '', section: '', studentId: '', pickupStop: '' });
+  };
+
+  const handleSelectedDriverSave = async (event) => {
+    await onSave(event);
+    setIsStudentFormOpen(false);
+  };
+
+  if (!selectedDriver) {
+    return (
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <SectionHeader
+            eyebrow="Student Section"
+            title="Choose a driver"
+            description="Open a driver to see saved students and add new student transport assignments."
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setIsStudentFormOpen(true);
+              setStudentForm({ ...studentForm, assignedDriverId: '', className: '', section: '', studentId: '', pickupStop: '' });
+            }}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-white transition hover:bg-cyan-600"
+          >
+            <Plus size={14} />
+            Add Student
+          </button>
+        </div>
+
+        {isStudentFormOpen ? (
+          <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+            <FormTitle title="Add Student Transport" description="Choose a driver, pick a student, and save the assignment." />
+            <form className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3" onSubmit={handleSelectedDriverSave}>
+              <CreativeSelect
+                label="Assign Driver"
+                value={studentForm.assignedDriverId}
+                onChange={(e) => setStudentForm({ ...studentForm, assignedDriverId: e.target.value })}
+                options={['', ...drivers.map((driver) => String(driver.id))]}
+                renderOptionLabel={(value) => {
+                  if (!value) return drivers.length ? 'Choose driver' : 'No drivers available';
+                  const found = drivers.find((driver) => String(driver.id) === value);
+                  return found ? `${found.driverName} | ${found.busNumber || 'Bus pending'} | ${found.routeName || 'Route pending'}`.toUpperCase() : value;
+                }}
+              />
+              <CreativeSelect
+                label="Class"
+                value={studentForm.className}
+                onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value, section: '', studentId: '' })}
+                options={['', ...classOptions]}
+                renderOptionLabel={(value) => value || 'Choose class first'}
+              />
+              <CreativeSelect
+                label="Section"
+                value={studentForm.section}
+                onChange={(e) => setStudentForm({ ...studentForm, section: e.target.value, studentId: '' })}
+                options={['', ...sectionOptions]}
+                renderOptionLabel={(value) => value || (studentForm.className ? 'Choose section' : 'Choose class first')}
+                disabled={!studentForm.className}
+              />
+              <CreativeSelect
+                label="Select Student"
+                value={studentForm.studentId}
+                onChange={(e) => setStudentForm({ ...studentForm, studentId: e.target.value })}
+                options={['', ...filteredStudentOptions.map((student) => String(student.id))]}
+                renderOptionLabel={(value) => {
+                  if (!value) return 'Choose saved student';
+                  const found = filteredStudentOptions.find((student) => String(student.id) === value);
+                  return found ? `${found.firstName || ''} ${found.lastName || ''}`.trim().toUpperCase() : value;
+                }}
+                disabled={!studentForm.className || !studentForm.section}
+              />
+              <CreativeInput
+                label="Pickup Stop"
+                value={studentForm.pickupStop}
+                onChange={(e) => setStudentForm({ ...studentForm, pickupStop: e.target.value.toUpperCase() })}
+                placeholder="Enter pickup stop"
+              />
+              <div className="md:col-span-2 lg:col-span-3">
+                <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId || !studentForm.assignedDriverId} />
+              </div>
+            </form>
+          </section>
+        ) : null}
+
+        {drivers.length > 0 ? (
+          <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {drivers.map((driver) => {
+              const studentCount = transportStudents.filter((record) => String(record.assignedDriverId || '') === String(driver.id)).length;
+              return (
+                <button
+                  key={driver.id}
+                  type="button"
+                  onClick={() => openDriverStudents(driver.id)}
+                  className="rounded-4xl border border-slate-200/80 bg-white p-6 text-left shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] transition hover:-translate-y-1 hover:border-cyan-200 hover:shadow-[0_24px_60px_-30px_rgba(6,182,212,0.28)]"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-100 text-cyan-700">
+                      <Users size={20} />
+                    </div>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                      {studentCount} Students
+                    </span>
+                  </div>
+                  <h3 className="mt-5 text-xl font-black uppercase tracking-tight text-slate-950">{driver.driverName || 'Driver'}</h3>
+                  <p className="mt-2 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">{driver.busNumber || 'Bus pending'}</p>
+                  <p className="mt-3 text-sm font-semibold uppercase leading-6 text-slate-500">{driver.routeName || 'Route pending'}</p>
+                </button>
+              );
+            })}
+          </section>
+        ) : (
+          <EmptyState icon={Bus} title="No drivers available" description="Add a driver first, then student transport assignments can be created under that driver." />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <SectionHeader
+          eyebrow="Student Section"
+          title={selectedDriver.driverName || 'Driver Students'}
+          description={`${selectedDriver.busNumber || 'Bus pending'} | ${selectedDriver.routeName || 'Route pending'}`}
+        />
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedDriverId('');
+              setIsStudentFormOpen(false);
+              onSearch('');
+            }}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"
+          >
+            <ArrowLeft size={14} />
+            All Drivers
+          </button>
+          <button
+            type="button"
+            onClick={openStudentForm}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-white transition hover:bg-cyan-600"
+          >
+            <Plus size={14} />
+            Add Student
+          </button>
+        </div>
+      </div>
+
+      {isStudentFormOpen ? (
+        <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
+          <FormTitle title="Add Student Transport" description="Pick a student and save the assignment under this driver." />
+          <form className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3" onSubmit={handleSelectedDriverSave}>
             <CreativeSelect
               label="Class"
               value={studentForm.className}
-              onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value, section: '', studentId: '' })}
+              onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value, section: '', studentId: '', assignedDriverId: selectedDriverId })}
               options={['', ...classOptions]}
               renderOptionLabel={(value) => value || 'Choose class first'}
             />
             <CreativeSelect
               label="Section"
               value={studentForm.section}
-              onChange={(e) => setStudentForm({ ...studentForm, section: e.target.value, studentId: '' })}
+              onChange={(e) => setStudentForm({ ...studentForm, section: e.target.value, studentId: '', assignedDriverId: selectedDriverId })}
               options={['', ...sectionOptions]}
               renderOptionLabel={(value) => value || (studentForm.className ? 'Choose section' : 'Choose class first')}
               disabled={!studentForm.className}
             />
-          <CreativeSelect
+            <CreativeSelect
               label="Select Student"
               value={studentForm.studentId}
-              onChange={(e) => setStudentForm({ ...studentForm, studentId: e.target.value })}
-            options={['', ...filteredStudentOptions.map((student) => String(student.id))]}
-            renderOptionLabel={(value) => {
-              if (!value) return 'Choose saved student';
-              const found = filteredStudentOptions.find((student) => String(student.id) === value);
-              return found ? `${found.firstName || ''} ${found.lastName || ''}`.trim() : value;
-            }}
-            disabled={!studentForm.className || !studentForm.section}
-          />
-          <ReadOnlyTransportField label="Student Name" value={selectedStudent ? `${selectedStudent.firstName || ''} ${selectedStudent.lastName || ''}`.trim() : 'Will appear after student selection'} />
-          <ReadOnlyTransportField label="Class And Section" value={selectedStudent?.assignedClass || 'Will appear after student selection'} />
-          <CreativeInput label="Pickup Stop" value={studentForm.pickupStop} onChange={(e) => setStudentForm({ ...studentForm, pickupStop: e.target.value })} placeholder="Main Chowk" />
-          <div className="md:col-span-2">
-            <CreativeSelect
-              label="Assign Driver"
-              value={studentForm.assignedDriverId}
-              onChange={(e) => setStudentForm({ ...studentForm, assignedDriverId: e.target.value })}
-              options={['', ...drivers.map((driver) => String(driver.id))]}
+              onChange={(e) => setStudentForm({ ...studentForm, studentId: e.target.value, assignedDriverId: selectedDriverId })}
+              options={['', ...filteredStudentOptions.map((student) => String(student.id))]}
               renderOptionLabel={(value) => {
-                if (!value) return drivers.length ? 'Choose driver' : 'No drivers available';
-                const found = drivers.find((driver) => String(driver.id) === value);
-                return found ? `${found.driverName} | ${found.busNumber || 'Bus pending'} | ${found.routeName || 'Route pending'}` : value;
+                if (!value) return 'Choose saved student';
+                const found = filteredStudentOptions.find((student) => String(student.id) === value);
+                return found ? `${found.firstName || ''} ${found.lastName || ''}`.trim().toUpperCase() : value;
               }}
+              disabled={!studentForm.className || !studentForm.section}
             />
-          </div>
-          <ReadOnlyTransportField label="Driver Name" value={selectedDriver?.driverName || 'Will appear after driver selection'} />
-          <ReadOnlyTransportField label="Bus Number" value={selectedDriver?.busNumber || 'Will appear after driver selection'} />
-          <div className="md:col-span-2">
-            <ReadOnlyTransportField label="Route Name" value={selectedDriver?.routeName || 'Will appear after driver selection'} />
-          </div>
-          <div className="md:col-span-2">
-            <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId} />
-          </div>
-        </form>
-      </section>
+            <CreativeInput
+              label="Pickup Stop"
+              value={studentForm.pickupStop}
+              onChange={(e) => setStudentForm({ ...studentForm, pickupStop: e.target.value.toUpperCase(), assignedDriverId: selectedDriverId })}
+              placeholder="Enter pickup stop"
+            />
+            <div className="md:col-span-2 lg:col-span-3">
+              <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId} />
+            </div>
+          </form>
+        </section>
+      ) : null}
 
       <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <FormTitle title="Saved Student Assignments" description="Each row shows the linked driver, bus, and route." />
-          <SearchInput value={searchValue} onChange={onSearch} placeholder="Search student, class, driver, bus..." />
+          <FormTitle title="Saved Students" description={`${selectedDriverAssignments.length} students saved under this driver.`} />
+          <SearchInput value={searchValue} onChange={onSearch} placeholder="Search student, class, pickup stop..." />
         </div>
 
-        {filteredTransportStudents.length > 0 ? (
-          <div className="mt-8 grid gap-5">
-            {filteredTransportStudents.map((record) => (
-              <article key={record.id} className="rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-100 text-cyan-700">
-                        <UserPlus size={20} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black tracking-tight text-slate-950">{record.studentName || 'Unnamed student'}</h3>
-                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">{record.className || 'Class pending'}</p>
-                      </div>
-                    </div>
-                    <InfoPill icon={Users} text={record.driverName || 'Driver not assigned'} />
-                    <InfoPill icon={Bus} text={record.busNumber || 'Bus number not assigned'} />
-                    <InfoPill icon={Route} text={record.routeName || 'Route name not assigned'} />
-                    <InfoPill icon={MapPin} text={record.pickupStop || 'Pickup stop not added'} />
-                  </div>
-
-                  <button
-                    onClick={() => onDelete(record.id)}
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              </article>
-            ))}
+        {visibleDriverAssignments.length > 0 ? (
+          <div className="mt-8 overflow-x-auto rounded-[1.6rem] border border-slate-200">
+            <table className="min-w-[760px] w-full divide-y divide-slate-200 text-left">
+              <thead className="bg-slate-50">
+                <tr>
+                  {['Student Name', 'Class / Section', 'Pickup Stop', 'Bus Number', 'Route', 'Action'].map((heading) => (
+                    <th key={heading} className="px-4 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {visibleDriverAssignments.map((record) => (
+                  <tr key={record.id} className="align-top transition hover:bg-cyan-50/50">
+                    <td className="px-4 py-4 text-sm font-black uppercase text-slate-950">{record.studentName || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold uppercase text-slate-700">{record.className || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold uppercase text-slate-700">{record.pickupStop || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-black uppercase text-cyan-700">{record.busNumber || '-'}</td>
+                    <td className="px-4 py-4 text-sm font-semibold uppercase text-slate-700">{record.routeName || '-'}</td>
+                    <td className="px-4 py-4">
+                      <button
+                        type="button"
+                        onClick={() => onDelete(record.id)}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                        aria-label={`Delete ${record.studentName || 'student assignment'}`}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
-          <EmptyState icon={Bus} title="No student transport assignments yet" description="Save a driver first, then attach students under that driver with the bus and route details." />
+          <EmptyState icon={Bus} title="No students under this driver" description="Use Add Student to attach a saved student to this driver's transport route." />
         )}
       </section>
     </div>
-  </div>
-);
+  );
+};
 
 const AttendanceSection = ({
   drivers,
@@ -752,14 +1002,12 @@ const AttendanceSection = ({
   recordSearch,
   setRecordSearch,
   monthlyAttendanceRegister,
-  onBack,
 }) => (
   <div className="space-y-8">
     <SectionHeader
       eyebrow="Attendance Section"
       title="Driver attendance card"
       description="Choose a driver, open the route students, and mark whether each student came to school through transport or not."
-      onBack={onBack}
     />
 
     <div className="space-y-8">
@@ -970,20 +1218,13 @@ const MetricCard = ({ label, value, icon: Icon }) => (
   </div>
 );
 
-const SectionHeader = ({ eyebrow, title, description, onBack }) => (
-  <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+const SectionHeader = ({ eyebrow, title, description }) => (
+  <div>
     <div>
       <p className="text-[11px] font-black uppercase tracking-[0.3em] text-sky-600">{eyebrow}</p>
       <h2 className="mt-3 font-serif text-4xl font-black italic leading-none tracking-tight text-slate-950">{title}</h2>
       <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-500">{description}</p>
     </div>
-    <button
-      onClick={onBack}
-      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-slate-600 transition hover:border-sky-300 hover:text-sky-700"
-    >
-      <ArrowLeft size={14} />
-      Back to Cards
-    </button>
   </div>
 );
 
@@ -1023,11 +1264,15 @@ const CreativeInput = ({ label, error = '', ...props }) => (
   </div>
 );
 
-const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
+const CreativeSelect = ({ label, options, renderOptionLabel, error = '', ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-4 focus:ring-sky-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white focus:ring-4 ${
+        error
+          ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100'
+          : 'border-slate-200 focus:border-sky-500 focus:ring-sky-100'
+      }`}
       {...props}
     >
       {options.map((option) => (
@@ -1036,16 +1281,26 @@ const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
         </option>
       ))}
     </select>
+    {error ? (
+      <p className="text-xs font-semibold text-rose-600">{error}</p>
+    ) : null}
   </div>
 );
 
-const CreativeTextarea = ({ label, ...props }) => (
+const CreativeTextarea = ({ label, error = '', ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <textarea
-      className="min-h-32 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:ring-4 focus:ring-sky-100"
+      className={`min-h-32 w-full rounded-2xl border-2 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 ${
+        error
+          ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100'
+          : 'border-slate-200 focus:border-sky-500 focus:ring-sky-100'
+      }`}
       {...props}
     />
+    {error ? (
+      <p className="text-xs font-semibold text-rose-600">{error}</p>
+    ) : null}
   </div>
 );
 
@@ -1076,13 +1331,6 @@ const EmptyState = ({ icon: Icon, title, description }) => (
     </div>
     <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h4>
     <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">{description}</p>
-  </div>
-);
-
-const ReadOnlyTransportField = ({ label, value }) => (
-  <div className="rounded-[1.6rem] border border-slate-200 bg-slate-50 p-4">
-    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
-    <p className="mt-2 text-sm font-semibold text-slate-900">{value}</p>
   </div>
 );
 
