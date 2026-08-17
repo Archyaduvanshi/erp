@@ -3,10 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   BookPlus,
   BookmarkCheck,
-  IndianRupee,
   Library,
   Search,
   Trash2,
@@ -41,6 +39,7 @@ const LibraryManagement = () => {
   const [issues, setIssues] = useState([]);
   const [students, setStudents] = useState([]);
   const [bookForm, setBookForm] = useState(initialBookForm);
+  const [bookErrors, setBookErrors] = useState({});
   const [issueForm, setIssueForm] = useState(initialIssueForm);
   const [bookSearch, setBookSearch] = useState('');
   const [issueSearch, setIssueSearch] = useState('');
@@ -199,13 +198,14 @@ const LibraryManagement = () => {
     enhancedIssues.find((issue) => String(issue.id) === String(returnIssueId)) || null
   ), [enhancedIssues, returnIssueId]);
 
-  const totalTitles = books.length;
-  const totalStock = books.reduce((sum, book) => sum + (Number(book.availableQuantity) || 0), 0);
-  const activeLoans = issues.filter((issue) => !issue.returnDate).length;
-  const pendingFines = enhancedIssues.reduce((sum, issue) => sum + (issue.status !== 'Returned' ? issue.computedFine : 0), 0);
-
   const handleSaveBook = async (e) => {
     e.preventDefault();
+
+    const validationErrors = validateBookForm(bookForm);
+    if (Object.keys(validationErrors).length > 0) {
+      setBookErrors(validationErrors);
+      return;
+    }
 
     const payload = {
       isbn: bookForm.isbn.trim(),
@@ -218,16 +218,28 @@ const LibraryManagement = () => {
       availableQuantity: Math.max(Number(bookForm.availableQuantity) || 0, 0),
     };
 
-    if (!payload.isbn || !payload.title || !payload.author || !payload.rack || !payload.shelf) return;
-
     try {
       await libraryApi.saveBook(payload);
       setBookForm(initialBookForm);
+      setBookErrors({});
       await refreshData();
       setLoadError('');
     } catch (error) {
+      if (error.fieldErrors && Object.keys(error.fieldErrors).length > 0) {
+        setBookErrors(mapBookFieldErrors(error.fieldErrors));
+      }
       setLoadError(error.message || 'Unable to save the book.');
     }
+  };
+
+  const updateBookField = (field, value) => {
+    const nextValue = field === 'availableQuantity' || field === 'format' ? value : toUpperInput(value);
+    setBookForm((current) => ({ ...current, [field]: nextValue }));
+    setBookErrors((current) => {
+      if (!current[field]) return current;
+      const { [field]: removed, ...rest } = current;
+      return rest;
+    });
   };
 
   const handleSaveIssue = async (e) => {
@@ -305,6 +317,14 @@ const LibraryManagement = () => {
     }
   };
 
+  const handleBack = () => {
+    if (activeDesk) {
+      setActiveDesk(null);
+      return;
+    }
+    navigate('/college');
+  };
+
   if (!isCollegeModuleSession(session) || !collegeId) return null;
 
   return (
@@ -313,7 +333,7 @@ const LibraryManagement = () => {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/college')}
+              onClick={handleBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft size={14} />
@@ -333,27 +353,6 @@ const LibraryManagement = () => {
             {loadError}
           </div>
         ) : null}
-        <section className="overflow-hidden rounded-4xl bg-[linear-gradient(145deg,#064e3b_0%,#065f46_45%,#0f172a_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(6,78,59,0.8)] lg:px-10 lg:py-10">
-          <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-emerald-200">Library Operations</p>
-              <h2 className="mt-4 max-w-3xl font-serif text-4xl font-black italic leading-none tracking-tight">
-                Manage inventory, lend books with control, and keep late returns visible.
-              </h2>
-              <p className="mt-5 max-w-2xl text-sm leading-7 text-emerald-50/80">
-                Maintain the master catalog with ISBN and shelf placement, then track who borrowed each title, when it is due, and what fine is building up.
-              </p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Catalog Titles" value={totalTitles} icon={Library} />
-              <MetricCard label="Available Copies" value={totalStock} icon={BookOpen} />
-              <MetricCard label="Active Loans" value={activeLoans} icon={BookmarkCheck} />
-              <MetricCard label="Running Fines" value={`Rs ${pendingFines}`} icon={IndianRupee} />
-            </div>
-          </div>
-        </section>
-
         {!activeDesk ? (
           <section className="mt-8 grid gap-5 md:grid-cols-2">
             <LibraryActionCard
@@ -370,7 +369,7 @@ const LibraryManagement = () => {
             />
           </section>
         ) : (
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-8">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">
                 {activeDesk === 'books' ? 'Add Book Page' : 'Issue Return Fine Page'}
@@ -379,14 +378,6 @@ const LibraryManagement = () => {
                 {activeDesk === 'books' ? 'Book Catalog Entry' : 'Circulation And Fine Desk'}
               </h2>
             </div>
-            <button
-              type="button"
-              onClick={() => setActiveDesk(null)}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
-            >
-              <ArrowLeft size={15} />
-              Back To Cards
-            </button>
           </div>
         )}
 
@@ -402,46 +393,53 @@ const LibraryManagement = () => {
                 <CreativeInput
                   label="ISBN"
                   value={bookForm.isbn}
-                  onChange={(e) => setBookForm({ ...bookForm, isbn: e.target.value })}
-                  placeholder="978-93-XXXXXX"
+                  onChange={(e) => updateBookField('isbn', e.target.value)}
+                  placeholder="Enter ISBN or accession code"
+                  error={bookErrors.isbn}
                 />
                 <CreativeInput
                   label="Book Title"
                   value={bookForm.title}
-                  onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })}
-                  placeholder="Database System Concepts"
+                  onChange={(e) => updateBookField('title', e.target.value)}
+                  placeholder="Enter book title"
+                  error={bookErrors.title}
                 />
                 <CreativeInput
                   label="Author"
                   value={bookForm.author}
-                  onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })}
-                  placeholder="Abraham Silberschatz"
+                  onChange={(e) => updateBookField('author', e.target.value)}
+                  placeholder="Enter author name"
+                  error={bookErrors.author}
                 />
                 <CreativeSelect
                   label="Asset Format"
                   value={bookForm.format}
-                  onChange={(e) => setBookForm({ ...bookForm, format: e.target.value })}
+                  onChange={(e) => updateBookField('format', e.target.value)}
                   options={['Physical', 'Digital']}
+                  error={bookErrors.format}
                 />
                 <CreativeInput
                   label="Rack"
                   value={bookForm.rack}
-                  onChange={(e) => setBookForm({ ...bookForm, rack: e.target.value })}
-                  placeholder="Rack B2"
+                  onChange={(e) => updateBookField('rack', e.target.value)}
+                  placeholder="Enter rack name or number"
+                  error={bookErrors.rack}
                 />
                 <CreativeInput
                   label="Shelf"
                   value={bookForm.shelf}
-                  onChange={(e) => setBookForm({ ...bookForm, shelf: e.target.value })}
-                  placeholder="Shelf 4"
+                  onChange={(e) => updateBookField('shelf', e.target.value)}
+                  placeholder="Enter shelf name or number"
+                  error={bookErrors.shelf}
                 />
                 <CreativeInput
                   label="Available Quantity"
                   type="number"
-                  min="0"
+                  min="1"
                   value={bookForm.availableQuantity}
-                  onChange={(e) => setBookForm({ ...bookForm, availableQuantity: e.target.value })}
-                  placeholder="4"
+                  onChange={(e) => updateBookField('availableQuantity', e.target.value)}
+                  placeholder="Enter available quantity"
+                  error={bookErrors.availableQuantity}
                 />
                 <div className="md:col-span-2">
                   <PrimaryButton type="submit" icon={BookPlus} label="Save Book To Catalog" />
@@ -802,20 +800,6 @@ const LibraryActionCard = ({ icon: Icon, title, description, onClick }) => (
   </button>
 );
 
-const MetricCard = ({ label, value, icon: Icon }) => (
-  <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-50/80">{label}</p>
-        <p className="mt-3 text-4xl font-black tracking-tight text-white">{value}</p>
-      </div>
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200/20 bg-emerald-200/10 text-emerald-50">
-        <Icon size={20} />
-      </div>
-    </div>
-  </div>
-);
-
 const FormTitle = ({ title, description }) => (
   <div>
     <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
@@ -835,21 +819,30 @@ const SearchInput = ({ value, onChange, placeholder }) => (
   </div>
 );
 
-const CreativeInput = ({ label, ...props }) => (
+const CreativeInput = ({ label, error, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <input
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white ${
+        error
+          ? 'border-rose-300 focus:border-rose-500 focus:ring-4 focus:ring-rose-100'
+          : 'border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100'
+      }`}
       {...props}
     />
+    {error ? <p className="text-xs font-bold text-rose-600">{error}</p> : null}
   </div>
 );
 
-const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
+const CreativeSelect = ({ label, options, renderOptionLabel, error, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white ${
+        error
+          ? 'border-rose-300 focus:border-rose-500 focus:ring-4 focus:ring-rose-100'
+          : 'border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100'
+      }`}
       {...props}
     >
       {options.map((option) => (
@@ -858,6 +851,7 @@ const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
         </option>
       ))}
     </select>
+    {error ? <p className="text-xs font-bold text-rose-600">{error}</p> : null}
   </div>
 );
 
@@ -889,6 +883,65 @@ const ReadOnlyLibraryField = ({ label, value }) => (
 );
 
 export default LibraryManagement;
+
+function validateBookForm(form) {
+  const errors = {};
+  const isbn = String(form.isbn || '').trim();
+  const title = String(form.title || '').trim();
+  const author = String(form.author || '').trim();
+  const rack = String(form.rack || '').trim();
+  const shelf = String(form.shelf || '').trim();
+  const availableQuantity = Number(form.availableQuantity);
+
+  if (!isbn) {
+    errors.isbn = 'ISBN or accession code is required.';
+  } else if (!/^[A-Z0-9-]{3,24}$/.test(isbn)) {
+    errors.isbn = 'Use 3-24 uppercase letters, numbers, or hyphens only.';
+  }
+
+  if (!title) {
+    errors.title = 'Book title is required.';
+  } else if (title.length < 2) {
+    errors.title = 'Book title must contain at least 2 characters.';
+  }
+
+  if (!author) {
+    errors.author = 'Author name is required.';
+  } else if (!/^[A-Z .'-]{2,80}$/.test(author)) {
+    errors.author = 'Author name can contain letters, spaces, dots, hyphens, or apostrophes.';
+  }
+
+  if (!form.format) {
+    errors.format = 'Select asset format.';
+  }
+
+  if (!rack) {
+    errors.rack = 'Rack name or number is required.';
+  }
+
+  if (!shelf) {
+    errors.shelf = 'Shelf name or number is required.';
+  }
+
+  if (!Number.isInteger(availableQuantity) || availableQuantity < 1) {
+    errors.availableQuantity = 'Available quantity must be at least 1.';
+  }
+
+  return errors;
+}
+
+function mapBookFieldErrors(fieldErrors = {}) {
+  const errors = { ...fieldErrors };
+  if (errors.shelfLocation && !errors.rack && !errors.shelf) {
+    errors.rack = errors.shelfLocation;
+    errors.shelf = errors.shelfLocation;
+  }
+  return errors;
+}
+
+function toUpperInput(value) {
+  return String(value || '').toUpperCase();
+}
 
 function formatShelfLocation(rack, shelf) {
   const rackText = String(rack || '').trim();

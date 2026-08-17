@@ -35,6 +35,7 @@ const Login = () => {
   const [fieldErrors, setFieldErrors] = useState({});
   const [loginRole, setLoginRole] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
     password: ''
@@ -53,6 +54,7 @@ const Login = () => {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (isLoggingIn) return;
     setError('');
     setFieldErrors({});
 
@@ -61,6 +63,8 @@ const Login = () => {
       setFieldErrors({ role: 'Please select a role.' });
       return;
     }
+
+    setIsLoggingIn(true);
 
     if (loginRole === 'admin') {
       try {
@@ -80,6 +84,7 @@ const Login = () => {
         navigate('/college');
         return;
       } catch (apiError) {
+        setIsLoggingIn(false);
         setError(apiError.message);
         setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
           ? apiError.fieldErrors
@@ -113,6 +118,7 @@ const Login = () => {
         navigate(featureRole.route);
         return;
       } catch (apiError) {
+        setIsLoggingIn(false);
         setError(apiError.message);
         setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
           ? apiError.fieldErrors
@@ -142,6 +148,7 @@ const Login = () => {
         navigate('/teacher');
         return;
       } catch (apiError) {
+        setIsLoggingIn(false);
         setError(apiError.message);
         setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
           ? apiError.fieldErrors
@@ -171,6 +178,7 @@ const Login = () => {
       navigate('/student');
       return;
     } catch (apiError) {
+      setIsLoggingIn(false);
       setError(apiError.message);
       setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
         ? apiError.fieldErrors
@@ -290,15 +298,19 @@ const Login = () => {
               </div>
             </div>
 
-            <button className="w-full bg-slate-950 text-white py-6 rounded-3xl font-black uppercase tracking-widest text-sm hover:bg-blue-600 hover:-translate-y-1 transition-all shadow-2xl shadow-blue-100 active:scale-95 flex items-center justify-center gap-3 group">
-              {loginRole === 'admin'
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full bg-slate-950 text-white py-6 rounded-3xl font-black uppercase tracking-widest text-sm hover:bg-blue-600 hover:-translate-y-1 transition-all shadow-2xl shadow-blue-100 active:scale-95 flex items-center justify-center gap-3 group disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0 disabled:hover:bg-slate-950"
+            >
+              {isLoggingIn ? 'Logging in...' : loginRole === 'admin'
                 ? 'Enter Dashboard'
                 : loginRole === 'teacher'
                   ? 'Enter Teacher Portal'
                   : loginRole === 'student'
                     ? 'Enter Student Portal'
                     : `Enter ${resolveRoleLabel(loginRole)}`}
-              <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+              <ArrowRight size={18} className={`transition-transform ${isLoggingIn ? '' : 'group-hover:translate-x-1'}`} />
             </button>
           </form>
 

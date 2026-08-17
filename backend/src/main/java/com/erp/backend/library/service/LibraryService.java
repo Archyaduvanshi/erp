@@ -169,12 +169,12 @@ public class LibraryService {
     }
 
     private void applyBookPayload(LibraryBook book, LibraryBookPayload request) {
-        book.setIsbn(request.isbn().trim());
-        book.setTitle(request.title().trim());
-        book.setAuthor(request.author().trim());
+        book.setIsbn(request.isbn().trim().toUpperCase());
+        book.setTitle(request.title().trim().toUpperCase());
+        book.setAuthor(request.author().trim().toUpperCase());
         book.setFormat(request.format().trim());
-        book.setShelfLocation(request.shelfLocation().trim());
-        book.setAvailableQuantity(Math.max(request.availableQuantity(), 0));
+        book.setShelfLocation(request.shelfLocation().trim().toUpperCase());
+        book.setAvailableQuantity(Math.max(request.availableQuantity(), 1));
     }
 
     private LibraryBookResponse toBookResponse(LibraryBook book) {

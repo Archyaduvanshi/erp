@@ -87,10 +87,10 @@ public class HostelService {
         Institute institute = validateInstitute(instituteId);
         Hostel hostel = new Hostel();
         hostel.setInstitute(institute);
-        hostel.setHostelName(request.hostelName().trim());
+        hostel.setHostelName(request.hostelName().trim().toUpperCase(Locale.ROOT));
         hostel.setHostelType(defaultValue(request.hostelType(), "boys"));
         hostel.setTotalFloors(Math.max(request.totalFloors() == null ? 1 : request.totalFloors(), 1));
-        hostel.setWardenName(trim(request.wardenName()));
+        hostel.setWardenName(trimUpper(request.wardenName()));
         hostel.setContactNumber(trim(request.contactNumber()));
         hostel.setStatus(defaultValue(request.status(), "active").toLowerCase(Locale.ROOT));
         Hostel savedHostel = hostelRepository.save(hostel);
@@ -128,6 +128,16 @@ public class HostelService {
         room.setOccupiedBeds(0);
         HostelRoom savedRoom = hostelRoomRepository.save(room);
         return toRoomResponse(savedRoom);
+    }
+
+    @Transactional
+    public List<HostelRoomResponse> saveRooms(Long instituteId, List<HostelRoomPayload> requests) {
+        if (requests == null || requests.isEmpty()) {
+            throw new IllegalArgumentException("At least one room is required.");
+        }
+        return requests.stream()
+                .map(request -> saveRoom(instituteId, request))
+                .toList();
     }
 
     @Transactional
@@ -172,13 +182,13 @@ public class HostelService {
         String resolvedBedNumber = resolveBedNumber(instituteId, room, resident.getId(), request.bedNumber());
 
         resident.setRoom(room);
-        resident.setBedNumber(resolvedBedNumber);
+        resident.setBedNumber(resolvedBedNumber.toUpperCase(Locale.ROOT));
         resident.setCheckInDate(LocalDate.parse(request.checkInDate().trim()));
         resident.setCheckOutDate(null);
         resident.setMonthlyCharge(parseAmount(request.monthlyCharge(), room.getMonthlyCharge()));
         resident.setGuardianContact(trim(request.guardianContact()));
         resident.setEmergencyContact(trim(request.emergencyContact()));
-        resident.setNotes(trim(request.notes()));
+        resident.setNotes(trimUpper(request.notes()));
         resident.setStatus(defaultValue(request.status(), "active").toLowerCase(Locale.ROOT));
 
         HostelResident savedResident = hostelResidentRepository.save(resident);
@@ -206,6 +216,23 @@ public class HostelService {
         studentRepository.save(student);
     }
 
+    @Transactional
+    public HostelResidentResponse vacateResident(Long instituteId, Long residentId) {
+        HostelResident resident = hostelResidentRepository.findByInstituteIdAndId(instituteId, residentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Hostel resident not found with id: " + residentId));
+        HostelRoom room = resident.getRoom();
+        Student student = resident.getStudent();
+
+        resident.setCheckOutDate(LocalDate.now());
+        resident.setStatus("vacated");
+        HostelResident savedResident = hostelResidentRepository.save(resident);
+        refreshRoomOccupancy(room);
+        markStudentHostelStatus(student, false);
+        markStudentHostelRequested(student);
+        studentRepository.save(student);
+        return toResidentResponse(savedResident);
+    }
+
     private Institute validateInstitute(Long instituteId) {
         return instituteRepository.findById(instituteId)
                 .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + instituteId));
@@ -228,13 +255,13 @@ public class HostelService {
 
     private void applyRoomPayload(HostelRoom room, HostelRoomPayload request, Hostel hostel) {
         room.setHostel(hostel);
-        room.setRoomNumber(request.roomNumber().trim());
-        room.setFloorLabel(trim(request.floorLabel()));
+        room.setRoomNumber(request.roomNumber().trim().toUpperCase(Locale.ROOT));
+        room.setFloorLabel(trimUpper(request.floorLabel()));
         room.setRoomType(defaultValue(request.roomType(), "shared"));
         room.setAcType(defaultValue(request.acType(), "non-ac"));
         room.setCapacity(Math.max(request.capacity() == null ? 1 : request.capacity(), 1));
         room.setMonthlyCharge(parseAmount(request.monthlyCharge(), BigDecimal.ZERO));
-        room.setAmenities(trim(request.amenities()));
+        room.setAmenities(trimUpper(request.amenities()));
         room.setStatus(defaultValue(request.status(), "available").toLowerCase(Locale.ROOT));
     }
 
@@ -330,7 +357,7 @@ public class HostelService {
                 .toList();
 
         if (StringUtils.hasText(requestedBedNumber)) {
-            String normalizedRequestedBed = requestedBedNumber.trim();
+            String normalizedRequestedBed = requestedBedNumber.trim().toUpperCase(Locale.ROOT);
             if (occupiedBeds.contains(normalizedRequestedBed.toLowerCase(Locale.ROOT))) {
                 throw new IllegalArgumentException("Selected bed is already occupied.");
             }
@@ -409,6 +436,10 @@ public class HostelService {
 
     private String trim(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String trimUpper(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase(Locale.ROOT) : null;
     }
 
     private String defaultValue(String value, String fallback) {

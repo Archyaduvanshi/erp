@@ -2,11 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
-  BedDouble,
+  ArrowRight,
   Building2,
-  CalendarDays,
-  ClipboardCheck,
-  DoorOpen,
   Hotel,
   HousePlus,
   Search,
@@ -27,16 +24,13 @@ const initialHostelForm = {
   status: 'active',
 };
 
-const initialRoomForm = {
+const initialBulkRoomForm = {
   hostelId: '',
-  roomNumber: '',
-  floorLabel: '',
+  floorNumber: '',
+  startRoomNumber: '1',
+  endRoomNumber: '10',
   capacity: '2',
-  roomType: 'Standard',
   acType: 'non-ac',
-  status: 'available',
-  amenities: '',
-  monthlyCharge: '0',
 };
 
 const initialResidentForm = {
@@ -54,26 +48,24 @@ const initialResidentForm = {
 
 const HostelManagement = () => {
   const navigate = useNavigate();
-  const [activeSection, setActiveSection] = useState('overview');
-  const [overview, setOverview] = useState({
-    totalHostels: 0,
-    totalRooms: 0,
-    totalBeds: 0,
-    occupiedBeds: 0,
-    vacantBeds: 0,
-    studentsInHostel: 0,
-    pendingRequests: 0,
-  });
+  const [activeSection, setActiveSection] = useState(null);
   const [hostels, setHostels] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [residents, setResidents] = useState([]);
   const [students, setStudents] = useState([]);
   const [hostelForm, setHostelForm] = useState(initialHostelForm);
-  const [roomForm, setRoomForm] = useState(initialRoomForm);
+  const [bulkRoomForm, setBulkRoomForm] = useState(initialBulkRoomForm);
+  const [bulkRoomPreview, setBulkRoomPreview] = useState([]);
   const [residentForm, setResidentForm] = useState(initialResidentForm);
+  const [selectedRoomHostelId, setSelectedRoomHostelId] = useState('');
+  const [selectedRoomFloor, setSelectedRoomFloor] = useState('');
+  const [selectedAllotmentHostelId, setSelectedAllotmentHostelId] = useState('');
+  const [selectedAllotmentFloor, setSelectedAllotmentFloor] = useState('');
+  const [selectedAllotmentRoomId, setSelectedAllotmentRoomId] = useState('');
+  const [showAllotmentForm, setShowAllotmentForm] = useState(false);
   const [hostelSearch, setHostelSearch] = useState('');
-  const [roomSearch, setRoomSearch] = useState('');
   const [residentSearch, setResidentSearch] = useState('');
+  const [formErrors, setFormErrors] = useState({});
   const [loadError, setLoadError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -83,72 +75,60 @@ const HostelManagement = () => {
 
   const refreshData = async () => {
     try {
-      const [overviewResponse, hostelsResponse, roomsResponse, residentsResponse, studentsResponse] = await Promise.all([
-        hostelApi.getOverview(),
+      const [hostelsResponse, roomsResponse, residentsResponse, studentsResponse] = await Promise.all([
         hostelApi.getHostels(),
         hostelApi.getRooms(),
         hostelApi.getResidents(),
         studentApi.getAll(),
       ]);
 
-      setOverview(overviewResponse);
-      setHostels(hostelsResponse);
-      setRooms(roomsResponse);
-      setResidents(residentsResponse);
-      setStudents(studentsResponse);
+      setHostels(hostelsResponse || []);
+      setRooms(roomsResponse || []);
+      setResidents(residentsResponse || []);
+      setStudents(studentsResponse || []);
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to load hostel records from the server.');
     }
   };
 
-  const filteredHostels = useMemo(() => {
-    const query = hostelSearch.trim().toLowerCase();
-    return hostels.filter((hostel) => {
-      if (!query) return true;
-      return (
-        String(hostel.hostelName || '').toLowerCase().includes(query) ||
-        String(hostel.hostelType || '').toLowerCase().includes(query) ||
-        String(hostel.wardenName || '').toLowerCase().includes(query)
-      );
-    });
-  }, [hostelSearch, hostels]);
+  const workspaceCards = [
+    { key: 'hostels', icon: Hotel, title: 'Hostel Management', text: 'Create hostel buildings and maintain warden details.' },
+    { key: 'rooms', icon: Building2, title: 'Room Management', text: 'Create rooms, bed capacity, charges, and availability.' },
+    { key: 'allotment', icon: UserPlus, title: 'Student Allotment', text: 'Assign students to rooms with bed and joining details.' },
+  ];
 
-  const filteredRooms = useMemo(() => {
-    const query = roomSearch.trim().toLowerCase();
-    return rooms.filter((room) => {
-      if (!query) return true;
-      return (
-        String(room.hostelName || '').toLowerCase().includes(query) ||
-        String(room.roomNumber || '').toLowerCase().includes(query) ||
-        String(room.floorLabel || '').toLowerCase().includes(query) ||
-        String(room.roomType || '').toLowerCase().includes(query)
-      );
-    });
-  }, [roomSearch, rooms]);
-
-  const filteredResidents = useMemo(() => {
-    const query = residentSearch.trim().toLowerCase();
-    return residents.filter((resident) => {
-      if (!query) return true;
-      return (
-        String(resident.studentName || '').toLowerCase().includes(query) ||
-        String(resident.className || '').toLowerCase().includes(query) ||
-        String(resident.section || '').toLowerCase().includes(query) ||
-        String(resident.hostelName || '').toLowerCase().includes(query) ||
-        String(resident.roomNumber || '').toLowerCase().includes(query)
-      );
-    });
-  }, [residentSearch, residents]);
+  const filteredHostels = useMemo(() => filterRecords(hostels, hostelSearch, ['hostelName', 'hostelType', 'wardenName', 'contactNumber']), [hostelSearch, hostels]);
+  const filteredResidents = useMemo(() => filterRecords(residents, residentSearch, ['studentName', 'className', 'section', 'hostelName', 'roomNumber', 'bedNumber']), [residentSearch, residents]);
+  const selectedRoomHostel = hostels.find((hostel) => String(hostel.id) === String(selectedRoomHostelId)) || null;
+  const selectedHostelFloorOptions = floorOptions(selectedRoomHostelId, hostels);
+  const selectedFloorRooms = useMemo(() => rooms
+    .filter((room) => String(room.hostelId) === String(selectedRoomHostelId))
+    .filter((room) => !selectedRoomFloor || normalizeFloorValue(room.floorLabel) === String(selectedRoomFloor))
+    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })),
+  [rooms, selectedRoomFloor, selectedRoomHostelId]);
+  const selectedAllotmentHostel = hostels.find((hostel) => String(hostel.id) === String(selectedAllotmentHostelId)) || null;
+  const selectedAllotmentFloorOptions = floorOptions(selectedAllotmentHostelId, hostels);
+  const selectedAllotmentFloorRooms = useMemo(() => rooms
+    .filter((room) => String(room.hostelId) === String(selectedAllotmentHostelId))
+    .filter((room) => !selectedAllotmentFloor || normalizeFloorValue(room.floorLabel) === String(selectedAllotmentFloor))
+    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })),
+  [rooms, selectedAllotmentFloor, selectedAllotmentHostelId]);
+  const selectedAllotmentRoom = rooms.find((room) => String(room.id) === String(selectedAllotmentRoomId)) || null;
+  const selectedRoomResidents = useMemo(() => residents
+    .filter((resident) => String(resident.roomId) === String(selectedAllotmentRoomId))
+    .sort((a, b) => String(b.checkInDate || '').localeCompare(String(a.checkInDate || ''))),
+  [residents, selectedAllotmentRoomId]);
+  const activeSelectedRoomResidents = selectedRoomResidents.filter(isActiveResident);
 
   const classOptions = useMemo(() => (
-    [...new Set(students.map((student) => student.className).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    [...new Set(students.map(getStudentClass).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   ), [students]);
 
   const sectionOptions = useMemo(() => (
     [...new Set(
       students
-        .filter((student) => !residentForm.className || student.className === residentForm.className)
+        .filter((student) => !residentForm.className || getStudentClass(student) === residentForm.className)
         .map((student) => student.section)
         .filter(Boolean),
     )].sort((a, b) => a.localeCompare(b))
@@ -156,26 +136,74 @@ const HostelManagement = () => {
 
   const filteredStudentOptions = useMemo(() => students.filter((student) => {
     if (!residentForm.className || !residentForm.section) return false;
-    if (String(student.hostelStatus || '').toLowerCase() === 'active' && String(student.id) !== String(residentForm.studentId)) return false;
-    return student.className === residentForm.className && student.section === residentForm.section;
-  }), [residentForm.className, residentForm.section, residentForm.studentId, students]);
+    if (getStudentClass(student) !== residentForm.className || student.section !== residentForm.section) return false;
+    const alreadyAllotted = residents.some((resident) => isActiveResident(resident) && String(resident.studentId) === String(student.id));
+    return !alreadyAllotted || String(student.id) === String(residentForm.studentId);
+  }), [residentForm.className, residentForm.section, residentForm.studentId, residents, students]);
 
-  const availableRooms = useMemo(() => rooms.filter((room) => {
-    const vacantBeds = Math.max((Number(room.capacity) || 0) - (Number(room.occupiedBeds) || 0), 0);
-    return room.status !== 'maintenance' && vacantBeds > 0;
-  }), [rooms]);
-
-  const selectedRoom = rooms.find((room) => String(room.id) === String(residentForm.roomId)) || null;
   const selectedStudent = students.find((student) => String(student.id) === String(residentForm.studentId)) || null;
 
-  const pendingStudents = useMemo(() => students.filter((student) => {
-    const requested = ['yes', 'true'].includes(String(student.hostelOptIn || '').toLowerCase());
-    const active = String(student.hostelStatus || '').toLowerCase() === 'active';
-    return requested && !active;
-  }), [students]);
+  const handleBack = () => {
+    if (activeSection === 'room-generator') {
+      setActiveSection('rooms');
+      setFormErrors({});
+      return;
+    }
+    if (activeSection === 'allotment' && selectedAllotmentRoomId) {
+      setSelectedAllotmentRoomId('');
+      setShowAllotmentForm(false);
+      setFormErrors({});
+      return;
+    }
+    if (activeSection === 'allotment' && selectedAllotmentFloor) {
+      setSelectedAllotmentFloor('');
+      setFormErrors({});
+      return;
+    }
+    if (activeSection === 'allotment' && selectedAllotmentHostelId) {
+      setSelectedAllotmentHostelId('');
+      setFormErrors({});
+      return;
+    }
+    if (activeSection) {
+      setActiveSection(null);
+      setFormErrors({});
+      return;
+    }
+    navigate('/college');
+  };
+
+  const clearFieldError = (field) => {
+    setFormErrors((current) => {
+      if (!current[field]) return current;
+      const { [field]: removed, ...rest } = current;
+      return rest;
+    });
+  };
+
+  const updateHostelForm = (field, value) => {
+    setHostelForm((current) => ({ ...current, [field]: shouldUppercase(field) ? value.toUpperCase() : value }));
+    clearFieldError(field);
+  };
+
+  const updateBulkRoomForm = (field, value) => {
+    setBulkRoomForm((current) => ({ ...current, [field]: shouldUppercase(field) ? value.toUpperCase() : value }));
+    clearFieldError(field);
+  };
+
+  const updateResidentForm = (patch) => {
+    setResidentForm((current) => ({ ...current, ...patch }));
+    Object.keys(patch).forEach(clearFieldError);
+  };
 
   const handleHostelSave = async (event) => {
     event.preventDefault();
+    const errors = validateHostelForm(hostelForm);
+    if (Object.keys(errors).length) {
+      setFormErrors(errors);
+      return;
+    }
+
     setIsSaving(true);
     try {
       await hostelApi.saveHostel({
@@ -183,29 +211,42 @@ const HostelManagement = () => {
         totalFloors: Math.max(Number(hostelForm.totalFloors) || 1, 1),
       });
       setHostelForm(initialHostelForm);
+      setFormErrors({});
       await refreshData();
     } catch (error) {
+      setFormErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save hostel.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleRoomSave = async (event) => {
+  const handleGenerateRooms = (event) => {
     event.preventDefault();
-    if (!roomForm.hostelId) return;
+    const errors = validateBulkRoomForm(bulkRoomForm);
+    if (Object.keys(errors).length) {
+      setFormErrors(errors);
+      return;
+    }
+    setBulkRoomPreview(generateRoomPreview(bulkRoomForm, hostels));
+    setFormErrors({});
+  };
+
+  const handleSaveGeneratedRooms = async () => {
+    if (!bulkRoomPreview.length) {
+      setFormErrors({ preview: 'Generate room preview before saving.' });
+      return;
+    }
     setIsSaving(true);
     try {
-      await hostelApi.saveRoom({
-        ...roomForm,
-        hostelId: Number(roomForm.hostelId),
-        capacity: Math.max(Number(roomForm.capacity) || 1, 1),
-        monthlyCharge: String(Number(roomForm.monthlyCharge) || 0),
-      });
-      setRoomForm(initialRoomForm);
+      await hostelApi.saveRooms(bulkRoomPreview.map(({ previewId, hostelName, ...room }) => room));
+      setBulkRoomForm(initialBulkRoomForm);
+      setBulkRoomPreview([]);
+      setFormErrors({});
       await refreshData();
     } catch (error) {
-      setLoadError(error.message || 'Unable to save hostel room.');
+      setFormErrors(error.fieldErrors || {});
+      setLoadError(error.message || 'Unable to save generated rooms.');
     } finally {
       setIsSaving(false);
     }
@@ -213,7 +254,12 @@ const HostelManagement = () => {
 
   const handleResidentSave = async (event) => {
     event.preventDefault();
-    if (!residentForm.studentId || !residentForm.roomId) return;
+    const errors = validateResidentForm(residentForm);
+    if (Object.keys(errors).length) {
+      setFormErrors(errors);
+      return;
+    }
+
     setIsSaving(true);
     try {
       await hostelApi.saveResident({
@@ -228,8 +274,11 @@ const HostelManagement = () => {
         status: 'active',
       });
       setResidentForm(initialResidentForm);
+      setShowAllotmentForm(false);
+      setFormErrors({});
       await refreshData();
     } catch (error) {
+      setFormErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save hostel allotment.');
     } finally {
       setIsSaving(false);
@@ -257,338 +306,541 @@ const HostelManagement = () => {
   };
 
   const handleDeleteResident = async (residentId) => {
-    if (!window.confirm('Remove this student from hostel?')) return;
+    if (!window.confirm('Vacate this student from hostel room?')) return;
     try {
-      await hostelApi.deleteResident(residentId);
+      await hostelApi.vacateResident(residentId);
       await refreshData();
     } catch (error) {
-      setLoadError(error.message || 'Unable to remove hostel allotment.');
+      setLoadError(error.message || 'Unable to vacate hostel allotment.');
     }
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#d1fae5_0%,#f8fafc_36%,#e0f2fe_100%)] text-slate-900">
-      <div className="border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
+    <div className="min-h-screen bg-[#F8FAFC] pb-16 text-slate-900">
+      <div className="border-b border-slate-200/70 bg-white/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-4">
             <button
-              onClick={() => navigate('/college')}
+              onClick={handleBack}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft size={14} />
               Back
             </button>
-            <div>
+            <div className="min-w-0">
               <p className="text-[11px] font-black uppercase tracking-[0.28em] text-emerald-600">Hostel Management</p>
-              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Hostel Operations Desk</h1>
+              <h1 className="truncate font-serif text-2xl font-black italic tracking-tight text-slate-950">
+                {activeSection ? sectionTitle(activeSection) : 'Hostel Workspace'}
+              </h1>
             </div>
           </div>
         </div>
       </div>
 
-      <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
+      <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10">
         {loadError ? (
-          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+          <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
             {loadError}
           </div>
         ) : null}
 
-        <section className="overflow-hidden rounded-4xl border border-emerald-200/50 bg-[linear-gradient(135deg,#052e16_0%,#166534_36%,#0f766e_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(6,78,59,0.85)] lg:px-10 lg:py-10">
-          <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-200">Hostel Overview</p>
-              <h2 className="mt-4 max-w-3xl font-serif text-4xl font-black italic leading-none tracking-tight">
-                Total hostel, rooms, beds, allotments, and pending requests ek hi screen par.
-              </h2>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <HeroBadge icon={Hotel} text={`${overview.totalHostels} total hostel`} />
-                <HeroBadge icon={BedDouble} text={`${overview.occupiedBeds}/${overview.totalBeds} beds occupied`} />
-                <HeroBadge icon={DoorOpen} text={`${overview.vacantBeds} vacant beds`} />
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Students In Hostel" value={overview.studentsInHostel} icon={Users} />
-              <MetricCard label="Pending Requests" value={overview.pendingRequests} icon={HousePlus} />
-              <MetricCard label="Total Rooms" value={overview.totalRooms} icon={Building2} />
-              <MetricCard label="Vacant Beds" value={overview.vacantBeds} icon={DoorOpen} />
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-8 rounded-4xl border border-slate-200/80 bg-white/90 p-3 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.45)]">
-          <div className="grid gap-3 md:grid-cols-4">
-            <DeskTab active={activeSection === 'overview'} icon={ClipboardCheck} label="Overview" text="Summary and requests" onClick={() => setActiveSection('overview')} />
-            <DeskTab active={activeSection === 'hostels'} icon={Hotel} label="Hostel Management" text="Create hostel" onClick={() => setActiveSection('hostels')} />
-            <DeskTab active={activeSection === 'rooms'} icon={Building2} label="Room Management" text="Manage room inventory" onClick={() => setActiveSection('rooms')} />
-            <DeskTab active={activeSection === 'allotment'} icon={UserPlus} label="Student Allotment" text="Assign room and bed" onClick={() => setActiveSection('allotment')} />
-          </div>
-        </section>
-
-        {activeSection === 'overview' ? (
-          <div className="mt-8 grid gap-8 xl:grid-cols-[1.05fr_0.95fr]">
-            <Panel title="Overview Summary" description="Hostel overview with total hostel, total rooms, total beds, occupied beds, vacant beds, students in hostel, and pending requests.">
-              <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <SnapshotCard label="Total Hostel" value={overview.totalHostels} hint="All active hostel masters" />
-                <SnapshotCard label="Total Rooms" value={overview.totalRooms} hint="All rooms across hostels" />
-                <SnapshotCard label="Total Beds" value={overview.totalBeds} hint="Sum of room capacities" />
-                <SnapshotCard label="Occupied Beds" value={overview.occupiedBeds} hint="Beds already allotted" />
-                <SnapshotCard label="Vacant Beds" value={overview.vacantBeds} hint="Beds available for allotment" />
-                <SnapshotCard label="Students In Hostel" value={overview.studentsInHostel} hint="Current active hostel students" />
-              </div>
-            </Panel>
-
-            <Panel title="Pending Requests" description="Students who requested hostel but are not allotted yet.">
-              <div className="mt-6 grid gap-4">
-                {pendingStudents.length ? pendingStudents.map((student) => (
-                  <QuickRow
-                    key={student.id}
-                    icon={Users}
-                    title={`${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student'}
-                    subtitle={`${student.className || 'Class'} | ${student.section || 'Section'} | ${student.enrollmentNo || 'Enrollment pending'}`}
-                    badge="pending"
-                  />
-                )) : (
-                  <EmptyInline text="No pending hostel requests." />
-                )}
-              </div>
-            </Panel>
-          </div>
+        {!activeSection ? (
+          <section className="grid gap-5 md:grid-cols-2">
+              {workspaceCards.map((card) => (
+                <WorkspaceCard
+                  key={card.key}
+                  icon={card.icon}
+                  title={card.title}
+                  text={card.text}
+                  onClick={() => {
+                    setActiveSection(card.key);
+                    setFormErrors({});
+                  }}
+                />
+              ))}
+          </section>
         ) : null}
 
         {activeSection === 'hostels' ? (
-          <div className="mt-8">
-            <Panel title="Hostel Management" description="Create hostel with hostel name, boys or girls, total floors, warden name, and contact number.">
-              <form className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleHostelSave}>
-                <InputField label="Hostel Name" value={hostelForm.hostelName} onChange={(e) => setHostelForm({ ...hostelForm, hostelName: e.target.value })} placeholder="Aarav Boys Hostel" />
-                <SelectField label="Hostel Type" value={hostelForm.hostelType} onChange={(e) => setHostelForm({ ...hostelForm, hostelType: e.target.value })} options={['boys', 'girls']} />
-                <InputField label="Total Floors" type="number" min="1" value={hostelForm.totalFloors} onChange={(e) => setHostelForm({ ...hostelForm, totalFloors: e.target.value })} />
-                <InputField label="Warden Name" value={hostelForm.wardenName} onChange={(e) => setHostelForm({ ...hostelForm, wardenName: e.target.value })} placeholder="Mr Sharma" />
-                <InputField label="Contact Number" value={hostelForm.contactNumber} onChange={(e) => setHostelForm({ ...hostelForm, contactNumber: e.target.value })} placeholder="9876543210" />
-                <SelectField label="Status" value={hostelForm.status} onChange={(e) => setHostelForm({ ...hostelForm, status: e.target.value })} options={['active', 'inactive']} />
-                <div className="md:col-span-2 xl:col-span-3">
-                  <PrimaryButton type="submit" icon={HousePlus} label={isSaving ? 'Saving Hostel...' : 'Save Hostel'} />
-                </div>
-              </form>
-
-              <div className="mt-10 border-t border-slate-200 pt-8">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h4 className="text-xl font-black tracking-tight text-slate-950">Hostel Register</h4>
-                    <p className="mt-1 text-sm text-slate-500">Track all created hostels in Excel table format.</p>
-                  </div>
-                  <SummaryMini text={`${filteredHostels.length} hostel(s)`} />
-                </div>
-
-                <div className="mt-4">
-                  <SearchInput value={hostelSearch} onChange={setHostelSearch} placeholder="Search hostel, type, or warden..." />
-                </div>
-
-                {filteredHostels.length ? (
-                  <ExcelTable className="mt-6">
-                    <table className="min-w-full border-collapse bg-white">
-                      <thead>
-                        <tr className="bg-emerald-50">
-                          <Th>Hostel Name</Th>
-                          <Th>Type</Th>
-                          <Th>Total Floors</Th>
-                          <Th>Warden Name</Th>
-                          <Th>Contact Number</Th>
-                          <Th>Total Rooms</Th>
-                          <Th>Total Beds</Th>
-                          <Th>Occupied Beds</Th>
-                          <Th>Vacant Beds</Th>
-                          <Th>Status</Th>
-                          <Th noBorder>Action</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredHostels.map((hostel) => (
-                          <tr key={hostel.id} className="align-top odd:bg-white even:bg-slate-50">
-                            <Td>{hostel.hostelName || '-'}</Td>
-                            <Td>{hostel.hostelType || '-'}</Td>
-                            <Td>{hostel.totalFloors || 0}</Td>
-                            <Td>{hostel.wardenName || 'Warden pending'}</Td>
-                            <Td>{hostel.contactNumber || 'Contact pending'}</Td>
-                            <Td>{hostel.totalRooms || 0}</Td>
-                            <Td>{hostel.totalBeds || 0}</Td>
-                            <Td>{hostel.occupiedBeds || 0}</Td>
-                            <Td>{hostel.vacantBeds || 0}</Td>
-                            <Td><StatusBadge text={hostel.status || 'active'} /></Td>
-                            <Td noBorder>
-                              <button onClick={() => handleDeleteHostel(hostel.id)} className="inline-flex text-slate-400 transition hover:text-rose-600">
-                                <Trash2 size={18} />
-                              </button>
-                            </Td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </ExcelTable>
-                ) : (
-                  <EmptyState icon={Hotel} title="No hostel created yet" description="Create the first hostel to start room management." />
-                )}
+          <Panel title="Hostel Management" description="Create hostel details and review all hostel records below.">
+            <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleHostelSave}>
+              <InputField label="Hostel Name" value={hostelForm.hostelName} onChange={(e) => updateHostelForm('hostelName', e.target.value)} placeholder="Enter hostel name" error={formErrors.hostelName} />
+              <SelectField label="Hostel Type" value={hostelForm.hostelType} onChange={(e) => updateHostelForm('hostelType', e.target.value)} options={['boys', 'girls']} error={formErrors.hostelType} />
+              <InputField label="Total Floors" type="number" min="1" value={hostelForm.totalFloors} onChange={(e) => updateHostelForm('totalFloors', e.target.value)} error={formErrors.totalFloors} />
+              <InputField label="Warden Name" value={hostelForm.wardenName} onChange={(e) => updateHostelForm('wardenName', e.target.value)} placeholder="Enter warden name" error={formErrors.wardenName} />
+              <InputField label="Contact Number" value={hostelForm.contactNumber} onChange={(e) => updateHostelForm('contactNumber', digitsOnly(e.target.value, 10))} placeholder="Enter contact number" error={formErrors.contactNumber} />
+              <SelectField label="Status" value={hostelForm.status} onChange={(e) => updateHostelForm('status', e.target.value)} options={['active', 'inactive']} error={formErrors.status} />
+              <div className="md:col-span-2 xl:col-span-3">
+                <PrimaryButton type="submit" icon={HousePlus} label={isSaving ? 'Saving Hostel...' : 'Save Hostel'} />
               </div>
-            </Panel>
-          </div>
+            </form>
+
+            <RegisterHeader title="Hostel Register" count={`${filteredHostels.length} hostel(s)`} search={<SearchInput value={hostelSearch} onChange={setHostelSearch} placeholder="Search hostel, type, warden, contact..." />} />
+            {filteredHostels.length ? (
+              <ExcelTable>
+                <table className="min-w-full border-collapse bg-white">
+                  <thead>
+                    <tr className="bg-emerald-50">
+                      <Th>Hostel Name</Th>
+                      <Th>Type</Th>
+                      <Th>Floors</Th>
+                      <Th>Warden</Th>
+                      <Th>Contact</Th>
+                      <Th>Rooms</Th>
+                      <Th>Total Beds</Th>
+                      <Th>Vacant Beds</Th>
+                      <Th>Status</Th>
+                      <Th noBorder>Action</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredHostels.map((hostel) => (
+                      <tr key={hostel.id} className="odd:bg-white even:bg-slate-50">
+                        <Td>{hostel.hostelName || '-'}</Td>
+                        <Td>{hostel.hostelType || '-'}</Td>
+                        <Td>{hostel.totalFloors || 0}</Td>
+                        <Td>{hostel.wardenName || '-'}</Td>
+                        <Td>{hostel.contactNumber || '-'}</Td>
+                        <Td>{hostel.totalRooms || 0}</Td>
+                        <Td>{hostel.totalBeds || 0}</Td>
+                        <Td>{hostel.vacantBeds || 0}</Td>
+                        <Td><StatusBadge text={hostel.status || 'active'} /></Td>
+                        <Td noBorder><IconButton icon={Trash2} onClick={() => handleDeleteHostel(hostel.id)} /></Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ExcelTable>
+            ) : (
+              <EmptyState icon={Hotel} title="No Hostel Created" description="Create the first hostel to begin room management." />
+            )}
+          </Panel>
         ) : null}
 
         {activeSection === 'rooms' ? (
-          <div className="mt-8">
-            <Panel title="Room Management" description="Create room with room number, floor, capacity, room type, AC or non-AC, and status.">
-              <form className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleRoomSave}>
-                <SelectField label="Hostel" value={roomForm.hostelId} onChange={(e) => setRoomForm({ ...roomForm, hostelId: e.target.value })} options={['', ...hostels.map((hostel) => String(hostel.id))]} renderOptionLabel={(value) => hostelLabel(value, hostels)} />
-                <InputField label="Room Number" value={roomForm.roomNumber} onChange={(e) => setRoomForm({ ...roomForm, roomNumber: e.target.value })} placeholder="101" />
-                <InputField label="Floor" value={roomForm.floorLabel} onChange={(e) => setRoomForm({ ...roomForm, floorLabel: e.target.value })} placeholder="1st Floor" />
-                <InputField label="Capacity" type="number" min="1" value={roomForm.capacity} onChange={(e) => setRoomForm({ ...roomForm, capacity: e.target.value })} />
-                <SelectField label="Room Type" value={roomForm.roomType} onChange={(e) => setRoomForm({ ...roomForm, roomType: e.target.value })} options={['Standard', 'Single', 'Double', 'Dormitory']} />
-                <SelectField label="AC Type" value={roomForm.acType} onChange={(e) => setRoomForm({ ...roomForm, acType: e.target.value })} options={['ac', 'non-ac']} />
-                <SelectField label="Status" value={roomForm.status} onChange={(e) => setRoomForm({ ...roomForm, status: e.target.value })} options={['available', 'maintenance', 'full']} />
-                <InputField label="Monthly Charge" type="number" min="0" value={roomForm.monthlyCharge} onChange={(e) => setRoomForm({ ...roomForm, monthlyCharge: e.target.value })} />
-                <div className="md:col-span-2 xl:col-span-3">
-                  <InputField label="Amenities" value={roomForm.amenities} onChange={(e) => setRoomForm({ ...roomForm, amenities: e.target.value })} placeholder="WiFi, cupboard, study table" />
+          <Panel
+            title="Room Management"
+            description="Create hostel rooms, capacity, charges, and bed availability."
+            action={(
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSection('room-generator');
+                  setFormErrors({});
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700"
+              >
+                <Building2 size={15} />
+                Room Generate
+              </button>
+            )}
+          >
+            <div className="mt-6">
+              {hostels.length ? (
+                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {hostels.map((hostel) => (
+                    <button
+                      key={hostel.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRoomHostelId(String(hostel.id));
+                        setSelectedRoomFloor('');
+                        setBulkRoomForm((current) => ({ ...current, hostelId: String(hostel.id), floorNumber: '' }));
+                      }}
+                      className={`rounded-2xl border p-5 text-left transition ${
+                        String(selectedRoomHostelId) === String(hostel.id)
+                          ? 'border-emerald-300 bg-emerald-50 shadow-[0_18px_45px_-35px_rgba(16,185,129,0.7)]'
+                          : 'border-slate-200 bg-slate-50 hover:border-emerald-200 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-base font-black text-slate-950">{hostel.hostelName || 'Hostel'}</p>
+                          <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{hostel.hostelType || 'hostel'}</p>
+                        </div>
+                        <StatusBadge text={`${hostel.totalFloors || 0} floors`} />
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                        <MiniMetric label="Rooms" value={hostel.totalRooms || 0} />
+                        <MiniMetric label="Beds" value={hostel.totalBeds || 0} />
+                        <MiniMetric label="Vacant" value={hostel.vacantBeds || 0} />
+                      </div>
+                    </button>
+                  ))}
                 </div>
-                <div className="md:col-span-2 xl:col-span-3">
-                  <PrimaryButton type="submit" icon={Building2} label={isSaving ? 'Saving Room...' : 'Save Room'} />
-                </div>
-              </form>
+              ) : (
+                <EmptyState icon={Hotel} title="No Hostel Created" description="Create a hostel first, then manage rooms floor-wise." />
+              )}
+            </div>
 
-              <div className="mt-10 border-t border-slate-200 pt-8">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            {selectedRoomHostel ? (
+              <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <h4 className="text-xl font-black tracking-tight text-slate-950">Room Register</h4>
-                    <p className="mt-1 text-sm text-slate-500">See hostel wise rooms in Excel table format.</p>
+                    <h4 className="text-xl font-black tracking-tight text-slate-950">{selectedRoomHostel.hostelName}</h4>
+                    <p className="mt-1 text-sm text-slate-500">Select floor to see room-wise student count and full/vacant status.</p>
                   </div>
-                  <SummaryMini text={`${filteredRooms.length} room(s)`} />
+                  <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-600">
+                    {selectedFloorRooms.length} room(s)
+                  </div>
                 </div>
 
-                <div className="mt-4">
-                  <SearchInput value={roomSearch} onChange={setRoomSearch} placeholder="Search hostel, room, floor..." />
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {selectedHostelFloorOptions.map((floor) => (
+                    <button
+                      key={floor}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRoomFloor(floor);
+                        setBulkRoomForm((current) => ({ ...current, hostelId: String(selectedRoomHostel.id), floorNumber: floor }));
+                      }}
+                      className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-[0.16em] transition ${
+                        String(selectedRoomFloor) === String(floor)
+                          ? 'bg-emerald-600 text-white'
+                          : 'border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-700'
+                      }`}
+                    >
+                      Floor {floor}
+                    </button>
+                  ))}
                 </div>
 
-                {filteredRooms.length ? (
-                  <ExcelTable className="mt-6">
-                    <table className="min-w-full border-collapse bg-white">
-                      <thead>
-                        <tr className="bg-emerald-50">
-                          <Th>Hostel</Th>
-                          <Th>Room Number</Th>
-                          <Th>Floor</Th>
-                          <Th>Capacity</Th>
-                          <Th>Occupied Beds</Th>
-                          <Th>Vacant Beds</Th>
-                          <Th>Room Type</Th>
-                          <Th>AC Type</Th>
-                          <Th>Status</Th>
-                          <Th>Monthly Charge</Th>
-                          <Th noBorder>Action</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredRooms.map((room) => {
-                          const vacantBeds = Math.max((Number(room.capacity) || 0) - (Number(room.occupiedBeds) || 0), 0);
-                          return (
-                            <tr key={room.id} className="align-top odd:bg-white even:bg-slate-50">
-                              <Td>{room.hostelName || '-'}</Td>
-                              <Td>{room.roomNumber || '-'}</Td>
-                              <Td>{room.floorLabel || '-'}</Td>
-                              <Td>{room.capacity || 0}</Td>
-                              <Td>{room.occupiedBeds || 0}</Td>
-                              <Td>{vacantBeds}</Td>
-                              <Td>{room.roomType || '-'}</Td>
-                              <Td>{room.acType || '-'}</Td>
-                              <Td><StatusBadge text={room.status || 'available'} /></Td>
-                              <Td>Rs {room.monthlyCharge || '0'}</Td>
-                              <Td noBorder>
-                                <button onClick={() => handleDeleteRoom(room.id)} className="inline-flex text-slate-400 transition hover:text-rose-600">
-                                  <Trash2 size={18} />
-                                </button>
-                              </Td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </ExcelTable>
+                {selectedRoomFloor ? (
+                  selectedFloorRooms.length ? (
+                    <ExcelTable>
+                      <table className="min-w-full border-collapse bg-white">
+                        <thead>
+                          <tr className="bg-emerald-50">
+                            <Th>Room</Th>
+                            <Th>Floor</Th>
+                            <Th>Students Per Room</Th>
+                            <Th>Students In Room</Th>
+                            <Th>Vacant Seat</Th>
+                            <Th>AC</Th>
+                            <Th>Status</Th>
+                            <Th noBorder>Action</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedFloorRooms.map((room) => {
+                            const vacantBeds = getVacantBeds(room);
+                            const isFull = vacantBeds <= 0;
+                            return (
+                              <tr key={room.id} className="odd:bg-white even:bg-slate-50">
+                                <Td>{room.roomNumber || '-'}</Td>
+                                <Td>{room.floorLabel || '-'}</Td>
+                                <Td>{room.capacity || 0}</Td>
+                                <Td>{room.occupiedBeds || 0}</Td>
+                                <Td>{vacantBeds}</Td>
+                                <Td>{room.acType || '-'}</Td>
+                                <Td><StatusBadge text={isFull ? 'Full' : 'Available'} /></Td>
+                                <Td noBorder><IconButton icon={Trash2} onClick={() => handleDeleteRoom(room.id)} /></Td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </ExcelTable>
+                  ) : (
+                    <EmptyState icon={Building2} title="No Rooms On This Floor" description="Generate a room range for this floor to see room status here." />
+                  )
                 ) : (
-                  <EmptyState icon={Building2} title="No room created yet" description="Create a hostel room to start allotment." />
+                  <EmptyState icon={Building2} title="Select Floor" description="Choose a floor above to view each room and its student status." />
                 )}
               </div>
-            </Panel>
-          </div>
+            ) : null}
+          </Panel>
+        ) : null}
+
+        {activeSection === 'room-generator' ? (
+          <Panel title="Generate Rooms" description="Use room range for selected hostel floor. Different floors can have different ranges.">
+            <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-4" onSubmit={handleGenerateRooms}>
+              <SelectField
+                label="Hostel"
+                value={bulkRoomForm.hostelId}
+                onChange={(e) => {
+                  updateBulkRoomForm('hostelId', e.target.value);
+                  setSelectedRoomHostelId(e.target.value);
+                  setSelectedRoomFloor('');
+                  setBulkRoomForm((current) => ({ ...current, hostelId: e.target.value, floorNumber: '' }));
+                }}
+                options={['', ...hostels.map((hostel) => String(hostel.id))]}
+                renderOptionLabel={(value) => hostelLabel(value, hostels)}
+                error={formErrors.hostelId}
+              />
+              <SelectField
+                label="Floor Number"
+                value={bulkRoomForm.floorNumber}
+                onChange={(e) => {
+                  updateBulkRoomForm('floorNumber', e.target.value);
+                  setSelectedRoomFloor(e.target.value);
+                }}
+                options={['', ...floorOptions(bulkRoomForm.hostelId, hostels)]}
+                renderOptionLabel={(value) => value ? `Floor ${value}` : 'Select floor'}
+                error={formErrors.floorNumber}
+              />
+              <InputField label="Start Room Number" type="number" min="1" value={bulkRoomForm.startRoomNumber} onChange={(e) => updateBulkRoomForm('startRoomNumber', e.target.value)} error={formErrors.startRoomNumber} />
+              <InputField label="End Room Number" type="number" min="1" value={bulkRoomForm.endRoomNumber} onChange={(e) => updateBulkRoomForm('endRoomNumber', e.target.value)} error={formErrors.endRoomNumber} />
+              <InputField label="Students Per Room" type="number" min="1" value={bulkRoomForm.capacity} onChange={(e) => updateBulkRoomForm('capacity', e.target.value)} error={formErrors.capacity} />
+              <SelectField label="AC Type" value={bulkRoomForm.acType} onChange={(e) => updateBulkRoomForm('acType', e.target.value)} options={['ac', 'non-ac']} error={formErrors.acType} />
+              <div className="md:col-span-2 xl:col-span-4">
+                <PrimaryButton type="submit" icon={Building2} label="Generate Rooms" />
+              </div>
+            </form>
+
+            {formErrors.preview ? <p className="mt-3 text-xs font-bold text-rose-600">{formErrors.preview}</p> : null}
+
+            {bulkRoomPreview.length ? (
+              <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h4 className="text-lg font-black text-slate-950">Generated Room Preview</h4>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">{bulkRoomPreview.length} room(s) ready to save</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveGeneratedRooms}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700"
+                  >
+                    <Building2 size={15} />
+                    {isSaving ? 'Saving Rooms...' : 'Save All Rooms'}
+                  </button>
+                </div>
+                <ExcelTable>
+                  <table className="min-w-full border-collapse bg-white">
+                    <thead>
+                      <tr className="bg-emerald-50">
+                        <Th>Hostel</Th>
+                        <Th>Floor</Th>
+                        <Th>Room</Th>
+                        <Th>Students Per Room</Th>
+                        <Th>AC</Th>
+                        <Th noBorder>Action</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bulkRoomPreview.map((room) => (
+                        <tr key={room.previewId} className="odd:bg-white even:bg-slate-50">
+                          <Td>{room.hostelName}</Td>
+                          <Td>{room.floorLabel}</Td>
+                          <Td>{room.roomNumber}</Td>
+                          <Td>{room.capacity}</Td>
+                          <Td>{room.acType}</Td>
+                          <Td noBorder><IconButton icon={Trash2} onClick={() => setBulkRoomPreview((current) => current.filter((entry) => entry.previewId !== room.previewId))} /></Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ExcelTable>
+              </div>
+            ) : null}
+          </Panel>
         ) : null}
 
         {activeSection === 'allotment' ? (
-          <div className="mt-8">
-            <Panel title="Student Hostel Allotment" description="Search student, assign room, assign bed, auto vacancy check, transfer room, and remove student from hostel.">
-              <form className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleResidentSave}>
-                <SelectField label="Class" value={residentForm.className} onChange={(e) => setResidentForm({ ...residentForm, className: e.target.value, section: '', studentId: '' })} options={['', ...classOptions]} renderOptionLabel={(value) => value || 'Select class'} />
-                <SelectField label="Section" value={residentForm.section} onChange={(e) => setResidentForm({ ...residentForm, section: e.target.value, studentId: '' })} options={['', ...sectionOptions]} renderOptionLabel={(value) => value || 'Select section'} />
-                <SelectField label="Student Search" value={residentForm.studentId} onChange={(e) => setResidentForm({ ...residentForm, studentId: e.target.value })} options={['', ...filteredStudentOptions.map((student) => String(student.id))]} renderOptionLabel={(value) => studentLabel(value, filteredStudentOptions)} />
-                <SelectField label="Assign Room" value={residentForm.roomId} onChange={(e) => setResidentForm({ ...residentForm, roomId: e.target.value, monthlyCharge: roomCharge(valueToRoom(e.target.value, rooms)) })} options={['', ...availableRooms.map((room) => String(room.id))]} renderOptionLabel={(value) => roomLabel(value, availableRooms)} />
-                <InputField label="Assign Bed" value={residentForm.bedNumber} onChange={(e) => setResidentForm({ ...residentForm, bedNumber: e.target.value })} placeholder="Leave blank for auto" />
-                <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => setResidentForm({ ...residentForm, checkInDate: e.target.value })} />
-                <InputField label="Monthly Charge" type="number" min="0" value={residentForm.monthlyCharge} onChange={(e) => setResidentForm({ ...residentForm, monthlyCharge: e.target.value })} placeholder="Auto from room" />
-                <InputField label="Father Contact" value={residentForm.guardianContact || selectedStudent?.guardianPhone || ''} onChange={(e) => setResidentForm({ ...residentForm, guardianContact: e.target.value })} />
-                <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => setResidentForm({ ...residentForm, emergencyContact: e.target.value })} />
-                <div className="md:col-span-2 xl:col-span-3 rounded-[1.3rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-semibold text-emerald-800">
-                  {selectedRoom
-                    ? `Auto vacancy check: ${Math.max((Number(selectedRoom.capacity) || 0) - (Number(selectedRoom.occupiedBeds) || 0), 0)} bed(s) vacant in ${selectedRoom.hostelName} room ${selectedRoom.roomNumber}.`
-                    : 'Auto vacancy check will appear after selecting a room.'}
+          <Panel
+            title="Student Hostel Allotment"
+            description="Select hostel, floor, and room first, then add or vacate students from that room."
+            action={selectedAllotmentRoom ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAllotmentForm((current) => !current);
+                  setResidentForm((current) => ({
+                    ...current,
+                    roomId: String(selectedAllotmentRoom.id),
+                    monthlyCharge: roomCharge(selectedAllotmentRoom),
+                  }));
+                  setFormErrors({});
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700"
+              >
+                <UserPlus size={15} />
+                Add Student
+              </button>
+            ) : null}
+          >
+            {!selectedAllotmentHostel ? (
+              hostels.length ? (
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {hostels.map((hostel) => (
+                    <button
+                      key={hostel.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedAllotmentHostelId(String(hostel.id));
+                        setSelectedAllotmentFloor('');
+                        setSelectedAllotmentRoomId('');
+                        setShowAllotmentForm(false);
+                      }}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-left transition hover:border-emerald-300 hover:bg-white"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-base font-black text-slate-950">{hostel.hostelName || 'Hostel'}</p>
+                          <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{hostel.hostelType || 'hostel'}</p>
+                        </div>
+                        <ArrowRight size={18} className="text-slate-300" />
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                        <MiniMetric label="Rooms" value={hostel.totalRooms || 0} />
+                        <MiniMetric label="Beds" value={hostel.totalBeds || 0} />
+                        <MiniMetric label="Vacant" value={hostel.vacantBeds || 0} />
+                      </div>
+                    </button>
+                  ))}
                 </div>
-                <div className="md:col-span-2 xl:col-span-3">
-                  <InputField label="Notes" value={residentForm.notes} onChange={(e) => setResidentForm({ ...residentForm, notes: e.target.value })} placeholder="Transfer note, medical note, special instruction" />
-                </div>
-                <div className="md:col-span-2 xl:col-span-3">
-                  <PrimaryButton type="submit" icon={UserPlus} label={isSaving ? 'Saving Allotment...' : 'Save Allotment'} />
-                </div>
-              </form>
+              ) : (
+                <EmptyState icon={Hotel} title="No Hostel Created" description="Create hostel and rooms first, then allot students." />
+              )
+            ) : null}
 
-              <div className="mt-10 border-t border-slate-200 pt-8">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            {selectedAllotmentHostel && !selectedAllotmentRoom ? (
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <h4 className="text-xl font-black tracking-tight text-slate-950">Allotment Data</h4>
-                    <p className="mt-1 text-sm text-slate-500">Student allotment data in Excel table format.</p>
+                    <h4 className="text-xl font-black tracking-tight text-slate-950">{selectedAllotmentHostel.hostelName}</h4>
+                    <p className="mt-1 text-sm text-slate-500">Select floor, then select a room to see student details.</p>
                   </div>
-                  <SummaryMini text={`${filteredResidents.length} allotment(s)`} />
+                  <StatusBadge text={`${selectedAllotmentHostel.totalFloors || 0} floors`} />
                 </div>
 
-                <div className="mt-4">
-                  <SearchInput value={residentSearch} onChange={setResidentSearch} placeholder="Search student, class, hostel, room..." />
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {selectedAllotmentFloorOptions.map((floor) => (
+                    <button
+                      key={floor}
+                      type="button"
+                      onClick={() => {
+                        setSelectedAllotmentFloor(floor);
+                        setSelectedAllotmentRoomId('');
+                        setShowAllotmentForm(false);
+                      }}
+                      className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-[0.16em] transition ${
+                        String(selectedAllotmentFloor) === String(floor)
+                          ? 'bg-emerald-600 text-white'
+                          : 'border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-700'
+                      }`}
+                    >
+                      Floor {floor}
+                    </button>
+                  ))}
                 </div>
 
-                {filteredResidents.length ? (
-                  <ExcelTable className="mt-6">
+                {selectedAllotmentFloor ? (
+                  selectedAllotmentFloorRooms.length ? (
+                    <ExcelTable>
+                      <table className="min-w-full border-collapse bg-white">
+                        <thead>
+                          <tr className="bg-emerald-50">
+                            <Th>Room</Th>
+                            <Th>Capacity</Th>
+                            <Th>Filled</Th>
+                            <Th>Vacant</Th>
+                            <Th>Status</Th>
+                            <Th noBorder>Action</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedAllotmentFloorRooms.map((room) => {
+                            const vacantBeds = getVacantBeds(room);
+                            return (
+                              <tr key={room.id} className="odd:bg-white even:bg-slate-50">
+                                <Td>{room.roomNumber || '-'}</Td>
+                                <Td>{room.capacity || 0}</Td>
+                                <Td>{room.occupiedBeds || 0}</Td>
+                                <Td>{vacantBeds}</Td>
+                                <Td><StatusBadge text={vacantBeds <= 0 ? 'Full' : 'Available'} /></Td>
+                                <Td noBorder>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedAllotmentRoomId(String(room.id));
+                                      setShowAllotmentForm(false);
+                                      setResidentForm((current) => ({ ...current, roomId: String(room.id), monthlyCharge: roomCharge(room) }));
+                                    }}
+                                    className="rounded-xl bg-slate-950 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-white transition hover:bg-emerald-600"
+                                  >
+                                    View
+                                  </button>
+                                </Td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </ExcelTable>
+                  ) : (
+                    <EmptyState icon={Building2} title="No Rooms On This Floor" description="Generate rooms for this floor first." />
+                  )
+                ) : (
+                  <EmptyState icon={Building2} title="Select Floor" description="Choose a floor to see rooms and vacancy." />
+                )}
+              </div>
+            ) : null}
+
+            {selectedAllotmentRoom ? (
+              <div className="mt-6">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h4 className="text-xl font-black tracking-tight text-slate-950">
+                        {selectedAllotmentRoom.hostelName} - Room {selectedAllotmentRoom.roomNumber}
+                      </h4>
+                      <p className="mt-1 text-sm text-slate-500">Floor {selectedAllotmentRoom.floorLabel || '-'} room student list and vacancy.</p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <MiniMetric label="Capacity" value={selectedAllotmentRoom.capacity || 0} />
+                      <MiniMetric label="Filled" value={activeSelectedRoomResidents.length} />
+                      <MiniMetric label="Vacant" value={getVacantBeds(selectedAllotmentRoom)} />
+                    </div>
+                  </div>
+
+                  {showAllotmentForm ? (
+                    <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleResidentSave}>
+                      <SelectField label="Class" value={residentForm.className} onChange={(e) => updateResidentForm({ className: e.target.value, section: '', studentId: '' })} options={['', ...classOptions]} renderOptionLabel={(value) => value || 'Select class'} error={formErrors.className} />
+                      <SelectField label="Section" value={residentForm.section} onChange={(e) => updateResidentForm({ section: e.target.value, studentId: '' })} options={['', ...sectionOptions]} renderOptionLabel={(value) => value || 'Select section'} error={formErrors.section} />
+                      <SelectField label="Student" value={residentForm.studentId} onChange={(e) => updateResidentForm({ studentId: e.target.value, guardianContact: studentContact(e.target.value, students) })} options={['', ...filteredStudentOptions.map((student) => String(student.id))]} renderOptionLabel={(value) => studentLabel(value, filteredStudentOptions)} error={formErrors.studentId} />
+                      <InputField label="Bed Number" value={residentForm.bedNumber} onChange={(e) => updateResidentForm({ bedNumber: e.target.value.toUpperCase() })} placeholder="Leave blank for auto" error={formErrors.bedNumber} />
+                      <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => updateResidentForm({ checkInDate: e.target.value })} error={formErrors.checkInDate} />
+                      <InputField label="Guardian Contact" value={residentForm.guardianContact || selectedStudent?.guardianPhone || ''} onChange={(e) => updateResidentForm({ guardianContact: digitsOnly(e.target.value, 10) })} placeholder="Enter guardian contact" error={formErrors.guardianContact} />
+                      <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => updateResidentForm({ emergencyContact: digitsOnly(e.target.value, 10) })} placeholder="Enter emergency contact" error={formErrors.emergencyContact} />
+                      <InputField label="Notes" value={residentForm.notes} onChange={(e) => updateResidentForm({ notes: e.target.value.toUpperCase() })} placeholder="Enter notes or special instruction" error={formErrors.notes} wide />
+                      <div className="md:col-span-2 xl:col-span-3">
+                        <PrimaryButton type="submit" icon={UserPlus} label={isSaving ? 'Saving Allotment...' : 'Save Allotment'} />
+                      </div>
+                    </form>
+                  ) : null}
+                </div>
+
+                {selectedRoomResidents.length ? (
+                  <ExcelTable>
                     <table className="min-w-full border-collapse bg-white">
                       <thead>
                         <tr className="bg-emerald-50">
+                          <Th>Student</Th>
                           <Th>Class</Th>
                           <Th>Section</Th>
-                          <Th>Student Name</Th>
-                          <Th>Hostel</Th>
-                          <Th>Room</Th>
                           <Th>Bed</Th>
-                          <Th>Joining Date</Th>
-                          <Th>Monthly Charge</Th>
+                          <Th>Join Date</Th>
+                          <Th>Vacate Date</Th>
+                          <Th>Status</Th>
                           <Th>Contact</Th>
                           <Th noBorder>Action</Th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredResidents.map((resident) => (
-                          <tr key={resident.id} className="align-top odd:bg-white even:bg-slate-50">
+                        {selectedRoomResidents.map((resident) => (
+                          <tr key={resident.id} className="odd:bg-white even:bg-slate-50">
+                            <Td>{resident.studentName || '-'}</Td>
                             <Td>{resident.className || '-'}</Td>
                             <Td>{resident.section || '-'}</Td>
-                            <Td>{resident.studentName || '-'}</Td>
-                            <Td>{resident.hostelName || '-'}</Td>
-                            <Td>{resident.roomNumber || '-'}</Td>
                             <Td>{resident.bedNumber || 'Auto'}</Td>
                             <Td>{resident.checkInDate || '-'}</Td>
-                            <Td>Rs {resident.monthlyCharge || '0'}</Td>
-                            <Td>{resident.guardianContact || resident.emergencyContact || 'Contact pending'}</Td>
+                            <Td>{resident.checkOutDate || '-'}</Td>
+                            <Td><StatusBadge text={resident.status || 'active'} /></Td>
+                            <Td>{resident.guardianContact || resident.emergencyContact || '-'}</Td>
                             <Td noBorder>
-                              <button onClick={() => handleDeleteResident(resident.id)} className="inline-flex text-slate-400 transition hover:text-rose-600">
-                                <Trash2 size={18} />
-                              </button>
+                              {isActiveResident(resident) ? <IconButton icon={Trash2} onClick={() => handleDeleteResident(resident.id)} /> : '-'}
                             </Td>
                           </tr>
                         ))}
@@ -596,165 +848,114 @@ const HostelManagement = () => {
                     </table>
                   </ExcelTable>
                 ) : (
-                  <EmptyState icon={Users} title="No allotment created yet" description="Assign a student to a room and bed to see allotment data." />
+                  <EmptyState icon={Users} title="No Student In This Room" description="Use Add Student to allot a student to this room." />
                 )}
               </div>
-            </Panel>
-          </div>
-        ) : null}
+            ) : null}
 
+            <RegisterHeader title="Allotment History" count={`${filteredResidents.length} allotment(s)`} search={<SearchInput value={residentSearch} onChange={setResidentSearch} placeholder="Search student, class, hostel, room..." />} />
+            {filteredResidents.length ? (
+              <ExcelTable>
+                <table className="min-w-full border-collapse bg-white">
+                  <thead>
+                    <tr className="bg-emerald-50">
+                      <Th>Student</Th>
+                      <Th>Class</Th>
+                      <Th>Hostel</Th>
+                      <Th>Room</Th>
+                      <Th>Join Date</Th>
+                      <Th>Vacate Date</Th>
+                      <Th noBorder>Status</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredResidents.map((resident) => (
+                      <tr key={resident.id} className="odd:bg-white even:bg-slate-50">
+                        <Td>{resident.studentName || '-'}</Td>
+                        <Td>{resident.className || '-'}</Td>
+                        <Td>{resident.hostelName || '-'}</Td>
+                        <Td>{resident.roomNumber || '-'}</Td>
+                        <Td>{resident.checkInDate || '-'}</Td>
+                        <Td>{resident.checkOutDate || '-'}</Td>
+                        <Td noBorder><StatusBadge text={resident.status || 'active'} /></Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ExcelTable>
+            ) : null}
+          </Panel>
+        ) : null}
       </main>
     </div>
   );
 };
 
-const valueToRoom = (roomId, rooms) => rooms.find((room) => String(room.id) === String(roomId)) || null;
-
-const roomCharge = (room) => (room?.monthlyCharge ? String(room.monthlyCharge) : '');
-
-const hostelLabel = (value, hostels) => {
-  if (!value) return 'Select hostel';
-  const hostel = hostels.find((entry) => String(entry.id) === String(value));
-  return hostel ? `${hostel.hostelName} | ${hostel.hostelType}` : 'Select hostel';
-};
-
-const studentLabel = (value, students) => {
-  if (!value) return 'Select student';
-  const student = students.find((entry) => String(entry.id) === String(value));
-  return student
-    ? `${`${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student'} | ${student.className || '-'} | ${student.section || '-'}`
-    : 'Select student';
-};
-
-const roomLabel = (value, rooms) => {
-  if (!value) return 'Select room';
-  const room = rooms.find((entry) => String(entry.id) === String(value));
-  if (!room) return 'Select room';
-  const vacantBeds = Math.max((Number(room.capacity) || 0) - (Number(room.occupiedBeds) || 0), 0);
-  return `${room.hostelName} | ${room.roomNumber} | ${vacantBeds} vacant`;
-};
-
-const HeroBadge = ({ icon: Icon, text }) => (
-  <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-white/90 backdrop-blur-sm">
-    <Icon size={14} />
-    <span>{text}</span>
-  </div>
-);
-
-const MetricCard = ({ label, value, icon: Icon }) => (
-  <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-50/80">{label}</p>
-        <p className="mt-3 text-3xl font-black tracking-tight text-white">{value}</p>
-      </div>
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200/20 bg-emerald-200/10 text-emerald-50">
-        <Icon size={20} />
-      </div>
-    </div>
-  </div>
-);
-
-const DeskTab = ({ active, icon: Icon, label, text, onClick }) => (
+const WorkspaceCard = ({ icon: Icon, title, text, onClick }) => (
   <button
     type="button"
     onClick={onClick}
-    className={`rounded-3xl border p-4 text-left transition ${
-      active
-        ? 'border-emerald-300 bg-emerald-50 shadow-[0_18px_40px_-30px_rgba(16,185,129,0.4)]'
-        : 'border-slate-200 bg-white hover:border-emerald-200 hover:bg-slate-50'
-    }`}
+    className="group flex min-h-48 flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 text-left shadow-[0_18px_55px_-42px_rgba(15,23,42,0.5)] transition hover:-translate-y-1 hover:border-emerald-300"
   >
-    <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${active ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
-      <Icon size={20} />
+    <div className="flex items-start justify-between gap-4">
+      <div className="flex h-13 w-13 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 transition group-hover:bg-emerald-600 group-hover:text-white">
+        <Icon size={24} />
+      </div>
+      <ArrowRight size={18} className="text-slate-300 transition group-hover:text-emerald-600" />
     </div>
-    <h3 className="mt-4 text-base font-black tracking-tight text-slate-950">{label}</h3>
-    <p className="mt-1 text-sm text-slate-500">{text}</p>
+    <div>
+      <h3 className="mt-6 font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-500">{text}</p>
+    </div>
   </button>
 );
 
-const Panel = ({ title, description, children }) => (
-  <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-    <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
-    <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
+const Panel = ({ title, description, action, children }) => (
+  <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.55)] lg:p-8">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
+        <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
     {children}
   </section>
 );
 
-const SnapshotCard = ({ label, value, hint }) => (
-  <div className="rounded-[1.4rem] border border-slate-200 bg-slate-50 p-5">
-    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
-    <p className="mt-3 text-3xl font-black tracking-tight text-slate-950">{value}</p>
-    <p className="mt-2 text-sm text-slate-500">{hint}</p>
-  </div>
-);
-
-const QuickRow = ({ icon: Icon, title, subtitle, badge }) => (
-  <div className="flex items-center justify-between gap-4 rounded-[1.3rem] border border-slate-200 bg-slate-50 px-4 py-4">
-    <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-emerald-700 shadow-sm">
-        <Icon size={18} />
+const RegisterHeader = ({ title, count, search }) => (
+  <div className="mt-10 border-t border-slate-200 pt-8">
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div>
+        <h4 className="text-xl font-black tracking-tight text-slate-950">{title}</h4>
+        <p className="mt-1 text-sm text-slate-500">Saved data appears below in row and column format.</p>
       </div>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-black text-slate-950">{title}</p>
-        <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{subtitle}</p>
-      </div>
+      <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-600">{count}</div>
     </div>
-    <StatusBadge text={badge} />
+    <div className="mt-4">{search}</div>
   </div>
 );
 
-const EmptyInline = ({ text }) => (
-  <div className="rounded-[1.2rem] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-semibold text-slate-500">
-    {text}
-  </div>
-);
-
-const SummaryMini = ({ text }) => (
-  <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-600">
-    {text}
-  </div>
-);
-
-const ExcelTable = ({ className = '', children }) => (
-  <div className={`overflow-hidden rounded-[1.6rem] border border-slate-200 ${className}`}>
-    <div className="overflow-x-auto">{children}</div>
-  </div>
-);
-
-const Th = ({ children, noBorder = false }) => (
-  <th className={`border-b border-slate-200 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600 ${noBorder ? '' : 'border-r'}`}>
-    {children}
-  </th>
-);
-
-const Td = ({ children, noBorder = false }) => (
-  <td className={`border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 ${noBorder ? '' : 'border-r'}`}>
-    {children}
-  </td>
-);
-
-const StatusBadge = ({ text }) => (
-  <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">
-    {text}
-  </span>
-);
-
-const InputField = ({ label, ...props }) => (
-  <div className="space-y-2.5">
+const InputField = ({ label, error, wide = false, ...props }) => (
+  <div className={`space-y-2.5 ${wide ? 'md:col-span-2 xl:col-span-3' : ''}`}>
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <input
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white ${
+        error ? 'border-rose-300 focus:border-rose-500 focus:ring-4 focus:ring-rose-100' : 'border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100'
+      }`}
       {...props}
     />
+    {error ? <p className="text-xs font-bold text-rose-600">{error}</p> : null}
   </div>
 );
 
-const SelectField = ({ label, options, renderOptionLabel, ...props }) => (
+const SelectField = ({ label, options, renderOptionLabel, error, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white ${
+        error ? 'border-rose-300 focus:border-rose-500 focus:ring-4 focus:ring-rose-100' : 'border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100'
+      }`}
       {...props}
     >
       {options.map((option) => (
@@ -763,6 +964,7 @@ const SelectField = ({ label, options, renderOptionLabel, ...props }) => (
         </option>
       ))}
     </select>
+    {error ? <p className="text-xs font-bold text-rose-600">{error}</p> : null}
   </div>
 );
 
@@ -781,21 +983,188 @@ const SearchInput = ({ value, onChange, placeholder }) => (
 const PrimaryButton = ({ type, icon: Icon, label }) => (
   <button
     type={type}
-    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600"
+    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
   >
     <Icon size={15} />
     {label}
   </button>
 );
 
-const EmptyState = ({ icon: Icon, title, description }) => (
-  <div className="rounded-[1.8rem] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center">
-    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
-      <Icon size={34} />
-    </div>
-    <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h4>
-    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">{description}</p>
+const ExcelTable = ({ children }) => (
+  <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
+    <div className="overflow-x-auto">{children}</div>
   </div>
 );
+
+const Th = ({ children, noBorder = false }) => (
+  <th className={`border-b border-slate-200 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600 ${noBorder ? '' : 'border-r'}`}>
+    {children}
+  </th>
+);
+
+const Td = ({ children, noBorder = false }) => (
+  <td className={`border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 ${noBorder ? '' : 'border-r'}`}>
+    {children}
+  </td>
+);
+
+const MiniMetric = ({ label, value }) => (
+  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{label}</p>
+    <p className="mt-1 text-base font-black text-slate-950">{value}</p>
+  </div>
+);
+
+const StatusBadge = ({ text }) => (
+  <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">
+    {text}
+  </span>
+);
+
+const IconButton = ({ icon: Icon, onClick }) => (
+  <button type="button" onClick={onClick} className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600">
+    <Icon size={16} />
+  </button>
+);
+
+const EmptyState = ({ icon: Icon, title, description }) => (
+  <div className="mt-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-14 text-center">
+    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-slate-300 shadow-sm">
+      <Icon size={30} />
+    </div>
+    <h4 className="mt-5 font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h4>
+    <p className="mx-auto mt-2 max-w-md text-sm leading-7 text-slate-500">{description}</p>
+  </div>
+);
+
+function sectionTitle(section) {
+  return {
+    hostels: 'Hostel Management',
+    rooms: 'Room Management',
+    'room-generator': 'Generate Rooms',
+    allotment: 'Student Allotment',
+  }[section] || 'Hostel Workspace';
+}
+
+function filterRecords(records, query, fields) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return records;
+  return records.filter((record) => fields.some((field) => String(record[field] || '').toLowerCase().includes(normalizedQuery)));
+}
+
+function validateHostelForm(form) {
+  const errors = {};
+  if (!String(form.hostelName || '').trim()) errors.hostelName = 'Hostel name is required.';
+  if (!form.hostelType) errors.hostelType = 'Select hostel type.';
+  if ((Number(form.totalFloors) || 0) < 1) errors.totalFloors = 'Total floors must be at least 1.';
+  if (form.contactNumber && !/^\d{10}$/.test(form.contactNumber)) errors.contactNumber = 'Contact number must contain 10 digits.';
+  return errors;
+}
+
+function validateBulkRoomForm(form) {
+  const errors = {};
+  const floorNumber = Number(form.floorNumber);
+  const startRoomNumber = Number(form.startRoomNumber);
+  const endRoomNumber = Number(form.endRoomNumber);
+  if (!form.hostelId) errors.hostelId = 'Select hostel.';
+  if (!Number.isInteger(floorNumber) || floorNumber < 1) errors.floorNumber = 'Select floor number.';
+  if (!Number.isInteger(startRoomNumber) || startRoomNumber < 1) errors.startRoomNumber = 'Start room number must be at least 1.';
+  if (!Number.isInteger(endRoomNumber) || endRoomNumber < startRoomNumber) errors.endRoomNumber = 'End room number must be same or greater than start room number.';
+  if (endRoomNumber - startRoomNumber + 1 > 300) errors.endRoomNumber = 'Generate 300 rooms or fewer at a time.';
+  if ((Number(form.capacity) || 0) < 1) errors.capacity = 'Students per room must be at least 1.';
+  return errors;
+}
+
+function validateResidentForm(form) {
+  const errors = {};
+  if (!form.className) errors.className = 'Select class.';
+  if (!form.section) errors.section = 'Select section.';
+  if (!form.studentId) errors.studentId = 'Select student.';
+  if (!form.roomId) errors.roomId = 'Select room.';
+  if (!form.checkInDate) errors.checkInDate = 'Joining date is required.';
+  if (form.guardianContact && !/^\d{10}$/.test(form.guardianContact)) errors.guardianContact = 'Guardian contact must contain 10 digits.';
+  if (form.emergencyContact && !/^\d{10}$/.test(form.emergencyContact)) errors.emergencyContact = 'Emergency contact must contain 10 digits.';
+  return errors;
+}
+
+function generateRoomPreview(form, hostels) {
+  const hostel = hostels.find((entry) => String(entry.id) === String(form.hostelId));
+  const floorNumber = Number(form.floorNumber);
+  const startRoomNumber = Number(form.startRoomNumber);
+  const endRoomNumber = Number(form.endRoomNumber);
+  const rows = [];
+
+  for (let roomSuffix = startRoomNumber; roomSuffix <= endRoomNumber; roomSuffix += 1) {
+    const roomNumber = `${floorNumber}${String(roomSuffix).padStart(2, '0')}`;
+    rows.push({
+      previewId: `${form.hostelId}-${floorNumber}-${roomNumber}`,
+      hostelId: Number(form.hostelId),
+      hostelName: hostel?.hostelName || 'Hostel',
+      roomNumber,
+      floorLabel: String(floorNumber),
+      capacity: Math.max(Number(form.capacity) || 1, 1),
+      acType: form.acType,
+    });
+  }
+
+  return rows;
+}
+
+function shouldUppercase(field) {
+  return ['hostelName', 'wardenName', 'roomNumber'].includes(field);
+}
+
+function normalizeFloorValue(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/\d+/);
+  return match ? match[0] : text;
+}
+
+function floorOptions(hostelId, hostels) {
+  const hostel = hostels.find((entry) => String(entry.id) === String(hostelId));
+  const totalFloors = Math.max(Number(hostel?.totalFloors) || 0, 0);
+  return Array.from({ length: totalFloors }, (_, index) => String(index + 1));
+}
+
+function digitsOnly(value, limit) {
+  return String(value || '').replace(/\D/g, '').slice(0, limit);
+}
+
+function roomCharge(room) {
+  return room?.monthlyCharge ? String(room.monthlyCharge) : '';
+}
+
+function getVacantBeds(room) {
+  return Math.max((Number(room?.capacity) || 0) - (Number(room?.occupiedBeds) || 0), 0);
+}
+
+function isActiveResident(resident) {
+  return String(resident?.status || 'active').toLowerCase() === 'active' && !resident?.checkOutDate;
+}
+
+function hostelLabel(value, hostels) {
+  if (!value) return 'Select hostel';
+  const hostel = hostels.find((entry) => String(entry.id) === String(value));
+  return hostel ? `${hostel.hostelName} | ${hostel.hostelType}` : 'Select hostel';
+}
+
+function studentLabel(value, students) {
+  if (!value) return 'Select student';
+  const student = students.find((entry) => String(entry.id) === String(value));
+  return student ? `${studentName(student)} | ${getStudentClass(student) || '-'} | ${student.section || '-'}` : 'Select student';
+}
+
+function studentName(student) {
+  return `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || student?.enrollmentNo || 'Student';
+}
+
+function studentContact(studentId, students) {
+  const student = students.find((entry) => String(entry.id) === String(studentId));
+  return digitsOnly(student?.guardianPhone || student?.fatherMobile || student?.mobileNumber || '', 10);
+}
+
+function getStudentClass(student) {
+  return student?.className || student?.assignedClass || '';
+}
 
 export default HostelManagement;

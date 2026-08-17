@@ -260,6 +260,12 @@ export const hostelApi = {
       body: JSON.stringify(payload),
     })),
 
+  saveRooms: (payload) =>
+    request('/hostel/rooms/bulk', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
   deleteRoom: (id) =>
     request(`/hostel/rooms/${id}`, withInstituteHeaders({
       method: 'DELETE',
@@ -271,6 +277,11 @@ export const hostelApi = {
     request('/hostel/residents', withInstituteHeaders({
       method: 'POST',
       body: JSON.stringify(payload),
+    })),
+
+  vacateResident: (id) =>
+    request(`/hostel/residents/${id}/vacate`, withInstituteHeaders({
+      method: 'PATCH',
     })),
 
   deleteResident: (id) =>

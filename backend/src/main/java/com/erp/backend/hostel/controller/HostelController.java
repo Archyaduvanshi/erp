@@ -14,6 +14,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -74,6 +75,15 @@ public class HostelController {
         return hostelService.saveRoom(instituteId, request);
     }
 
+    @PostMapping("/rooms/bulk")
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<HostelRoomResponse> saveRooms(
+            @RequestHeader("X-Institute-Id") Long instituteId,
+            @Valid @RequestBody List<@Valid HostelRoomPayload> requests
+    ) {
+        return hostelService.saveRooms(instituteId, requests);
+    }
+
     @DeleteMapping("/rooms/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteRoom(
@@ -95,6 +105,14 @@ public class HostelController {
             @Valid @RequestBody HostelResidentPayload request
     ) {
         return hostelService.saveResident(instituteId, request);
+    }
+
+    @PatchMapping("/residents/{id}/vacate")
+    public HostelResidentResponse vacateResident(
+            @RequestHeader("X-Institute-Id") Long instituteId,
+            @PathVariable Long id
+    ) {
+        return hostelService.vacateResident(instituteId, id);
     }
 
     @DeleteMapping("/residents/{id}")
