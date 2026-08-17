@@ -1,15 +1,39 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { GraduationCap, Lock, User, ArrowRight, ShieldCheck, AlertCircle, Eye, EyeOff } from 'lucide-react';
-import { instituteApi, studentApi, teacherApi } from '../utils/api';
+import { instituteApi, settingsApi, studentApi, teacherApi } from '../utils/api';
 import { activateDemoSession, demoCredentials, getSchoolDemoSummary, seedDemoData } from '../utils/demoData';
 
 const schoolDemoSummary = getSchoolDemoSummary();
+const FEATURE_ROLES = [
+  { value: 'admissionStudent', label: 'Admission Student', route: '/college/students' },
+  { value: 'teacherFeature', label: 'Teacher Management', route: '/college/teachers', accessKey: 'teacher' },
+  { value: 'library', label: 'Library', route: '/college/library' },
+  { value: 'hostel', label: 'Hostel', route: '/college/hostel' },
+  { value: 'fees', label: 'Fees', route: '/college/fees' },
+  { value: 'transport', label: 'Transport', route: '/college/transport' },
+  { value: 'attendance', label: 'Attendance', route: '/college/attendance' },
+  { value: 'courses', label: 'Course & Subject', route: '/college/courses' },
+  { value: 'examinations', label: 'Examination', route: '/college/examinations' },
+  { value: 'timetable', label: 'Timetable', route: '/college/timetable' },
+  { value: 'salary', label: 'Salary', route: '/college/salary' },
+  { value: 'notices', label: 'Notice', route: '/college/notices' },
+  { value: 'holidays', label: 'Holiday', route: '/college/holidays' },
+];
+
+const defaultRoleOptions = [
+  { value: '', label: 'Select' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'teacher', label: 'Teacher' },
+  { value: 'student', label: 'Student' },
+  ...FEATURE_ROLES,
+];
+
 const Login = () => {
   const navigate = useNavigate();
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
-  const [loginRole, setLoginRole] = useState('admin');
+  const [loginRole, setLoginRole] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
@@ -31,6 +55,12 @@ const Login = () => {
     e.preventDefault();
     setError('');
     setFieldErrors({});
+
+    if (!loginRole) {
+      setError('Please select a role.');
+      setFieldErrors({ role: 'Please select a role.' });
+      return;
+    }
 
     if (loginRole === 'admin') {
       try {
@@ -59,6 +89,37 @@ const Login = () => {
     }
 
     const credential = formData.username.trim();
+
+    const featureRole = FEATURE_ROLES.find((role) => role.value === loginRole);
+    if (featureRole) {
+      try {
+        const featureUser = await settingsApi.featureLogin({
+          username: credential,
+          feature: featureRole.accessKey || featureRole.value,
+          password: formData.password,
+        });
+
+        localStorage.setItem('active_session', JSON.stringify({
+          username: featureUser.username,
+          instituteName: featureUser.instituteName,
+          type: featureUser.type,
+          role: 'feature',
+          featureRole: featureUser.featureRole,
+          featureLabel: featureRole.label,
+          allowedPath: featureRole.route,
+          logo: featureUser.logo,
+        }));
+        localStorage.setItem('current_college_id', String(featureUser.id));
+        navigate(featureRole.route);
+        return;
+      } catch (apiError) {
+        setError(apiError.message);
+        setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
+          ? apiError.fieldErrors
+          : { username: apiError.message, password: apiError.message });
+        return;
+      }
+    }
 
     if (loginRole === 'teacher') {
       try {
@@ -151,56 +212,17 @@ const Login = () => {
       <div className="lg:flex-1 p-8 lg:p-20 flex flex-col items-center justify-center">
         <div className="w-full max-w-md bg-white shadow-2xl shadow-slate-200/50 rounded-4xl border border-slate-100 p-8 md:p-12">
           <div className="mb-10 text-center">
-            <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginRole('admin');
-                  setError('');
-                  setFieldErrors({});
-                }}
-                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition ${
-                  loginRole === 'admin' ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-white'
-                }`}
-              >
-                Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginRole('teacher');
-                  setError('');
-                  setFieldErrors({});
-                }}
-                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition ${
-                  loginRole === 'teacher' ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-white'
-                }`}
-              >
-                Teacher
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginRole('student');
-                  setError('');
-                  setFieldErrors({});
-                }}
-                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition ${
-                  loginRole === 'student' ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-white'
-                }`}
-              >
-                Student
-              </button>
-            </div>
-            <h1 className="mt-5 text-3xl font-black text-slate-950 mb-2 tracking-tighter uppercase italic">
-              {loginRole === 'admin' ? 'Admin Login' : loginRole === 'teacher' ? 'Teacher Login' : 'Student Login'}
+            <h1 className="text-3xl font-black text-slate-950 mb-2 tracking-tighter uppercase italic">
+              {loginRole ? resolveRoleLabel(loginRole) : 'User'} Login
             </h1>
             <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">
               {loginRole === 'admin'
                 ? 'Enter institution credentials'
                 : loginRole === 'teacher'
                   ? 'Use teacher ID or phone with the password given by the college'
-                  : 'Use student ID, enrollment number, or phone with the portal password'}
+                  : loginRole === 'student'
+                    ? 'Use student ID, enrollment number, or phone with the portal password'
+                    : featureRoleDescription(loginRole)}
             </p>
           </div>
 
@@ -213,9 +235,9 @@ const Login = () => {
 
           <form onSubmit={handleLogin} className="space-y-8">
             <InputGroup 
-              label={loginRole === 'admin' ? 'Institution Username' : loginRole === 'teacher' ? 'Teacher ID Or Phone' : 'Student ID, Enrollment No, Or Phone'}
+              label={loginRole === 'admin' || FEATURE_ROLES.some((role) => role.value === loginRole) ? 'Institution Username' : loginRole === 'teacher' ? 'Teacher ID Or Phone' : 'Student ID, Enrollment No, Or Phone'}
               icon={User} 
-              placeholder={loginRole === 'admin' ? 'e.g. stanford_01' : loginRole === 'teacher' ? 'TCH-EMP-1001 or +91 98XXXXXXX' : 'EDU-1001, 2026-BTECH-014, or +91 98XXXXXXX'} 
+              placeholder={loginRole === 'admin' || FEATURE_ROLES.some((role) => role.value === loginRole) ? 'Enter institution username' : loginRole === 'teacher' ? 'Enter teacher ID or phone' : 'Enter student ID, enrollment no, or phone'} 
               value={formData.username}
               onChange={(e) => {
                 setFormData({...formData, username: e.target.value});
@@ -223,6 +245,17 @@ const Login = () => {
               }}
               error={fieldErrors.username}
               required 
+            />
+
+            <RoleSelect
+              value={loginRole}
+              onChange={(value) => {
+                setLoginRole(value);
+                setError('');
+                setFieldErrors({});
+              }}
+              options={defaultRoleOptions}
+              error={fieldErrors.role}
             />
             
             <div className="space-y-2">
@@ -258,7 +291,13 @@ const Login = () => {
             </div>
 
             <button className="w-full bg-slate-950 text-white py-6 rounded-3xl font-black uppercase tracking-widest text-sm hover:bg-blue-600 hover:-translate-y-1 transition-all shadow-2xl shadow-blue-100 active:scale-95 flex items-center justify-center gap-3 group">
-              {loginRole === 'admin' ? 'Enter Dashboard' : loginRole === 'teacher' ? 'Enter Teacher Portal' : 'Enter Student Portal'}
+              {loginRole === 'admin'
+                ? 'Enter Dashboard'
+                : loginRole === 'teacher'
+                  ? 'Enter Teacher Portal'
+                  : loginRole === 'student'
+                    ? 'Enter Student Portal'
+                    : `Enter ${resolveRoleLabel(loginRole)}`}
               <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </form>
@@ -299,6 +338,36 @@ const Login = () => {
     </div>
   );
 };
+
+const resolveRoleLabel = (value) => defaultRoleOptions.find((option) => option.value === value)?.label || 'User';
+const featureRoleDescription = (value) => (
+  FEATURE_ROLES.some((role) => role.value === value)
+    ? 'Use institution username with the selected feature password'
+    : 'Select role to continue'
+);
+
+const RoleSelect = ({ value, onChange, options, error }) => (
+  <div className="space-y-2 text-left">
+    <label className={`text-[10px] font-black uppercase tracking-widest ${error ? 'text-rose-500' : 'text-slate-400'}`}>Select Role</label>
+    <div className="relative">
+      <ShieldCheck className={`absolute left-5 top-1/2 -translate-y-1/2 ${error ? 'text-rose-400' : 'text-slate-300'}`} size={18} />
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={`w-full appearance-none rounded-2xl border bg-slate-50 py-4 pl-12 pr-5 text-sm font-bold text-slate-900 outline-none transition-all ${
+          error
+            ? 'border-rose-300 focus:border-rose-500 focus:ring-4 focus:ring-rose-50'
+            : 'border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-50'
+        }`}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </div>
+    {error && <p className="text-[11px] font-bold leading-5 text-rose-600">{error}</p>}
+  </div>
+);
 
 const InputGroup = ({ label, icon: Icon, type = "text", error, rightElement, ...props }) => (
   <div className="space-y-2 text-left">

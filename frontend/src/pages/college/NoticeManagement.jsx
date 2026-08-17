@@ -20,6 +20,7 @@ import {
 import { noticeApi } from '../../utils/api';
 
 const today = new Date().toISOString().split('T')[0];
+const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
 
 const initialNoticeForm = {
   title: '',
@@ -48,7 +49,7 @@ const NoticeManagement = () => {
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    if (!session || session.role !== 'admin' || !collegeId) {
+    if (!isCollegeModuleSession(session) || !collegeId) {
       navigate('/login');
       return;
     }
@@ -186,7 +187,7 @@ const NoticeManagement = () => {
     }
   };
 
-  if (!session || session.role !== 'admin' || !collegeId) return null;
+  if (!isCollegeModuleSession(session) || !collegeId) return null;
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef6ff_42%,#ffffff_100%)] pb-16 text-slate-900">

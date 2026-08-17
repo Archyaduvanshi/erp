@@ -14,6 +14,8 @@ import {
   normalizeTeacherSalary,
 } from '../../utils/salaryUtils';
 
+const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
+
 const useSalaryTeachers = (navigate) => {
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
   const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
@@ -21,7 +23,7 @@ const useSalaryTeachers = (navigate) => {
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    if (!session || session.role !== 'admin' || !collegeId) {
+    if (!isCollegeModuleSession(session) || !collegeId) {
       navigate('/login');
       return;
     }
@@ -60,7 +62,7 @@ const SalaryManagement = () => {
   const { teacherId } = useParams();
   const data = useSalaryTeachers(navigate);
 
-  if (!data.session || data.session.role !== 'admin' || !data.collegeId) return null;
+  if (!isCollegeModuleSession(data.session) || !data.collegeId) return null;
 
   return teacherId
     ? <SalaryTeacherDetails {...data} teacherId={teacherId} navigate={navigate} />

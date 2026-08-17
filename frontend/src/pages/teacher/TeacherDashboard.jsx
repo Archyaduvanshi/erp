@@ -17,12 +17,9 @@ import {
   UserRound,
 } from 'lucide-react';
 import { db } from '../../utils/db';
-import { attendanceApi, holidayApi, noticeApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { attendanceApi, noticeApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
 import { getCurrentMonthSalaryStatus, normalizeTeacherSalary } from '../../utils/salaryUtils';
 import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
-
-const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
-const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
 
 const TeacherDashboard = () => {
   const navigate = useNavigate();
@@ -33,7 +30,6 @@ const TeacherDashboard = () => {
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [examSlots] = useState(() => db.getAll('timetable_exam_slots'));
   const [notices, setNotices] = useState([]);
-  const [holidays, setHolidays] = useState([]);
   const [loadError, setLoadError] = useState('');
 
   const teacher = useMemo(() => {
@@ -69,7 +65,7 @@ const TeacherDashboard = () => {
   const todayAttendanceCount = teacherAttendance.filter((record) => record.date === today).length;
   const upcomingExamCount = teacherExamDuty.filter((slot) => slot.examDate >= today).length;
   const currentSalaryStatus = getCurrentMonthSalaryStatus(teacher);
-  const portalNotices = useMemo(() => getPortalNotices(notices, 'teacher', '', holidays), [holidays, notices]);
+  const portalNotices = useMemo(() => getPortalNotices(notices, 'teacher'), [notices]);
 
   const handleLogout = () => {
     localStorage.removeItem('active_session');
@@ -86,20 +82,18 @@ const TeacherDashboard = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse, noticeResponse, holidayResponse] = await Promise.all([
+        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse, noticeResponse] = await Promise.all([
           teacherApi.getAll(),
           studentApi.getAll(),
           timetableApi.getClassTimetables(),
           attendanceApi.getAll(),
-          noticeApi.getAll(),
-          holidayApi.getAll(),
+          noticeApi.getPortalAll(),
         ]);
         setTeachers(teacherResponse);
         setStudents(studentResponse);
         setClassTimetables(timetableResponse);
         setAttendanceRecords(attendanceResponse);
         setNotices(noticeResponse);
-        setHolidays(holidayResponse);
         setLoadError('');
       } catch (error) {
         setTeachers([]);
@@ -107,7 +101,6 @@ const TeacherDashboard = () => {
         setClassTimetables([]);
         setAttendanceRecords([]);
         setNotices([]);
-        setHolidays([]);
         setLoadError(error.message || 'Unable to load dashboard data.');
       }
     };
@@ -115,36 +108,6 @@ const TeacherDashboard = () => {
     if (session?.role === 'teacher') {
       loadData();
     }
-  }, [session]);
-
-  useEffect(() => {
-    if (!session || session.role !== 'teacher') return undefined;
-
-    let isMounted = true;
-    const refreshHolidays = async () => {
-      try {
-        const holidayResponse = await holidayApi.getAll();
-        if (isMounted) setHolidays(holidayResponse);
-      } catch {
-        // Keep the last good holiday list if a background refresh fails.
-      }
-    };
-    const handleStorage = (event) => {
-      if (event.key === HOLIDAY_NOTICE_STORAGE_KEY) refreshHolidays();
-    };
-
-    window.addEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('focus', refreshHolidays);
-    const intervalId = window.setInterval(refreshHolidays, 10000);
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('focus', refreshHolidays);
-      window.clearInterval(intervalId);
-    };
   }, [session]);
 
   if (!session || session.role !== 'teacher') return null;

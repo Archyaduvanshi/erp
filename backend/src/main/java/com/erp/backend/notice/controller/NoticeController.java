@@ -33,6 +33,11 @@ public class NoticeController {
         return noticeService.getNotices(instituteId);
     }
 
+    @GetMapping("/portal")
+    public List<NoticeResponse> getPortalNotices(@RequestHeader("X-Institute-Id") Long instituteId) {
+        return noticeService.getPortalNotices(instituteId);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public NoticeResponse createNotice(

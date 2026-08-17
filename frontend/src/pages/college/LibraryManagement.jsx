@@ -14,6 +14,7 @@ import {
 import { libraryApi, studentApi } from '../../utils/api';
 
 const today = new Date().toISOString().split('T')[0];
+const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
 
 const initialBookForm = {
   isbn: '',
@@ -53,7 +54,7 @@ const LibraryManagement = () => {
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    if (!session || session.role !== 'admin' || !collegeId) {
+    if (!isCollegeModuleSession(session) || !collegeId) {
       navigate('/login');
       return;
     }
@@ -304,7 +305,7 @@ const LibraryManagement = () => {
     }
   };
 
-  if (!session || session.role !== 'admin' || !collegeId) return null;
+  if (!isCollegeModuleSession(session) || !collegeId) return null;
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f5fbf7_0%,#eefaf0_32%,#f8fafc_100%)] text-slate-900">

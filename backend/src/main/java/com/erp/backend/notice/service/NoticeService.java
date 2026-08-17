@@ -34,6 +34,14 @@ public class NoticeService {
                 .toList();
     }
 
+    public List<NoticeResponse> getPortalNotices(Long instituteId) {
+        validateInstitute(instituteId);
+        return noticeRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     @Transactional
     public NoticeResponse createNotice(Long instituteId, NoticePayload request) {
         Institute institute = validateInstitute(instituteId);

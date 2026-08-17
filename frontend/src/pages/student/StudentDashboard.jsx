@@ -17,13 +17,10 @@ import {
   ScrollText,
   UserRound,
 } from 'lucide-react';
-import { attendanceApi, examApi, feeApi, holidayApi, libraryApi, noticeApi, studentApi, timetableApi, transportApi } from '../../utils/api';
+import { attendanceApi, examApi, feeApi, libraryApi, noticeApi, studentApi, timetableApi, transportApi } from '../../utils/api';
 import { getFeeFacilityKey, isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
 import { buildFeeRow, formatMoney } from '../../utils/feeUtils';
 import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
-
-const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
-const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
@@ -39,7 +36,6 @@ const StudentDashboard = () => {
   const [feeStructures, setFeeStructures] = useState([]);
   const [feePayments, setFeePayments] = useState([]);
   const [notices, setNotices] = useState([]);
-  const [holidays, setHolidays] = useState([]);
   const [loadError, setLoadError] = useState('');
 
   const studentName = student
@@ -152,8 +148,8 @@ const StudentDashboard = () => {
   }, [studentFeeRows]);
 
   const portalNotices = useMemo(
-    () => getPortalNotices(notices, 'student', student?.assignedClass || student?.className, holidays, student?.id),
-    [holidays, notices, student],
+    () => getPortalNotices(notices, 'student', student?.assignedClass || student?.className, [], student?.id),
+    [notices, student],
   );
 
   const handleLogout = () => {
@@ -170,7 +166,7 @@ const StudentDashboard = () => {
 
     const loadStudentDashboard = async () => {
       try {
-        const [studentResponse, timetableResponse, assignmentResponse, bookResponse, issueResponse, attendanceResponse, dateSheetResponse, admitCardResponse, noticeResponse, holidayResponse, feeStructureResponse, feePaymentResponse] = await Promise.all([
+        const [studentResponse, timetableResponse, assignmentResponse, bookResponse, issueResponse, attendanceResponse, dateSheetResponse, admitCardResponse, noticeResponse, feeStructureResponse, feePaymentResponse] = await Promise.all([
           studentApi.getById(session.studentId),
           timetableApi.getClassTimetables(),
           transportApi.getAssignments(),
@@ -179,8 +175,7 @@ const StudentDashboard = () => {
           attendanceApi.getAll(),
           examApi.getDateSheets(),
           examApi.getAdmitCards(),
-          noticeApi.getAll(),
-          holidayApi.getAll(),
+          noticeApi.getPortalAll(),
           feeApi.getStructures(),
           feeApi.getPayments(session.studentId),
         ]);
@@ -193,7 +188,6 @@ const StudentDashboard = () => {
         setDateSheets(dateSheetResponse);
         setAdmitCards(admitCardResponse);
         setNotices(noticeResponse);
-        setHolidays(holidayResponse);
         setFeeStructures(feeStructureResponse);
         setFeePayments(feePaymentResponse);
         setLoadError('');
@@ -207,7 +201,6 @@ const StudentDashboard = () => {
         setDateSheets([]);
         setAdmitCards([]);
         setNotices([]);
-        setHolidays([]);
         setFeeStructures([]);
         setFeePayments([]);
         setLoadError('Unable to load student dashboard data.');
@@ -216,36 +209,6 @@ const StudentDashboard = () => {
 
     loadStudentDashboard();
   }, [navigate, session]);
-
-  useEffect(() => {
-    if (!session || session.role !== 'student') return undefined;
-
-    let isMounted = true;
-    const refreshHolidays = async () => {
-      try {
-        const holidayResponse = await holidayApi.getAll();
-        if (isMounted) setHolidays(holidayResponse);
-      } catch {
-        // Keep the last good holiday list if a background refresh fails.
-      }
-    };
-    const handleStorage = (event) => {
-      if (event.key === HOLIDAY_NOTICE_STORAGE_KEY) refreshHolidays();
-    };
-
-    window.addEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('focus', refreshHolidays);
-    const intervalId = window.setInterval(refreshHolidays, 10000);
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('focus', refreshHolidays);
-      window.clearInterval(intervalId);
-    };
-  }, [session]);
 
   if (!session || session.role !== 'student') return null;
 

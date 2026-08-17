@@ -92,7 +92,11 @@ const Dashboard = () => {
                 </p>
                 <span className="rounded bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-700">Active Session</span>
               </div>
-              <button className="rounded-lg bg-slate-50 p-2 text-slate-400 transition-all hover:text-blue-600">
+              <button
+                onClick={() => navigate('/college/settings')}
+                className="rounded-lg bg-slate-50 p-2 text-slate-400 transition-all hover:text-blue-600"
+                aria-label="Open settings"
+              >
                 <Settings size={18} />
               </button>
             </div>

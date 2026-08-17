@@ -9,6 +9,8 @@ import com.erp.backend.institute.dto.InstituteAuthResponse;
 import com.erp.backend.institute.dto.InstituteLoginRequest;
 import com.erp.backend.institute.dto.InstituteResponse;
 import com.erp.backend.institute.dto.RegisterInstituteRequest;
+import com.erp.backend.institute.dto.UpdateInstituteRequest;
+import com.erp.backend.settings.dto.ChangeAdminPasswordRequest;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -66,6 +68,46 @@ public class InstituteService {
         Institute institute = instituteRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + id));
         return instituteMapper.toResponse(institute);
+    }
+
+    public InstituteResponse updateInstitute(Long id, UpdateInstituteRequest request) {
+        Institute institute = instituteRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + id));
+
+        institute.setInstituteName(normalizeUppercase(request.getInstituteName()));
+        institute.setType(normalizeUppercase(request.getType()));
+        institute.setAffiliationNo(normalizeUppercase(request.getAffiliationNo()));
+        institute.setAffiliatedFrom(normalizeUppercase(request.getAffiliatedFrom()));
+        institute.setContact(onlyDigits(request.getContact()));
+        institute.setEmail(request.getEmail().trim().toLowerCase());
+        institute.setWebsite(normalizeOptional(request.getWebsite()));
+        institute.setAddress(normalizeUppercase(request.getAddress()));
+        institute.setState(normalizeUppercase(request.getState()));
+        institute.setCity(normalizeUppercase(request.getCity()));
+        institute.setPincode(onlyDigits(request.getPincode()));
+
+        return instituteMapper.toResponse(instituteRepository.save(institute));
+    }
+
+    public void changePassword(Long id, ChangeAdminPasswordRequest request) {
+        if (!request.newPassword().equals(request.confirmPassword())) {
+            throw new FieldValidationException(
+                    "New password and confirm password do not match.",
+                    Map.of("confirmPassword", "New password and confirm password do not match.")
+            );
+        }
+
+        Institute institute = instituteRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + id));
+        if (!passwordEncoder.matches(request.currentPassword(), institute.getPasswordHash())) {
+            throw new FieldValidationException(
+                    "Current password is incorrect.",
+                    Map.of("currentPassword", "Current password is incorrect.")
+            );
+        }
+
+        institute.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        instituteRepository.save(institute);
     }
 
     private void validateRegistrationRequest(RegisterInstituteRequest request) {

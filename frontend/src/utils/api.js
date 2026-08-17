@@ -61,6 +61,51 @@ export const instituteApi = {
     }),
 
   getById: (id) => request(`/institutes/${id}`),
+
+  update: (id, payload) =>
+    request(`/institutes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  changePassword: (id, payload) =>
+    request(`/institutes/${id}/password`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+
+export const settingsApi = {
+  get: () => request('/settings', withInstituteHeaders()),
+
+  savePreferences: (payload) =>
+    request('/settings/preferences', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  saveNotifications: (payload) =>
+    request('/settings/notifications', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  saveFeatureAccess: (payload) =>
+    request('/settings/feature-access', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  featureLogin: (payload) =>
+    request('/settings/feature-login', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  reset: () =>
+    request('/settings', withInstituteHeaders({
+      method: 'DELETE',
+    })),
 };
 
 const withInstituteHeaders = (options = {}) => {
@@ -410,6 +455,8 @@ export const marksApi = {
 
 export const noticeApi = {
   getAll: () => request('/notices', withInstituteHeaders()),
+
+  getPortalAll: () => request('/notices/portal', withInstituteHeaders()),
 
   create: (payload) =>
     request('/notices', withInstituteHeaders({

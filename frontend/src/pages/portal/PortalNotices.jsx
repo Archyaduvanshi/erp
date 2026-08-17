@@ -11,17 +11,13 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { holidayApi, noticeApi, studentApi } from '../../utils/api';
+import { noticeApi, studentApi } from '../../utils/api';
 import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
-
-const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
-const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
 
 const PortalNotices = ({ role }) => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
   const [notices, setNotices] = useState([]);
-  const [holidays, setHolidays] = useState([]);
   const [student, setStudent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('All');
@@ -36,18 +32,15 @@ const PortalNotices = ({ role }) => {
 
     const loadNotices = async () => {
       try {
-        const [noticeResponse, holidayResponse, studentResponse] = await Promise.all([
-          noticeApi.getAll(),
-          holidayApi.getAll(),
+        const [noticeResponse, studentResponse] = await Promise.all([
+          noticeApi.getPortalAll(),
           role === 'student' && session.studentId ? studentApi.getById(session.studentId) : Promise.resolve(null),
         ]);
         setNotices(noticeResponse);
-        setHolidays(holidayResponse);
         setStudent(studentResponse);
         setLoadError('');
       } catch (error) {
         setNotices([]);
-        setHolidays([]);
         setStudent(null);
         setLoadError(error.message || 'Unable to load notices.');
       }
@@ -56,39 +49,9 @@ const PortalNotices = ({ role }) => {
     loadNotices();
   }, [navigate, role, session]);
 
-  useEffect(() => {
-    if (!session || session.role !== role) return undefined;
-
-    let isMounted = true;
-    const refreshHolidays = async () => {
-      try {
-        const holidayResponse = await holidayApi.getAll();
-        if (isMounted) setHolidays(holidayResponse);
-      } catch {
-        // Keep the last good holiday list if a background refresh fails.
-      }
-    };
-    const handleStorage = (event) => {
-      if (event.key === HOLIDAY_NOTICE_STORAGE_KEY) refreshHolidays();
-    };
-
-    window.addEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('focus', refreshHolidays);
-    const intervalId = window.setInterval(refreshHolidays, 10000);
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener(HOLIDAY_NOTICE_EVENT, refreshHolidays);
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('focus', refreshHolidays);
-      window.clearInterval(intervalId);
-    };
-  }, [role, session]);
-
   const portalNotices = useMemo(
-    () => getPortalNotices(notices, role, student?.assignedClass || student?.className, holidays, student?.id),
-    [holidays, notices, role, student],
+    () => getPortalNotices(notices, role, student?.assignedClass || student?.className, [], student?.id),
+    [notices, role, student],
   );
 
   const filteredNotices = useMemo(() => {

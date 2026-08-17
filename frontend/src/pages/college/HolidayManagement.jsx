@@ -12,8 +12,7 @@ import {
 import { holidayApi, studentApi } from '../../utils/api';
 
 const today = getLocalDateKey();
-const HOLIDAY_NOTICE_EVENT = 'holiday-notice-updated';
-const HOLIDAY_NOTICE_STORAGE_KEY = 'holiday_notice_updated_at';
+const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
 
 const initialHolidayForm = {
   title: '',
@@ -35,7 +34,7 @@ const HolidayManagement = () => {
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    if (!session || session.role !== 'admin' || !collegeId) {
+    if (!isCollegeModuleSession(session) || !collegeId) {
       navigate('/login');
       return;
     }
@@ -113,7 +112,6 @@ const HolidayManagement = () => {
         notes,
       });
 
-      notifyHolidayNoticeUpdate();
       setHolidayForm({
         ...initialHolidayForm,
         holidayDate,
@@ -129,7 +127,6 @@ const HolidayManagement = () => {
     if (!window.confirm('Delete this holiday entry?')) return;
     try {
       await holidayApi.delete(holidayId);
-      notifyHolidayNoticeUpdate();
       await refreshData();
       setLoadError('');
     } catch (error) {
@@ -528,12 +525,6 @@ function getHolidaySortTime(holiday) {
   const dateValue = holiday.updatedAt || holiday.createdAt || holiday.holidayDate || 0;
   const parsedTime = new Date(dateValue).getTime();
   return Number.isNaN(parsedTime) ? 0 : parsedTime;
-}
-
-function notifyHolidayNoticeUpdate() {
-  const eventValue = String(Date.now());
-  localStorage.setItem(HOLIDAY_NOTICE_STORAGE_KEY, eventValue);
-  window.dispatchEvent(new CustomEvent(HOLIDAY_NOTICE_EVENT, { detail: eventValue }));
 }
 
 export default HolidayManagement;
