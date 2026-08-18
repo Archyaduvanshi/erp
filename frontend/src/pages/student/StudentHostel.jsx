@@ -9,6 +9,7 @@ import {
   Home,
   Phone,
   Shield,
+  Utensils,
   UserRound,
 } from 'lucide-react';
 import { hostelApi, studentApi } from '../../utils/api';
@@ -130,6 +131,7 @@ const StudentHostel = () => {
                 <InfoRow icon={Home} label="Hostel" value={residentRecord.hostelName || 'Not available'} />
                 <InfoRow icon={Building2} label="Room" value={residentRecord.roomNumber || 'Not available'} />
                 <InfoRow icon={BedDouble} label="Bed" value={residentRecord.bedNumber || 'Auto'} />
+                <InfoRow icon={Utensils} label="Mess Food" value={messFoodLabel(residentRecord.messFood)} />
               </InfoPanel>
 
               <InfoPanel
@@ -204,5 +206,13 @@ const InfoRow = ({ icon: Icon, label, value }) => (
     <span className="text-right text-sm font-black text-slate-800">{value}</span>
   </div>
 );
+
+function messFoodLabel(value) {
+  return {
+    select: 'Select',
+    vegetarian: 'Vegetarian',
+    'non-vegetarian': 'Non-Vegetarian',
+  }[String(value || 'select').toLowerCase()] || 'Select';
+}
 
 export default StudentHostel;

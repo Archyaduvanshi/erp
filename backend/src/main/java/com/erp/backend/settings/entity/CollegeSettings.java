@@ -28,6 +28,8 @@ public class CollegeSettings {
     private Institute institute;
 
     private String academicYear;
+    private String academicYearStartMonth;
+    private String academicYearEndMonth;
     private String workingDays;
     private String timezone;
     private String language;
@@ -88,6 +90,22 @@ public class CollegeSettings {
 
     public void setAcademicYear(String academicYear) {
         this.academicYear = academicYear;
+    }
+
+    public String getAcademicYearStartMonth() {
+        return academicYearStartMonth;
+    }
+
+    public void setAcademicYearStartMonth(String academicYearStartMonth) {
+        this.academicYearStartMonth = academicYearStartMonth;
+    }
+
+    public String getAcademicYearEndMonth() {
+        return academicYearEndMonth;
+    }
+
+    public void setAcademicYearEndMonth(String academicYearEndMonth) {
+        this.academicYearEndMonth = academicYearEndMonth;
     }
 
     public String getWorkingDays() {

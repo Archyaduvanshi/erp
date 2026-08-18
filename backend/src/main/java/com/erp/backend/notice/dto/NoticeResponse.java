@@ -11,6 +11,7 @@ public record NoticeResponse(
         String audience,
         List<String> targetClasses,
         Long targetStudentId,
+        Long targetTeacherId,
         String priority,
         LocalDate publishDate,
         LocalDate expireDate,

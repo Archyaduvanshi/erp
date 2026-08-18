@@ -50,8 +50,8 @@ const PortalNotices = ({ role }) => {
   }, [navigate, role, session]);
 
   const portalNotices = useMemo(
-    () => getPortalNotices(notices, role, student?.assignedClass || student?.className, [], student?.id),
-    [notices, role, student],
+    () => getPortalNotices(notices, role, student?.assignedClass || student?.className, [], student?.id, session?.teacherId),
+    [notices, role, session?.teacherId, student],
   );
 
   const filteredNotices = useMemo(() => {

@@ -24,7 +24,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { studentApi, uploadApi } from '../../utils/api';
+import { settingsApi, studentApi, uploadApi } from '../../utils/api';
 
 const initialFormData = {
   firstName: '',
@@ -49,6 +49,7 @@ const initialFormData = {
   prevSchool: '',
   category: '',
   admissionDate: '',
+  academicYear: '',
   className: '',
   section: '',
   assignedClass: '',
@@ -92,6 +93,7 @@ const UPPERCASE_STUDENT_FIELDS = new Set([
   'section',
   'assignedClass',
   'admissionCategory',
+  'academicYear',
   'documentType',
   'otherDocumentName',
 ]);
@@ -101,6 +103,7 @@ const StudentManagement = () => {
   const [activeTab, setActiveTab] = useState('list');
   const [currentStep, setCurrentStep] = useState(1);
   const [students, setStudents] = useState([]);
+  const [currentAcademicYear, setCurrentAcademicYear] = useState(getDefaultAcademicYear());
   const [loadError, setLoadError] = useState('');
   const [viewMode, setViewMode] = useState('table');
   const [searchTerm, setSearchTerm] = useState('');
@@ -124,8 +127,12 @@ const StudentManagement = () => {
   useEffect(() => {
     const loadStudents = async () => {
       try {
-        const apiStudents = await studentApi.getAll();
+        const [apiStudents, settings] = await Promise.all([
+          studentApi.getAll(),
+          settingsApi.get().catch(() => null),
+        ]);
         setStudents(apiStudents);
+        setCurrentAcademicYear(resolveCurrentAcademicYear(settings?.preferences));
         setLoadError('');
       } catch (error) {
         setStudents([]);
@@ -285,6 +292,7 @@ const StudentManagement = () => {
         className: uploadedFormData.className,
         section: uploadedFormData.section,
         assignedClass: resolvedAssignedClass,
+        academicYear: uploadedFormData.academicYear || currentAcademicYear,
         transportStatus: uploadedFormData.transportOptIn === 'yes' ? 'active' : 'inactive',
         hostelStatus: uploadedFormData.hostelOptIn === 'yes' ? 'active' : 'inactive',
         libraryStatus: uploadedFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
@@ -520,6 +528,7 @@ const StudentManagement = () => {
       const payload = {
         ...pendingDetailFormData,
         assignedClass: resolvedAssignedClass,
+        academicYear: pendingDetailFormData.academicYear || selectedStudent.academicYear || currentAcademicYear,
         transportStatus: pendingDetailFormData.transportOptIn === 'yes' ? (pendingDetailFormData.transportStatus || 'active') : 'inactive',
         hostelStatus: pendingDetailFormData.hostelOptIn === 'yes' ? (pendingDetailFormData.hostelStatus || 'active') : 'inactive',
         libraryStatus: pendingDetailFormData.libraryOptIn === 'yes' ? (pendingDetailFormData.libraryStatus || 'active') : 'inactive',
@@ -871,6 +880,7 @@ const DirectoryView = ({
                   <th className="px-6 py-4">Student</th>
                   <th className="px-6 py-4">Contact</th>
                   <th className="px-6 py-4">Class / Section</th>
+                  <th className="px-6 py-4">Academic Year</th>
                   <th className="px-6 py-4">Facilities</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4 text-right">Action</th>
@@ -887,6 +897,7 @@ const DirectoryView = ({
                     </td>
                     <td className="px-6 py-5 text-sm font-semibold text-slate-600">{student.email || student.mobile || 'Not provided'}</td>
                     <td className="px-6 py-5 text-sm font-semibold text-slate-700">{getStudentClassLabel(student)}</td>
+                    <td className="px-6 py-5 text-sm font-black text-slate-700">{student.academicYear || '-'}</td>
                     <td className="px-6 py-5"><FacilitySummary student={student} compact /></td>
                     <td className="px-6 py-5">
                       <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
@@ -1058,6 +1069,7 @@ const EnrollmentWizard = ({
               clearFieldError('section');
             }} options={SECTION_OPTIONS} error={fieldErrors.section} />
             <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
+            <CreativeInput label="Academic Year" value={formData.academicYear || currentAcademicYear} onChange={(e) => updateFormField('academicYear', e.target.value)} placeholder={currentAcademicYear} />
             <CreativeSelect
               label="Transport Facility At Admission"
               value={formData.transportOptIn}
@@ -1260,6 +1272,7 @@ const EnrollmentWizard = ({
               <ReviewLine label="Class" value={formData.className || '-'} />
               <ReviewLine label="Section" value={formData.section || '-'} />
               <ReviewLine label="Admission Category" value={formData.admissionCategory || 'Select'} />
+              <ReviewLine label="Academic Year" value={formData.academicYear || currentAcademicYear} />
               <ReviewLine label="Transport" value={formData.transportOptIn === 'yes' ? `Requested | ${formData.transportStatus}` : 'Not requested'} />
               <ReviewLine label="Hostel" value={formData.hostelOptIn === 'yes' ? `Requested | ${formData.hostelStatus}` : 'Not requested'} />
               <ReviewLine label="Library" value={formData.libraryOptIn === 'yes' ? `Requested | ${formData.libraryStatus}` : 'Not requested'} />
@@ -1753,6 +1766,7 @@ function mapStudentToFormData(student) {
     prevSchool: student.prevSchool || '',
     category: student.category || '',
     admissionDate: student.admissionDate || '',
+    academicYear: student.academicYear || '',
     className: student.className || '',
     section: student.section || '',
     assignedClass: student.assignedClass || '',
@@ -1841,6 +1855,39 @@ function stripPendingFile(document) {
 
   const { rawFile, ...cleanDocument } = document;
   return cleanDocument;
+}
+
+function resolveCurrentAcademicYear(preferences = {}) {
+  if (preferences.academicYear) return String(preferences.academicYear).toUpperCase();
+
+  const startMonth = monthNameToNumber(preferences.academicYearStartMonth || 'April');
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const startYear = currentMonth >= startMonth ? now.getFullYear() : now.getFullYear() - 1;
+  return `${startYear}-${startYear + 1}`;
+}
+
+function getDefaultAcademicYear() {
+  return resolveCurrentAcademicYear({ academicYearStartMonth: 'April' });
+}
+
+function monthNameToNumber(monthName) {
+  const index = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ].findIndex((month) => month.toLowerCase() === String(monthName || '').toLowerCase());
+
+  return index >= 0 ? index + 1 : 4;
 }
 
 async function downloadQrCode(qrCodeData, studentName) {
@@ -1959,6 +2006,7 @@ function StudentDetailView({
                   clearFieldError('section');
                 }} options={SECTION_OPTIONS.filter((option) => option !== 'Select')} error={fieldErrors.section} />
                 <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
+                <CreativeInput label="Academic Year" value={formData.academicYear || currentAcademicYear} onChange={(e) => updateFormField('academicYear', e.target.value)} />
                 <div className="space-y-2.5">
                   <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Portal Password</label>
                   <div className="relative">

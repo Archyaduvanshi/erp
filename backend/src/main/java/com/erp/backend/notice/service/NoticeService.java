@@ -30,6 +30,7 @@ public class NoticeService {
         return noticeRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId)
                 .stream()
                 .filter(notice -> !"HOLIDAY".equalsIgnoreCase(notice.getSourceType()))
+                .filter(notice -> notice.getTargetStudentId() == null && notice.getTargetTeacherId() == null)
                 .map(this::toResponse)
                 .toList();
     }
@@ -79,6 +80,7 @@ public class NoticeService {
         notice.setAudience(normalizeAudience(request.audience()));
         notice.setTargetClasses(joinTargetClasses(request.targetClasses(), notice.getAudience()));
         notice.setTargetStudentId(request.targetStudentId());
+        notice.setTargetTeacherId(request.targetTeacherId());
         notice.setPriority(defaultValue(request.priority(), "Normal"));
         notice.setPublishDate(request.publishDate());
         notice.setExpireDate(request.expireDate());
@@ -96,6 +98,7 @@ public class NoticeService {
                 notice.getAudience(),
                 parseTargetClasses(notice.getTargetClasses()),
                 notice.getTargetStudentId(),
+                notice.getTargetTeacherId(),
                 notice.getPriority(),
                 notice.getPublishDate(),
                 notice.getExpireDate(),

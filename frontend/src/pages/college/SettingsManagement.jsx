@@ -38,6 +38,8 @@ const passwordMessage = 'Password must be at least 8 characters with uppercase, 
 
 const defaultPreferences = {
   academicYear: '2026-2027',
+  academicYearStartMonth: 'April',
+  academicYearEndMonth: 'March',
   workingDays: 'Monday To Saturday',
   timezone: 'Asia/Kolkata',
   language: 'English',
@@ -47,6 +49,8 @@ const defaultPreferences = {
   studentCodePrefix: 'STU',
   teacherCodePrefix: 'TCH',
 };
+
+const monthOptions = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const defaultNotifications = {
   emailNotice: true,
@@ -392,6 +396,8 @@ const SettingsManagement = () => {
                 <PanelTitle icon={Palette} title="Platform Preferences" description="Set the default working values used by the admin workspace." />
                 <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                   <TextInput label="Academic Year" value={preferences.academicYear} onChange={(e) => setPreferences({ ...preferences, academicYear: e.target.value.toUpperCase() })} />
+                  <SelectInput label="Academic Year Start Month" value={preferences.academicYearStartMonth} onChange={(e) => setPreferences({ ...preferences, academicYearStartMonth: e.target.value })} options={monthOptions} />
+                  <SelectInput label="Academic Year End Month" value={preferences.academicYearEndMonth} onChange={(e) => setPreferences({ ...preferences, academicYearEndMonth: e.target.value })} options={monthOptions} />
                   <SelectInput label="Working Days" value={preferences.workingDays} onChange={(e) => setPreferences({ ...preferences, workingDays: e.target.value })} options={['Monday To Friday', 'Monday To Saturday', 'All Days']} />
                   <SelectInput label="Timezone" value={preferences.timezone} onChange={(e) => setPreferences({ ...preferences, timezone: e.target.value })} options={['Asia/Kolkata', 'UTC', 'America/New_York', 'Europe/London']} />
                   <SelectInput label="Language" value={preferences.language} onChange={(e) => setPreferences({ ...preferences, language: e.target.value })} options={['English', 'Hindi']} />

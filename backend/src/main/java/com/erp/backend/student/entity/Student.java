@@ -63,6 +63,7 @@ public class Student {
 
     private String category;
     private String admissionDate;
+    private String academicYear;
     private String enrollmentNo;
     private String rollNo;
     private String className;

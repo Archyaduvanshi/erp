@@ -226,6 +226,7 @@ public class StudentService {
         String today = LocalDate.now().toString();
         student.setRegDate(resolveDate(request.regDate(), today));
         student.setAdmissionDate(resolveDate(request.admissionDate(), today));
+        student.setAcademicYear(defaultValue(request.academicYear(), buildAcademicYear(student.getAdmissionDate())));
         student.setEnrollmentNo(resolveEnrollmentNo(student, request));
         student.setClassName(uppercase(request.className()));
         student.setSection(uppercase(request.section()));
@@ -297,6 +298,7 @@ public class StudentService {
                 student.getPrevSchool(),
                 student.getCategory(),
                 student.getAdmissionDate(),
+                student.getAcademicYear(),
                 student.getEnrollmentNo(),
                 student.getRollNo(),
                 student.getClassName(),
@@ -368,6 +370,12 @@ public class StudentService {
 
     private String normalizeEmail(String value) {
         return StringUtils.hasText(value) ? value.trim().toLowerCase() : null;
+    }
+
+    private String buildAcademicYear(String dateValue) {
+        LocalDate date = StringUtils.hasText(dateValue) ? LocalDate.parse(dateValue) : LocalDate.now();
+        int startYear = date.getMonthValue() >= 4 ? date.getYear() : date.getYear() - 1;
+        return startYear + "-" + (startYear + 1);
     }
 
     private void validatePhoto(StudentPayload request) {

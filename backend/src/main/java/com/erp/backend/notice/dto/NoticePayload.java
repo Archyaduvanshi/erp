@@ -15,6 +15,7 @@ public record NoticePayload(
         String audience,
         List<String> targetClasses,
         Long targetStudentId,
+        Long targetTeacherId,
         @NotBlank(message = "Priority is required.")
         String priority,
         @NotNull(message = "Publish date is required.")

@@ -11,6 +11,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { db } from '../../utils/db';
+import { salaryApi, teacherApi } from '../../utils/api';
 import {
   buildSalaryTimeline,
   formatCurrencyAmount,
@@ -23,13 +24,32 @@ import {
 const TeacherSalary = () => {
   const navigate = useNavigate();
   const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [teachers] = useState(() => db.getAll('teachers'));
+  const [teacher, setTeacher] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
-  const teacher = useMemo(() => {
-    if (!session || session.role !== 'teacher') return null;
-    const matchingTeacher = teachers.find((entry) => String(entry.id) === String(session.teacherId)) || null;
-    return matchingTeacher ? normalizeTeacherSalary(matchingTeacher) : null;
-  }, [session, teachers]);
+  useEffect(() => {
+    if (!session || session.role !== 'teacher') {
+      navigate('/login');
+      return;
+    }
+
+    const loadSalary = async () => {
+      try {
+        const [teacherResponse, paymentResponse] = await Promise.all([
+          teacherApi.getById(session.teacherId),
+          salaryApi.getPayments(session.teacherId),
+        ]);
+        setTeacher(attachSalaryPayments(normalizeTeacherSalary(teacherResponse), paymentResponse));
+        setLoadError('');
+      } catch (error) {
+        const fallbackTeacher = db.getAll('teachers').find((entry) => String(entry.id) === String(session.teacherId)) || null;
+        setTeacher(fallbackTeacher ? normalizeTeacherSalary(fallbackTeacher) : null);
+        setLoadError(error.message || 'Unable to load salary details.');
+      }
+    };
+
+    loadSalary();
+  }, [navigate, session]);
 
   const currentSalaryStatus = useMemo(() => getCurrentMonthSalaryStatus(teacher), [teacher]);
   const salaryTimeline = useMemo(() => buildSalaryTimeline(teacher), [teacher]);
@@ -41,12 +61,6 @@ const TeacherSalary = () => {
   const totalPendingAmount = salaryTimeline
     .filter((entry) => !entry.isPaid)
     .reduce((sum, entry) => sum + (Number(entry.baseSalary || entry.amount) || 0), 0);
-
-  useEffect(() => {
-    if (!session || session.role !== 'teacher') {
-      navigate('/login');
-    }
-  }, [navigate, session]);
 
   if (!session || session.role !== 'teacher') return null;
 
@@ -75,6 +89,11 @@ const TeacherSalary = () => {
       </header>
 
       <div className="mx-auto max-w-screen-2xl px-6 pt-10 md:px-12 lg:px-20">
+        {loadError ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {loadError}
+          </div>
+        ) : null}
         <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           <InsightCard
             icon={WalletCards}
@@ -124,13 +143,14 @@ const TeacherSalary = () => {
           >
             {salaryHistory.length ? (
               <div className="overflow-hidden rounded-[1.9rem] border border-slate-200">
-                <div className="hidden grid-cols-[1.1fr_1fr_0.95fr_0.85fr_0.85fr_0.85fr_1fr] gap-4 bg-slate-100 px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 lg:grid">
+                <div className="hidden grid-cols-[1.1fr_1fr_0.95fr_0.85fr_0.85fr_0.85fr_0.95fr_1fr] gap-4 bg-slate-100 px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 lg:grid">
                   <div>Salary Month</div>
                   <div>Paid Amount</div>
                   <div>Paid On</div>
                   <div>Pending</div>
                   <div>Bonus</div>
                   <div>Advance</div>
+                  <div>Leave Deduction</div>
                   <div>Note</div>
                 </div>
 
@@ -211,11 +231,12 @@ const TimelineCard = ({ entry, highlight = false }) => (
       </span>
     </div>
 
-    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
       <MiniMetric label="Base" value={formatCurrencyAmount(entry.baseSalary)} />
       <MiniMetric label="Pending" value={formatCurrencyAmount(entry.previousPendingAmount)} />
       <MiniMetric label="Bonus" value={formatCurrencyAmount(entry.bonusAmount)} />
       <MiniMetric label="Advance" value={formatCurrencyAmount(entry.advanceAmount)} />
+      <MiniMetric label="Leave Deduction" value={formatCurrencyAmount(entry.leaveDeductionAmount)} />
     </div>
 
     {entry.settledMonthKeys?.length ? (
@@ -241,13 +262,14 @@ const MiniMetric = ({ label, value }) => (
 
 const HistoryRow = ({ entry }) => (
   <div className="bg-white px-5 py-4 transition hover:bg-slate-50">
-    <div className="grid gap-3 lg:grid-cols-[1.1fr_1fr_0.95fr_0.85fr_0.85fr_0.85fr_1fr] lg:items-center lg:gap-4">
+    <div className="grid gap-3 lg:grid-cols-[1.1fr_1fr_0.95fr_0.85fr_0.85fr_0.85fr_0.95fr_1fr] lg:items-center lg:gap-4">
       <RowCell label="Salary Month" value={entry.label} strong />
       <RowCell label="Paid Amount" value={formatCurrencyAmount(entry.totalAmount || entry.amount)} tone="text-emerald-700" strong />
       <RowCell label="Paid On" value={entry.paidOn ? new Date(entry.paidOn).toLocaleDateString('en-IN') : 'Not available'} />
       <RowCell label="Pending" value={formatCurrencyAmount(entry.previousPendingAmount)} />
       <RowCell label="Bonus" value={formatCurrencyAmount(entry.bonusAmount)} />
       <RowCell label="Advance" value={formatCurrencyAmount(entry.advanceAmount)} />
+      <RowCell label="Leave Deduction" value={formatCurrencyAmount(entry.leaveDeductionAmount)} />
       <RowCell label="Note" value={entry.note || (entry.settledMonthKeys?.length ? `Settled: ${entry.settledMonthKeys.map((monthKey) => getMonthLabel(monthKey)).join(', ')}` : '-')} />
     </div>
   </div>
@@ -265,5 +287,40 @@ const EmptyState = ({ text }) => (
     {text}
   </div>
 );
+
+const attachSalaryPayments = (teacher, salaryPayments = []) => {
+  if (!teacher) return null;
+  const paymentMap = new Map();
+  (Array.isArray(teacher.paymentHistory) ? teacher.paymentHistory : []).forEach((payment) => {
+    if (payment?.monthKey) paymentMap.set(payment.monthKey, payment);
+  });
+  salaryPayments.forEach((payment) => {
+    if (!payment?.monthKey) return;
+    paymentMap.set(payment.monthKey, {
+      monthKey: payment.monthKey,
+      baseSalary: Number(payment.baseSalary) || 0,
+      previousPendingAmount: Number(payment.previousPendingAmount) || 0,
+      bonusAmount: Number(payment.bonusAmount) || 0,
+      advanceAmount: Number(payment.advanceAmount) || 0,
+      leaveDeductionAmount: Number(payment.leaveDeductionAmount) || 0,
+      amount: Number(payment.totalAmount ?? payment.amount) || 0,
+      totalAmount: Number(payment.totalAmount ?? payment.amount) || 0,
+      openSchoolDays: Number(payment.openSchoolDays) || 0,
+      presentDays: Number(payment.presentDays) || 0,
+      absentDays: Number(payment.absentDays) || 0,
+      allowedLeaves: Number(payment.allowedLeaves) || 0,
+      extraLeaveDays: Number(payment.extraLeaveDays) || 0,
+      perDaySalary: Number(payment.perDaySalary) || 0,
+      paidOn: payment.paidOn || '',
+      settledMonthKeys: Array.isArray(payment.settledMonthKeys) ? payment.settledMonthKeys : [],
+      note: payment.note || '',
+    });
+  });
+
+  return {
+    ...teacher,
+    paymentHistory: [...paymentMap.values()],
+  };
+};
 
 export default TeacherSalary;

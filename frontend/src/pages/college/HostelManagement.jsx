@@ -6,8 +6,11 @@ import {
   Building2,
   Hotel,
   HousePlus,
+  Plus,
+  Save,
   Search,
   Trash2,
+  Utensils,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -42,9 +45,17 @@ const initialResidentForm = {
   checkInDate: today,
   monthlyCharge: '',
   guardianContact: '',
+  messFood: 'select',
   emergencyContact: '',
   notes: '',
 };
+
+const MESS_FOOD_OPTIONS = ['select', 'vegetarian', 'non-vegetarian'];
+const MESS_MENU_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const MESS_MENU_TYPES = [
+  { key: 'vegetarian', title: 'Vegetarian Menu', tone: 'emerald' },
+  { key: 'nonVegetarian', title: 'Non-Vegetarian Menu', tone: 'rose' },
+];
 
 const HostelManagement = () => {
   const navigate = useNavigate();
@@ -57,14 +68,12 @@ const HostelManagement = () => {
   const [bulkRoomForm, setBulkRoomForm] = useState(initialBulkRoomForm);
   const [bulkRoomPreview, setBulkRoomPreview] = useState([]);
   const [residentForm, setResidentForm] = useState(initialResidentForm);
+  const [messMenuRows, setMessMenuRows] = useState(() => loadMessMenuRows());
   const [selectedRoomHostelId, setSelectedRoomHostelId] = useState('');
   const [selectedRoomFloor, setSelectedRoomFloor] = useState('');
-  const [selectedAllotmentHostelId, setSelectedAllotmentHostelId] = useState('');
-  const [selectedAllotmentFloor, setSelectedAllotmentFloor] = useState('');
   const [selectedAllotmentRoomId, setSelectedAllotmentRoomId] = useState('');
   const [showAllotmentForm, setShowAllotmentForm] = useState(false);
   const [hostelSearch, setHostelSearch] = useState('');
-  const [residentSearch, setResidentSearch] = useState('');
   const [formErrors, setFormErrors] = useState({});
   const [loadError, setLoadError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -95,11 +104,10 @@ const HostelManagement = () => {
   const workspaceCards = [
     { key: 'hostels', icon: Hotel, title: 'Hostel Management', text: 'Create hostel buildings and maintain warden details.' },
     { key: 'rooms', icon: Building2, title: 'Room Management', text: 'Create rooms, bed capacity, charges, and availability.' },
-    { key: 'allotment', icon: UserPlus, title: 'Student Allotment', text: 'Assign students to rooms with bed and joining details.' },
+    { key: 'mess-food', icon: Utensils, title: 'Mess Food Management', text: 'Review vegetarian and non-vegetarian hostel food choices.' },
   ];
 
   const filteredHostels = useMemo(() => filterRecords(hostels, hostelSearch, ['hostelName', 'hostelType', 'wardenName', 'contactNumber']), [hostelSearch, hostels]);
-  const filteredResidents = useMemo(() => filterRecords(residents, residentSearch, ['studentName', 'className', 'section', 'hostelName', 'roomNumber', 'bedNumber']), [residentSearch, residents]);
   const selectedRoomHostel = hostels.find((hostel) => String(hostel.id) === String(selectedRoomHostelId)) || null;
   const selectedHostelFloorOptions = floorOptions(selectedRoomHostelId, hostels);
   const selectedFloorRooms = useMemo(() => rooms
@@ -107,19 +115,19 @@ const HostelManagement = () => {
     .filter((room) => !selectedRoomFloor || normalizeFloorValue(room.floorLabel) === String(selectedRoomFloor))
     .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })),
   [rooms, selectedRoomFloor, selectedRoomHostelId]);
-  const selectedAllotmentHostel = hostels.find((hostel) => String(hostel.id) === String(selectedAllotmentHostelId)) || null;
-  const selectedAllotmentFloorOptions = floorOptions(selectedAllotmentHostelId, hostels);
-  const selectedAllotmentFloorRooms = useMemo(() => rooms
-    .filter((room) => String(room.hostelId) === String(selectedAllotmentHostelId))
-    .filter((room) => !selectedAllotmentFloor || normalizeFloorValue(room.floorLabel) === String(selectedAllotmentFloor))
-    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })),
-  [rooms, selectedAllotmentFloor, selectedAllotmentHostelId]);
   const selectedAllotmentRoom = rooms.find((room) => String(room.id) === String(selectedAllotmentRoomId)) || null;
   const selectedRoomResidents = useMemo(() => residents
     .filter((resident) => String(resident.roomId) === String(selectedAllotmentRoomId))
     .sort((a, b) => String(b.checkInDate || '').localeCompare(String(a.checkInDate || ''))),
   [residents, selectedAllotmentRoomId]);
   const activeSelectedRoomResidents = selectedRoomResidents.filter(isActiveResident);
+  const activeMessResidents = useMemo(() => residents.filter(isActiveResident), [residents]);
+  const messFoodStats = useMemo(() => ({
+    total: activeMessResidents.length,
+    vegetarian: activeMessResidents.filter((resident) => normalizeMessFood(resident.messFood) === 'vegetarian').length,
+    nonVegetarian: activeMessResidents.filter((resident) => normalizeMessFood(resident.messFood) === 'non-vegetarian').length,
+    pending: activeMessResidents.filter((resident) => normalizeMessFood(resident.messFood) === 'select').length,
+  }), [activeMessResidents]);
 
   const classOptions = useMemo(() => (
     [...new Set(students.map(getStudentClass).filter(Boolean))].sort((a, b) => a.localeCompare(b))
@@ -142,26 +150,11 @@ const HostelManagement = () => {
   }), [residentForm.className, residentForm.section, residentForm.studentId, residents, students]);
 
   const selectedStudent = students.find((student) => String(student.id) === String(residentForm.studentId)) || null;
+  const selectedStudentContact = selectedStudent ? studentContact(selectedStudent.id, students) : '';
 
   const handleBack = () => {
     if (activeSection === 'room-generator') {
       setActiveSection('rooms');
-      setFormErrors({});
-      return;
-    }
-    if (activeSection === 'allotment' && selectedAllotmentRoomId) {
-      setSelectedAllotmentRoomId('');
-      setShowAllotmentForm(false);
-      setFormErrors({});
-      return;
-    }
-    if (activeSection === 'allotment' && selectedAllotmentFloor) {
-      setSelectedAllotmentFloor('');
-      setFormErrors({});
-      return;
-    }
-    if (activeSection === 'allotment' && selectedAllotmentHostelId) {
-      setSelectedAllotmentHostelId('');
       setFormErrors({});
       return;
     }
@@ -194,6 +187,18 @@ const HostelManagement = () => {
   const updateResidentForm = (patch) => {
     setResidentForm((current) => ({ ...current, ...patch }));
     Object.keys(patch).forEach(clearFieldError);
+  };
+
+  const openAllotmentFormForRoom = (room) => {
+    setActiveSection('rooms');
+    setSelectedAllotmentRoomId(String(room.id));
+    setShowAllotmentForm(true);
+    setResidentForm({
+      ...initialResidentForm,
+      roomId: String(room.id),
+      monthlyCharge: roomCharge(room),
+    });
+    setFormErrors({});
   };
 
   const handleHostelSave = async (event) => {
@@ -268,7 +273,8 @@ const HostelManagement = () => {
         bedNumber: residentForm.bedNumber,
         checkInDate: residentForm.checkInDate,
         monthlyCharge: residentForm.monthlyCharge ? String(Number(residentForm.monthlyCharge) || 0) : '',
-        guardianContact: residentForm.guardianContact,
+        guardianContact: residentForm.guardianContact || selectedStudentContact,
+        messFood: residentForm.messFood,
         emergencyContact: residentForm.emergencyContact,
         notes: residentForm.notes,
         status: 'active',
@@ -315,6 +321,33 @@ const HostelManagement = () => {
     }
   };
 
+  const updateMessMenuMeal = (rowId, mealName) => {
+    setMessMenuRows((current) => current.map((row) => (
+      row.id === rowId ? { ...row, mealName: mealName.toUpperCase() } : row
+    )));
+  };
+
+  const updateMessMenuCell = (rowId, menuType, day, value) => {
+    setMessMenuRows((current) => current.map((row) => (
+      row.id === rowId
+        ? { ...row, [menuType]: { ...row[menuType], [day]: value.toUpperCase() } }
+        : row
+    )));
+  };
+
+  const addMessMenuRow = () => {
+    setMessMenuRows((current) => [...current, createMessMenuRow(`meal-${Date.now()}`, '')]);
+  };
+
+  const deleteMessMenuRow = (rowId) => {
+    setMessMenuRows((current) => current.length > 1 ? current.filter((row) => row.id !== rowId) : current);
+  };
+
+  const saveMessMenu = () => {
+    saveMessMenuRows(messMenuRows);
+    setLoadError('');
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-16 text-slate-900">
       <div className="border-b border-slate-200/70 bg-white/90 backdrop-blur-xl">
@@ -345,7 +378,7 @@ const HostelManagement = () => {
         ) : null}
 
         {!activeSection ? (
-          <section className="grid gap-5 md:grid-cols-2">
+          <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
               {workspaceCards.map((card) => (
                 <WorkspaceCard
                   key={card.key}
@@ -445,6 +478,8 @@ const HostelManagement = () => {
                       onClick={() => {
                         setSelectedRoomHostelId(String(hostel.id));
                         setSelectedRoomFloor('');
+                        setSelectedAllotmentRoomId('');
+                        setShowAllotmentForm(false);
                         setBulkRoomForm((current) => ({ ...current, hostelId: String(hostel.id), floorNumber: '' }));
                       }}
                       className={`rounded-2xl border p-5 text-left transition ${
@@ -492,6 +527,8 @@ const HostelManagement = () => {
                       type="button"
                       onClick={() => {
                         setSelectedRoomFloor(floor);
+                        setSelectedAllotmentRoomId('');
+                        setShowAllotmentForm(false);
                         setBulkRoomForm((current) => ({ ...current, hostelId: String(selectedRoomHostel.id), floorNumber: floor }));
                       }}
                       className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-[0.16em] transition ${
@@ -518,6 +555,7 @@ const HostelManagement = () => {
                             <Th>Vacant Seat</Th>
                             <Th>AC</Th>
                             <Th>Status</Th>
+                            <Th>Add Student</Th>
                             <Th noBorder>Action</Th>
                           </tr>
                         </thead>
@@ -530,10 +568,21 @@ const HostelManagement = () => {
                                 <Td>{room.roomNumber || '-'}</Td>
                                 <Td>{room.floorLabel || '-'}</Td>
                                 <Td>{room.capacity || 0}</Td>
-                                <Td>{room.occupiedBeds || 0}</Td>
+                                <Td><OccupancyBadge occupied={room.occupiedBeds} capacity={room.capacity} /></Td>
                                 <Td>{vacantBeds}</Td>
                                 <Td>{room.acType || '-'}</Td>
                                 <Td><StatusBadge text={isFull ? 'Full' : 'Available'} /></Td>
+                                <Td>
+                                  <button
+                                    type="button"
+                                    disabled={isFull}
+                                    onClick={() => openAllotmentFormForRoom(room)}
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+                                  >
+                                    <UserPlus size={14} />
+                                    Add
+                                  </button>
+                                </Td>
                                 <Td noBorder><IconButton icon={Trash2} onClick={() => handleDeleteRoom(room.id)} /></Td>
                               </tr>
                             );
@@ -547,6 +596,84 @@ const HostelManagement = () => {
                 ) : (
                   <EmptyState icon={Building2} title="Select Floor" description="Choose a floor above to view each room and its student status." />
                 )}
+
+                {selectedAllotmentRoom ? (
+                  <div className="mt-6">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <h4 className="text-xl font-black tracking-tight text-slate-950">
+                            {selectedAllotmentRoom.hostelName} - Room {selectedAllotmentRoom.roomNumber}
+                          </h4>
+                          <p className="mt-1 text-sm text-slate-500">Student add form and current room resident list.</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <MiniMetric label="Capacity" value={selectedAllotmentRoom.capacity || 0} />
+                          <MiniMetric label="Filled" value={activeSelectedRoomResidents.length} />
+                          <MiniMetric label="Vacant" value={getVacantBeds(selectedAllotmentRoom)} />
+                        </div>
+                      </div>
+
+                      {showAllotmentForm ? (
+                        <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleResidentSave}>
+                          <SelectField label="Class" value={residentForm.className} onChange={(e) => updateResidentForm({ className: e.target.value, section: '', studentId: '', guardianContact: '' })} options={['', ...classOptions]} renderOptionLabel={(value) => value || 'Select class'} error={formErrors.className} />
+                          <SelectField label="Section" value={residentForm.section} onChange={(e) => updateResidentForm({ section: e.target.value, studentId: '', guardianContact: '' })} options={['', ...sectionOptions]} renderOptionLabel={(value) => value || 'Select section'} error={formErrors.section} />
+                          <SelectField label="Student" value={residentForm.studentId} onChange={(e) => updateResidentForm({ studentId: e.target.value, guardianContact: studentContact(e.target.value, students) })} options={['', ...filteredStudentOptions.map((student) => String(student.id))]} renderOptionLabel={(value) => studentLabel(value, filteredStudentOptions)} error={formErrors.studentId} />
+                          <InputField label="Bed Number" value={residentForm.bedNumber} onChange={(e) => updateResidentForm({ bedNumber: e.target.value.toUpperCase() })} placeholder="Leave blank for auto" error={formErrors.bedNumber} />
+                          <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => updateResidentForm({ checkInDate: e.target.value })} error={formErrors.checkInDate} />
+                          <InputField label="Father Contact" value={residentForm.guardianContact || selectedStudentContact} onChange={(e) => updateResidentForm({ guardianContact: digitsOnly(e.target.value, 10) })} placeholder="Auto fetched from admission" error={formErrors.guardianContact} />
+                          <SelectField label="Mess Food" value={residentForm.messFood} onChange={(e) => updateResidentForm({ messFood: e.target.value })} options={MESS_FOOD_OPTIONS} renderOptionLabel={messFoodLabel} error={formErrors.messFood} />
+                          <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => updateResidentForm({ emergencyContact: digitsOnly(e.target.value, 10) })} placeholder="Enter emergency contact" error={formErrors.emergencyContact} />
+                          <InputField label="Notes" value={residentForm.notes} onChange={(e) => updateResidentForm({ notes: e.target.value.toUpperCase() })} placeholder="Enter notes or special instruction" error={formErrors.notes} wide />
+                          <div className="md:col-span-2 xl:col-span-3">
+                            <PrimaryButton type="submit" icon={UserPlus} label={isSaving ? 'Saving Allotment...' : 'Save Allotment'} />
+                          </div>
+                        </form>
+                      ) : null}
+                    </div>
+
+                    {selectedRoomResidents.length ? (
+                      <ExcelTable>
+                        <table className="min-w-full border-collapse bg-white">
+                          <thead>
+                            <tr className="bg-emerald-50">
+                              <Th>Student</Th>
+                              <Th>Class</Th>
+                              <Th>Section</Th>
+                              <Th>Bed</Th>
+                              <Th>Join Date</Th>
+                              <Th>Vacate Date</Th>
+                              <Th>Status</Th>
+                              <Th>Mess Food</Th>
+                              <Th>Contact</Th>
+                              <Th noBorder>Action</Th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedRoomResidents.map((resident) => (
+                              <tr key={resident.id} className="odd:bg-white even:bg-slate-50">
+                                <Td>{resident.studentName || '-'}</Td>
+                                <Td>{resident.className || '-'}</Td>
+                                <Td>{resident.section || '-'}</Td>
+                                <Td>{resident.bedNumber || 'Auto'}</Td>
+                                <Td>{resident.checkInDate || '-'}</Td>
+                                <Td>{resident.checkOutDate || '-'}</Td>
+                                <Td><StatusBadge text={resident.status || 'active'} /></Td>
+                                <Td>{messFoodLabel(resident.messFood)}</Td>
+                                <Td>{resident.guardianContact || resident.emergencyContact || '-'}</Td>
+                                <Td noBorder>
+                                  {isActiveResident(resident) ? <IconButton icon={Trash2} onClick={() => handleDeleteResident(resident.id)} /> : '-'}
+                                </Td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </ExcelTable>
+                    ) : (
+                      <EmptyState icon={Users} title="No Student In This Room" description="Use Add Student to allot a student to this room." />
+                    )}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </Panel>
@@ -637,255 +764,53 @@ const HostelManagement = () => {
           </Panel>
         ) : null}
 
-        {activeSection === 'allotment' ? (
+        {activeSection === 'mess-food' ? (
           <Panel
-            title="Student Hostel Allotment"
-            description="Select hostel, floor, and room first, then add or vacate students from that room."
-            action={selectedAllotmentRoom ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAllotmentForm((current) => !current);
-                  setResidentForm((current) => ({
-                    ...current,
-                    roomId: String(selectedAllotmentRoom.id),
-                    monthlyCharge: roomCharge(selectedAllotmentRoom),
-                  }));
-                  setFormErrors({});
-                }}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700"
-              >
-                <UserPlus size={15} />
-                Add Student
-              </button>
-            ) : null}
+            title="Mess Food Management"
+            description="Create weekly food timetable for every meal with separate vegetarian and non-vegetarian menus."
+            action={(
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={addMessMenuRow}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-slate-700 transition hover:border-emerald-300 hover:text-emerald-700"
+                >
+                  <Plus size={15} />
+                  Add Meal
+                </button>
+                <button
+                  type="button"
+                  onClick={saveMessMenu}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700"
+                >
+                  <Save size={15} />
+                  Save Menu
+                </button>
+              </div>
+            )}
           >
-            {!selectedAllotmentHostel ? (
-              hostels.length ? (
-                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {hostels.map((hostel) => (
-                    <button
-                      key={hostel.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedAllotmentHostelId(String(hostel.id));
-                        setSelectedAllotmentFloor('');
-                        setSelectedAllotmentRoomId('');
-                        setShowAllotmentForm(false);
-                      }}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-left transition hover:border-emerald-300 hover:bg-white"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-base font-black text-slate-950">{hostel.hostelName || 'Hostel'}</p>
-                          <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{hostel.hostelType || 'hostel'}</p>
-                        </div>
-                        <ArrowRight size={18} className="text-slate-300" />
-                      </div>
-                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                        <MiniMetric label="Rooms" value={hostel.totalRooms || 0} />
-                        <MiniMetric label="Beds" value={hostel.totalBeds || 0} />
-                        <MiniMetric label="Vacant" value={hostel.vacantBeds || 0} />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState icon={Hotel} title="No Hostel Created" description="Create hostel and rooms first, then allot students." />
-              )
-            ) : null}
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard label="Total Students" value={messFoodStats.total} tone="slate" />
+              <SummaryCard label="Vegetarian" value={messFoodStats.vegetarian} tone="emerald" />
+              <SummaryCard label="Non-Vegetarian" value={messFoodStats.nonVegetarian} tone="rose" />
+              <SummaryCard label="Select Pending" value={messFoodStats.pending} tone="amber" />
+            </div>
 
-            {selectedAllotmentHostel && !selectedAllotmentRoom ? (
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h4 className="text-xl font-black tracking-tight text-slate-950">{selectedAllotmentHostel.hostelName}</h4>
-                    <p className="mt-1 text-sm text-slate-500">Select floor, then select a room to see student details.</p>
-                  </div>
-                  <StatusBadge text={`${selectedAllotmentHostel.totalFloors || 0} floors`} />
-                </div>
-
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {selectedAllotmentFloorOptions.map((floor) => (
-                    <button
-                      key={floor}
-                      type="button"
-                      onClick={() => {
-                        setSelectedAllotmentFloor(floor);
-                        setSelectedAllotmentRoomId('');
-                        setShowAllotmentForm(false);
-                      }}
-                      className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-[0.16em] transition ${
-                        String(selectedAllotmentFloor) === String(floor)
-                          ? 'bg-emerald-600 text-white'
-                          : 'border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-700'
-                      }`}
-                    >
-                      Floor {floor}
-                    </button>
-                  ))}
-                </div>
-
-                {selectedAllotmentFloor ? (
-                  selectedAllotmentFloorRooms.length ? (
-                    <ExcelTable>
-                      <table className="min-w-full border-collapse bg-white">
-                        <thead>
-                          <tr className="bg-emerald-50">
-                            <Th>Room</Th>
-                            <Th>Capacity</Th>
-                            <Th>Filled</Th>
-                            <Th>Vacant</Th>
-                            <Th>Status</Th>
-                            <Th noBorder>Action</Th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedAllotmentFloorRooms.map((room) => {
-                            const vacantBeds = getVacantBeds(room);
-                            return (
-                              <tr key={room.id} className="odd:bg-white even:bg-slate-50">
-                                <Td>{room.roomNumber || '-'}</Td>
-                                <Td>{room.capacity || 0}</Td>
-                                <Td>{room.occupiedBeds || 0}</Td>
-                                <Td>{vacantBeds}</Td>
-                                <Td><StatusBadge text={vacantBeds <= 0 ? 'Full' : 'Available'} /></Td>
-                                <Td noBorder>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedAllotmentRoomId(String(room.id));
-                                      setShowAllotmentForm(false);
-                                      setResidentForm((current) => ({ ...current, roomId: String(room.id), monthlyCharge: roomCharge(room) }));
-                                    }}
-                                    className="rounded-xl bg-slate-950 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-white transition hover:bg-emerald-600"
-                                  >
-                                    View
-                                  </button>
-                                </Td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </ExcelTable>
-                  ) : (
-                    <EmptyState icon={Building2} title="No Rooms On This Floor" description="Generate rooms for this floor first." />
-                  )
-                ) : (
-                  <EmptyState icon={Building2} title="Select Floor" description="Choose a floor to see rooms and vacancy." />
-                )}
-              </div>
-            ) : null}
-
-            {selectedAllotmentRoom ? (
-              <div className="mt-6">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <h4 className="text-xl font-black tracking-tight text-slate-950">
-                        {selectedAllotmentRoom.hostelName} - Room {selectedAllotmentRoom.roomNumber}
-                      </h4>
-                      <p className="mt-1 text-sm text-slate-500">Floor {selectedAllotmentRoom.floorLabel || '-'} room student list and vacancy.</p>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-center">
-                      <MiniMetric label="Capacity" value={selectedAllotmentRoom.capacity || 0} />
-                      <MiniMetric label="Filled" value={activeSelectedRoomResidents.length} />
-                      <MiniMetric label="Vacant" value={getVacantBeds(selectedAllotmentRoom)} />
-                    </div>
-                  </div>
-
-                  {showAllotmentForm ? (
-                    <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleResidentSave}>
-                      <SelectField label="Class" value={residentForm.className} onChange={(e) => updateResidentForm({ className: e.target.value, section: '', studentId: '' })} options={['', ...classOptions]} renderOptionLabel={(value) => value || 'Select class'} error={formErrors.className} />
-                      <SelectField label="Section" value={residentForm.section} onChange={(e) => updateResidentForm({ section: e.target.value, studentId: '' })} options={['', ...sectionOptions]} renderOptionLabel={(value) => value || 'Select section'} error={formErrors.section} />
-                      <SelectField label="Student" value={residentForm.studentId} onChange={(e) => updateResidentForm({ studentId: e.target.value, guardianContact: studentContact(e.target.value, students) })} options={['', ...filteredStudentOptions.map((student) => String(student.id))]} renderOptionLabel={(value) => studentLabel(value, filteredStudentOptions)} error={formErrors.studentId} />
-                      <InputField label="Bed Number" value={residentForm.bedNumber} onChange={(e) => updateResidentForm({ bedNumber: e.target.value.toUpperCase() })} placeholder="Leave blank for auto" error={formErrors.bedNumber} />
-                      <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => updateResidentForm({ checkInDate: e.target.value })} error={formErrors.checkInDate} />
-                      <InputField label="Guardian Contact" value={residentForm.guardianContact || selectedStudent?.guardianPhone || ''} onChange={(e) => updateResidentForm({ guardianContact: digitsOnly(e.target.value, 10) })} placeholder="Enter guardian contact" error={formErrors.guardianContact} />
-                      <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => updateResidentForm({ emergencyContact: digitsOnly(e.target.value, 10) })} placeholder="Enter emergency contact" error={formErrors.emergencyContact} />
-                      <InputField label="Notes" value={residentForm.notes} onChange={(e) => updateResidentForm({ notes: e.target.value.toUpperCase() })} placeholder="Enter notes or special instruction" error={formErrors.notes} wide />
-                      <div className="md:col-span-2 xl:col-span-3">
-                        <PrimaryButton type="submit" icon={UserPlus} label={isSaving ? 'Saving Allotment...' : 'Save Allotment'} />
-                      </div>
-                    </form>
-                  ) : null}
-                </div>
-
-                {selectedRoomResidents.length ? (
-                  <ExcelTable>
-                    <table className="min-w-full border-collapse bg-white">
-                      <thead>
-                        <tr className="bg-emerald-50">
-                          <Th>Student</Th>
-                          <Th>Class</Th>
-                          <Th>Section</Th>
-                          <Th>Bed</Th>
-                          <Th>Join Date</Th>
-                          <Th>Vacate Date</Th>
-                          <Th>Status</Th>
-                          <Th>Contact</Th>
-                          <Th noBorder>Action</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedRoomResidents.map((resident) => (
-                          <tr key={resident.id} className="odd:bg-white even:bg-slate-50">
-                            <Td>{resident.studentName || '-'}</Td>
-                            <Td>{resident.className || '-'}</Td>
-                            <Td>{resident.section || '-'}</Td>
-                            <Td>{resident.bedNumber || 'Auto'}</Td>
-                            <Td>{resident.checkInDate || '-'}</Td>
-                            <Td>{resident.checkOutDate || '-'}</Td>
-                            <Td><StatusBadge text={resident.status || 'active'} /></Td>
-                            <Td>{resident.guardianContact || resident.emergencyContact || '-'}</Td>
-                            <Td noBorder>
-                              {isActiveResident(resident) ? <IconButton icon={Trash2} onClick={() => handleDeleteResident(resident.id)} /> : '-'}
-                            </Td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </ExcelTable>
-                ) : (
-                  <EmptyState icon={Users} title="No Student In This Room" description="Use Add Student to allot a student to this room." />
-                )}
-              </div>
-            ) : null}
-
-            <RegisterHeader title="Allotment History" count={`${filteredResidents.length} allotment(s)`} search={<SearchInput value={residentSearch} onChange={setResidentSearch} placeholder="Search student, class, hostel, room..." />} />
-            {filteredResidents.length ? (
-              <ExcelTable>
-                <table className="min-w-full border-collapse bg-white">
-                  <thead>
-                    <tr className="bg-emerald-50">
-                      <Th>Student</Th>
-                      <Th>Class</Th>
-                      <Th>Hostel</Th>
-                      <Th>Room</Th>
-                      <Th>Join Date</Th>
-                      <Th>Vacate Date</Th>
-                      <Th noBorder>Status</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredResidents.map((resident) => (
-                      <tr key={resident.id} className="odd:bg-white even:bg-slate-50">
-                        <Td>{resident.studentName || '-'}</Td>
-                        <Td>{resident.className || '-'}</Td>
-                        <Td>{resident.hostelName || '-'}</Td>
-                        <Td>{resident.roomNumber || '-'}</Td>
-                        <Td>{resident.checkInDate || '-'}</Td>
-                        <Td>{resident.checkOutDate || '-'}</Td>
-                        <Td noBorder><StatusBadge text={resident.status || 'active'} /></Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </ExcelTable>
-            ) : null}
+            <div className="mt-8 grid gap-8">
+              {MESS_MENU_TYPES.map((menuType) => (
+                <MessMenuTable
+                  key={menuType.key}
+                  menuType={menuType}
+                  rows={messMenuRows}
+                  onMealChange={updateMessMenuMeal}
+                  onCellChange={updateMessMenuCell}
+                  onDeleteRow={deleteMessMenuRow}
+                />
+              ))}
+            </div>
           </Panel>
         ) : null}
+
       </main>
     </div>
   );
@@ -911,7 +836,7 @@ const WorkspaceCard = ({ icon: Icon, title, text, onClick }) => (
 );
 
 const Panel = ({ title, description, action, children }) => (
-  <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.55)] lg:p-8">
+  <section className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.55)] lg:p-8">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
@@ -935,6 +860,61 @@ const RegisterHeader = ({ title, count, search }) => (
     <div className="mt-4">{search}</div>
   </div>
 );
+
+const MessMenuTable = ({ menuType, rows, onMealChange, onCellChange, onDeleteRow }) => {
+  const headerClass = menuType.tone === 'rose' ? 'bg-rose-50' : 'bg-emerald-50';
+
+  return (
+    <div className="min-w-0 max-w-full">
+      <div className="flex items-center justify-between gap-4">
+        <h4 className="text-xl font-black tracking-tight text-slate-950">{menuType.title}</h4>
+        <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-600">
+          {rows.length} meal row(s)
+        </div>
+      </div>
+      <ExcelTable>
+        <table className="w-max min-w-full border-collapse bg-white">
+          <thead>
+            <tr className={headerClass}>
+              <StickyTh>Meal Time</StickyTh>
+              {MESS_MENU_DAYS.map((day) => (
+                <Th key={`${menuType.key}-${day}`}>{day}</Th>
+              ))}
+              <Th noBorder>Action</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className="odd:bg-white even:bg-slate-50">
+                <StickyEditableTd>
+                  <input
+                    value={row.mealName}
+                    onChange={(event) => onMealChange(row.id, event.target.value)}
+                    placeholder="BREAKFAST"
+                    className="min-h-12 w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-slate-800 outline-none transition placeholder:text-slate-300 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 md:w-40"
+                  />
+                </StickyEditableTd>
+                {MESS_MENU_DAYS.map((day) => (
+                  <EditableTd key={`${row.id}-${menuType.key}-${day}`}>
+                    <textarea
+                      value={row[menuType.key]?.[day] || ''}
+                      onChange={(event) => onCellChange(row.id, menuType.key, day, event.target.value)}
+                      placeholder="Food items"
+                      className="min-h-20 w-32 resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold leading-5 text-slate-700 outline-none transition placeholder:text-slate-300 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 md:w-36"
+                    />
+                  </EditableTd>
+                ))}
+                <Td noBorder>
+                  <IconButton icon={Trash2} onClick={() => onDeleteRow(row.id)} />
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ExcelTable>
+    </div>
+  );
+};
 
 const InputField = ({ label, error, wide = false, ...props }) => (
   <div className={`space-y-2.5 ${wide ? 'md:col-span-2 xl:col-span-3' : ''}`}>
@@ -991,8 +971,8 @@ const PrimaryButton = ({ type, icon: Icon, label }) => (
 );
 
 const ExcelTable = ({ children }) => (
-  <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
-    <div className="overflow-x-auto">{children}</div>
+  <div className="mt-6 min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200">
+    <div className="max-w-full overflow-x-auto">{children}</div>
   </div>
 );
 
@@ -1002,8 +982,26 @@ const Th = ({ children, noBorder = false }) => (
   </th>
 );
 
+const StickyTh = ({ children }) => (
+  <th className="sticky left-0 z-20 border-b border-r border-slate-200 bg-inherit px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600 shadow-[8px_0_14px_-14px_rgba(15,23,42,0.7)]">
+    {children}
+  </th>
+);
+
 const Td = ({ children, noBorder = false }) => (
   <td className={`border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 ${noBorder ? '' : 'border-r'}`}>
+    {children}
+  </td>
+);
+
+const StickyEditableTd = ({ children }) => (
+  <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-white p-2 align-top shadow-[8px_0_14px_-14px_rgba(15,23,42,0.7)]">
+    {children}
+  </td>
+);
+
+const EditableTd = ({ children }) => (
+  <td className="border-b border-r border-slate-200 p-2 align-top">
     {children}
   </td>
 );
@@ -1015,11 +1013,60 @@ const MiniMetric = ({ label, value }) => (
   </div>
 );
 
+const SummaryCard = ({ label, value, tone }) => {
+  const toneClass = {
+    slate: 'border-slate-200 bg-slate-50 text-slate-900',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    rose: 'border-rose-200 bg-rose-50 text-rose-800',
+    amber: 'border-amber-200 bg-amber-50 text-amber-800',
+  }[tone] || 'border-slate-200 bg-slate-50 text-slate-900';
+
+  return (
+    <div className={`rounded-2xl border p-5 ${toneClass}`}>
+      <p className="text-[11px] font-black uppercase tracking-[0.18em] opacity-70">{label}</p>
+      <p className="mt-3 text-3xl font-black tracking-tight">{value}</p>
+    </div>
+  );
+};
+
+const OccupancyBadge = ({ occupied, capacity }) => {
+  const occupiedCount = Number(occupied) || 0;
+  const capacityCount = Number(capacity) || 0;
+  const isFull = capacityCount > 0 && occupiedCount >= capacityCount;
+  const isEmpty = occupiedCount <= 0;
+  const colorClass = isEmpty
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : isFull
+      ? 'border-rose-200 bg-rose-50 text-rose-700'
+      : 'border-amber-200 bg-amber-50 text-amber-700';
+
+  return (
+    <span className={`inline-flex min-w-16 justify-center rounded-full border px-3 py-1 text-xs font-black ${colorClass}`}>
+      {occupiedCount}
+    </span>
+  );
+};
+
 const StatusBadge = ({ text }) => (
   <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">
     {text}
   </span>
 );
+
+const MessFoodBadge = ({ value }) => {
+  const normalizedValue = normalizeMessFood(value);
+  const colorClass = {
+    vegetarian: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    'non-vegetarian': 'border-rose-200 bg-rose-50 text-rose-700',
+    select: 'border-amber-200 bg-amber-50 text-amber-700',
+  }[normalizedValue];
+
+  return (
+    <span className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${colorClass}`}>
+      {messFoodLabel(normalizedValue)}
+    </span>
+  );
+};
 
 const IconButton = ({ icon: Icon, onClick }) => (
   <button type="button" onClick={onClick} className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600">
@@ -1042,7 +1089,7 @@ function sectionTitle(section) {
     hostels: 'Hostel Management',
     rooms: 'Room Management',
     'room-generator': 'Generate Rooms',
-    allotment: 'Student Allotment',
+    'mess-food': 'Mess Food Management',
   }[section] || 'Hostel Workspace';
 }
 
@@ -1110,6 +1157,66 @@ function generateRoomPreview(form, hostels) {
   return rows;
 }
 
+function createMessMenuRow(id, mealName) {
+  return {
+    id,
+    mealName,
+    vegetarian: emptyMessMenuCells(),
+    nonVegetarian: emptyMessMenuCells(),
+  };
+}
+
+function emptyMessMenuCells() {
+  return MESS_MENU_DAYS.reduce((cells, day) => ({ ...cells, [day]: '' }), {});
+}
+
+function defaultMessMenuRows() {
+  return [
+    createMessMenuRow('breakfast', 'BREAKFAST'),
+    createMessMenuRow('lunch', 'LUNCH'),
+    createMessMenuRow('dinner', 'DINNER'),
+  ];
+}
+
+function loadMessMenuRows() {
+  if (typeof window === 'undefined') return defaultMessMenuRows();
+
+  try {
+    const savedRows = JSON.parse(window.localStorage.getItem(messMenuStorageKey()) || 'null');
+    return Array.isArray(savedRows) && savedRows.length
+      ? savedRows.map(normalizeMessMenuRow)
+      : defaultMessMenuRows();
+  } catch {
+    return defaultMessMenuRows();
+  }
+}
+
+function saveMessMenuRows(rows) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(messMenuStorageKey(), JSON.stringify(rows.map(normalizeMessMenuRow)));
+}
+
+function messMenuStorageKey() {
+  const collegeId = typeof window === 'undefined' ? '' : window.localStorage.getItem('current_college_id');
+  return `hostel_mess_menu_${collegeId || 'default'}`;
+}
+
+function normalizeMessMenuRow(row) {
+  return {
+    id: row?.id || `meal-${Date.now()}`,
+    mealName: String(row?.mealName || '').trim().toUpperCase(),
+    vegetarian: normalizeMessMenuCells(row?.vegetarian),
+    nonVegetarian: normalizeMessMenuCells(row?.nonVegetarian),
+  };
+}
+
+function normalizeMessMenuCells(cells = {}) {
+  return MESS_MENU_DAYS.reduce((nextCells, day) => ({
+    ...nextCells,
+    [day]: String(cells?.[day] || '').trim().toUpperCase(),
+  }), {});
+}
+
 function shouldUppercase(field) {
   return ['hostelName', 'wardenName', 'roomNumber'].includes(field);
 }
@@ -1161,6 +1268,19 @@ function studentName(student) {
 function studentContact(studentId, students) {
   const student = students.find((entry) => String(entry.id) === String(studentId));
   return digitsOnly(student?.guardianPhone || student?.fatherMobile || student?.mobileNumber || '', 10);
+}
+
+function normalizeMessFood(value) {
+  const normalizedValue = String(value || 'select').toLowerCase();
+  return MESS_FOOD_OPTIONS.includes(normalizedValue) ? normalizedValue : 'select';
+}
+
+function messFoodLabel(value) {
+  return {
+    select: 'Select',
+    vegetarian: 'Vegetarian',
+    'non-vegetarian': 'Non-Vegetarian',
+  }[String(value || 'select').toLowerCase()] || 'Select';
 }
 
 function getStudentClass(student) {

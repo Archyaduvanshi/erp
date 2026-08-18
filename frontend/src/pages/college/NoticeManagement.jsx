@@ -60,7 +60,7 @@ const NoticeManagement = () => {
   const refreshData = async () => {
     try {
       const records = await noticeApi.getAll();
-      const visibleRecords = records.filter((notice) => !notice.targetStudentId);
+      const visibleRecords = records.filter((notice) => !notice.targetStudentId && !notice.targetTeacherId);
       setNotices(visibleRecords);
       setSelectedNoticeId((currentId) => (
         currentId && visibleRecords.some((notice) => String(notice.id) === String(currentId)) ? currentId : visibleRecords[0]?.id || null

@@ -19,6 +19,7 @@ public record HostelResidentResponse(
         String checkOutDate,
         String monthlyCharge,
         String guardianContact,
+        String messFood,
         String emergencyContact,
         String notes,
         String status,

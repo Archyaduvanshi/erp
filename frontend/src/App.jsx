@@ -16,6 +16,8 @@ const TransportManagement = lazy(() => import('./pages/college/TransportManageme
 const AttendanceManagement = lazy(() => import('./pages/college/AttendanceManagement'));
 const CourseSubjectManagement = lazy(() => import('./pages/college/CourseSubjectManagement'));
 const ExaminationManagement = lazy(() => import('./pages/college/ExaminationManagement'));
+const ResultManagement = lazy(() => import('./pages/college/ResultManagement'));
+const ReportsManagement = lazy(() => import('./pages/college/ReportsManagement'));
 const LibraryManagement = lazy(() => import('./pages/college/LibraryManagement'));
 const HostelManagement = lazy(() => import('./pages/college/HostelManagement'));
 const FeeManagement = lazy(() => import('./pages/college/FeeManagement'));
@@ -64,6 +66,7 @@ function App() {
           <Route path="/college/attendance" element={<RequireCollegeAccess><AttendanceManagement /></RequireCollegeAccess>} />
           <Route path="/college/courses" element={<RequireCollegeAccess><CourseSubjectManagement /></RequireCollegeAccess>} />
           <Route path="/college/examinations" element={<RequireCollegeAccess><ExaminationManagement /></RequireCollegeAccess>} />
+          <Route path="/college/results" element={<RequireCollegeAccess><ResultManagement /></RequireCollegeAccess>} />
           <Route path="/college/library" element={<RequireCollegeAccess><LibraryManagement /></RequireCollegeAccess>} />
           <Route path="/college/hostel" element={<RequireCollegeAccess><HostelManagement /></RequireCollegeAccess>} />
           <Route path="/college/fees" element={<RequireCollegeAccess><FeeManagement /></RequireCollegeAccess>} />
@@ -72,7 +75,7 @@ function App() {
           <Route path="/college/timetable" element={<RequireCollegeAccess><TimetableManagement /></RequireCollegeAccess>} />
           <Route path="/college/holidays" element={<RequireCollegeAccess><HolidayManagement /></RequireCollegeAccess>} />
           <Route path="/college/notices" element={<RequireCollegeAccess><NoticeManagement /></RequireCollegeAccess>} />
-          <Route path="/college/reports" element={<RequireCollegeAccess><ComingSoonPage /></RequireCollegeAccess>} />
+          <Route path="/college/reports" element={<RequireCollegeAccess><ReportsManagement /></RequireCollegeAccess>} />
           <Route path="/college/settings" element={<RequireCollegeAccess adminOnly><SettingsManagement /></RequireCollegeAccess>} />
           <Route path="/college/*" element={<ComingSoonPage />} />
           <Route path="/student" element={<StudentDashboard />} />

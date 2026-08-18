@@ -49,6 +49,8 @@ public class CollegeSettingsService {
     public CollegeSettingsResponse savePreferences(Long instituteId, PreferencesPayload request) {
         CollegeSettings settings = resolveSettings(validateInstitute(instituteId));
         settings.setAcademicYear(normalize(request.academicYear()));
+        settings.setAcademicYearStartMonth(normalize(request.academicYearStartMonth()));
+        settings.setAcademicYearEndMonth(normalize(request.academicYearEndMonth()));
         settings.setWorkingDays(normalize(request.workingDays()));
         settings.setTimezone(normalize(request.timezone()));
         settings.setLanguage(normalize(request.language()));
@@ -118,6 +120,8 @@ public class CollegeSettingsService {
         return new CollegeSettingsResponse(
                 new PreferencesPayload(
                         defaultValue(settings.getAcademicYear(), "2026-2027"),
+                        defaultValue(settings.getAcademicYearStartMonth(), "April"),
+                        defaultValue(settings.getAcademicYearEndMonth(), "March"),
                         defaultValue(settings.getWorkingDays(), "Monday To Saturday"),
                         defaultValue(settings.getTimezone(), "Asia/Kolkata"),
                         defaultValue(settings.getLanguage(), "English"),
@@ -157,6 +161,8 @@ public class CollegeSettingsService {
                     CollegeSettings settings = new CollegeSettings();
                     settings.setInstitute(institute);
                     settings.setAcademicYear("2026-2027");
+                    settings.setAcademicYearStartMonth("April");
+                    settings.setAcademicYearEndMonth("March");
                     settings.setWorkingDays("Monday To Saturday");
                     settings.setTimezone("Asia/Kolkata");
                     settings.setLanguage("English");

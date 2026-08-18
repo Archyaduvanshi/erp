@@ -39,7 +39,8 @@ const normalizePaymentEntry = (entry, monthlySalary = 0) => {
   const previousPendingAmount = Number(entry.previousPendingAmount) || 0;
   const bonusAmount = Number(entry.bonusAmount) || 0;
   const advanceAmount = Number(entry.advanceAmount) || 0;
-  const computedAmount = baseSalary + previousPendingAmount + bonusAmount - advanceAmount;
+  const leaveDeductionAmount = Number(entry.leaveDeductionAmount) || 0;
+  const computedAmount = baseSalary + previousPendingAmount + bonusAmount - advanceAmount - leaveDeductionAmount;
   const totalAmount = Number(entry.amount ?? entry.totalAmount);
 
   return {
@@ -48,6 +49,13 @@ const normalizePaymentEntry = (entry, monthlySalary = 0) => {
     previousPendingAmount,
     bonusAmount,
     advanceAmount,
+    openSchoolDays: Number(entry.openSchoolDays) || 0,
+    presentDays: Number(entry.presentDays) || 0,
+    absentDays: Number(entry.absentDays) || 0,
+    allowedLeaves: Number(entry.allowedLeaves) || 0,
+    extraLeaveDays: Number(entry.extraLeaveDays) || 0,
+    perDaySalary: Number(entry.perDaySalary) || 0,
+    leaveDeductionAmount,
     amount: Number.isFinite(totalAmount) ? totalAmount : computedAmount,
     totalAmount: Number.isFinite(totalAmount) ? totalAmount : computedAmount,
     paidOn: entry.paidOn || '',
@@ -91,6 +99,7 @@ export const buildSalaryTimeline = (teacher, now = new Date()) => {
     const previousPendingAmount = payment?.previousPendingAmount ?? 0;
     const bonusAmount = payment?.bonusAmount ?? 0;
     const advanceAmount = payment?.advanceAmount ?? 0;
+    const leaveDeductionAmount = payment?.leaveDeductionAmount ?? 0;
     const totalAmount = payment?.totalAmount ?? payment?.amount ?? baseSalary;
 
     timeline.push({
@@ -102,6 +111,13 @@ export const buildSalaryTimeline = (teacher, now = new Date()) => {
       previousPendingAmount,
       bonusAmount,
       advanceAmount,
+      openSchoolDays: payment?.openSchoolDays ?? 0,
+      presentDays: payment?.presentDays ?? 0,
+      absentDays: payment?.absentDays ?? 0,
+      allowedLeaves: payment?.allowedLeaves ?? 0,
+      extraLeaveDays: payment?.extraLeaveDays ?? 0,
+      perDaySalary: payment?.perDaySalary ?? 0,
+      leaveDeductionAmount,
       isPaid: Boolean(payment),
       paidOn: payment?.paidOn || '',
       note: payment?.note || '',
@@ -135,7 +151,8 @@ export const markSalaryPaid = (teacher, monthKey, options = {}) => {
   const previousPendingAmount = previousPendingEntries.reduce((sum, entry) => sum + (Number(entry.baseSalary) || 0), 0);
   const bonusAmount = Math.max(0, Number(options.bonusAmount) || 0);
   const advanceAmount = Math.max(0, Number(options.advanceAmount) || 0);
-  const totalAmount = Math.max(0, baseSalary + previousPendingAmount + bonusAmount - advanceAmount);
+  const leaveDeductionAmount = Math.max(0, Number(options.leaveDeductionAmount) || 0);
+  const totalAmount = Math.max(0, baseSalary + previousPendingAmount + bonusAmount - advanceAmount - leaveDeductionAmount);
   const note = String(options.note || '').trim();
 
   const monthsToReplace = new Set([monthKey, ...autoSettledMonthKeys]);
@@ -146,6 +163,13 @@ export const markSalaryPaid = (teacher, monthKey, options = {}) => {
     previousPendingAmount: 0,
     bonusAmount: 0,
     advanceAmount: 0,
+    openSchoolDays: 0,
+    presentDays: 0,
+    absentDays: 0,
+    allowedLeaves: 0,
+    extraLeaveDays: 0,
+    perDaySalary: 0,
+    leaveDeductionAmount: 0,
     amount: baseSalary,
     totalAmount: baseSalary,
     paidOn,
@@ -164,6 +188,13 @@ export const markSalaryPaid = (teacher, monthKey, options = {}) => {
         previousPendingAmount,
         bonusAmount,
         advanceAmount,
+        openSchoolDays: Number(options.openSchoolDays) || 0,
+        presentDays: Number(options.presentDays) || 0,
+        absentDays: Number(options.absentDays) || 0,
+        allowedLeaves: Number(options.allowedLeaves) || 0,
+        extraLeaveDays: Number(options.extraLeaveDays) || 0,
+        perDaySalary: Number(options.perDaySalary) || 0,
+        leaveDeductionAmount,
         amount: totalAmount,
         totalAmount,
         paidOn,

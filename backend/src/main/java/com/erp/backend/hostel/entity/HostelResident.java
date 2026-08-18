@@ -52,6 +52,7 @@ public class HostelResident {
     private LocalDate checkOutDate;
     private BigDecimal monthlyCharge;
     private String guardianContact;
+    private String messFood;
     private String emergencyContact;
 
     @Column(length = 1000)

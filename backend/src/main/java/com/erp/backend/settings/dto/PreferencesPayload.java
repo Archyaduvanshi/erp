@@ -2,6 +2,8 @@ package com.erp.backend.settings.dto;
 
 public record PreferencesPayload(
         String academicYear,
+        String academicYearStartMonth,
+        String academicYearEndMonth,
         String workingDays,
         String timezone,
         String language,

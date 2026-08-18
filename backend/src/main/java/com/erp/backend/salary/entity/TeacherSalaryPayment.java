@@ -1,9 +1,10 @@
-package com.erp.backend.notice.entity;
+package com.erp.backend.salary.entity;
 
-import java.time.LocalDate;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.erp.backend.institute.entity.Institute;
+import com.erp.backend.teacher.entity.Teacher;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -20,11 +21,11 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "notices")
+@Table(name = "teacher_salary_payments")
 @Getter
 @Setter
 @NoArgsConstructor
-public class Notice {
+public class TeacherSalaryPayment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -34,44 +35,44 @@ public class Notice {
     @JoinColumn(name = "institute_id", nullable = false)
     private Institute institute;
 
-    @Column(nullable = false)
-    private String title;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "teacher_id", nullable = false)
+    private Teacher teacher;
 
     @Column(nullable = false)
-    private String category;
+    private String monthKey;
 
     @Column(nullable = false)
-    private String audience;
+    private BigDecimal baseSalary = BigDecimal.ZERO;
+
+    @Column(nullable = false)
+    private BigDecimal previousPendingAmount = BigDecimal.ZERO;
+
+    @Column(nullable = false)
+    private BigDecimal bonusAmount = BigDecimal.ZERO;
+
+    @Column(nullable = false)
+    private BigDecimal leaveDeductionAmount = BigDecimal.ZERO;
+
+    @Column(nullable = false)
+    private BigDecimal totalAmount = BigDecimal.ZERO;
+
+    private Integer openSchoolDays = 0;
+    private Integer presentDays = 0;
+    private Integer absentDays = 0;
+    private Integer allowedLeaves = 0;
+    private Integer extraLeaveDays = 0;
+
+    @Column(nullable = false)
+    private BigDecimal perDaySalary = BigDecimal.ZERO;
+
+    private String paidOn;
 
     @Column(length = 2000)
-    private String targetClasses;
+    private String settledMonthKeys;
 
-    private Long targetStudentId;
-
-    private Long targetTeacherId;
-
-    @Column(nullable = false)
-    private String priority;
-
-    @Column(nullable = false)
-    private LocalDate publishDate;
-
-    private LocalDate expireDate;
-
-    @Column(nullable = false)
-    private String status;
-
-    @Column(nullable = false)
-    private Boolean pinned = false;
-
-    @Column(length = 1000, nullable = false)
-    private String summary;
-
-    @Column(length = 5000, nullable = false)
-    private String details;
-
-    private String sourceType;
-    private Long sourceId;
+    @Column(length = 2000)
+    private String note;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

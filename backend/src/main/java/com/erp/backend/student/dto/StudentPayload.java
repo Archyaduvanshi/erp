@@ -34,6 +34,7 @@ public record StudentPayload(
         String prevSchool,
         @NotBlank(message = "Category is required") String category,
         String admissionDate,
+        String academicYear,
         String enrollmentNo,
         @NotBlank(message = "Class is required") String className,
         @NotBlank(message = "Section is required") String section,

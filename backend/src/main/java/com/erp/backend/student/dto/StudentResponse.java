@@ -24,6 +24,7 @@ public record StudentResponse(
         String prevSchool,
         String category,
         String admissionDate,
+        String academicYear,
         String enrollmentNo,
         String rollNo,
         String className,

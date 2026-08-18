@@ -74,10 +74,10 @@ const FeeManagement = () => {
   const [structureSearch, setStructureSearch] = useState('');
   const [manualClassName, setManualClassName] = useState('');
   const [structureCategoryFilter, setStructureCategoryFilter] = useState('');
-  const [receiptSearch, setReceiptSearch] = useState('');
   const [dueSearch, setDueSearch] = useState('');
   const [loadError, setLoadError] = useState('');
   const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
+  const [generatedReceipt, setGeneratedReceipt] = useState(null);
 
   useEffect(() => {
     refreshData();
@@ -207,20 +207,6 @@ const FeeManagement = () => {
       .filter((structure) => !structureCategoryFilter || structure.category === structureCategoryFilter)
       .sort((a, b) => String(a.feeComponent || '').localeCompare(String(b.feeComponent || '')));
   }, [selectedFeeClass, structureCategoryFilter, structures]);
-
-  const filteredReceipts = useMemo(() => {
-    const query = receiptSearch.trim().toLowerCase();
-    return receiptRows.filter((receipt) => {
-      if (!query) return true;
-      return (
-        receipt.receiptNumber?.toLowerCase().includes(query) ||
-        receipt.transactionId?.toLowerCase().includes(query) ||
-        receipt.gatewayRef?.toLowerCase().includes(query) ||
-        receipt.student?.name?.toLowerCase().includes(query) ||
-        receipt.structure?.courseId?.toLowerCase().includes(query)
-      );
-    });
-  }, [receiptRows, receiptSearch]);
 
   const filteredDueRows = useMemo(() => {
     const query = dueSearch.trim().toLowerCase();
@@ -353,6 +339,7 @@ const FeeManagement = () => {
 
   const handleStudentSelect = (studentId) => {
     setFeeSummaryOpen(false);
+    setGeneratedReceipt(null);
     const selectedStudent = studentOptions.find((student) => String(student.id) === studentId);
     const studentRows = reportRows
       .filter((row) => String(row.student.id) === String(studentId))
@@ -371,6 +358,7 @@ const FeeManagement = () => {
 
   const handleCollectionClassSelect = (className) => {
     setFeeSummaryOpen(false);
+    setGeneratedReceipt(null);
     setPaymentForm((current) => ({
       ...current,
       className,
@@ -385,6 +373,7 @@ const FeeManagement = () => {
 
   const handleCollectionSectionSelect = (section) => {
     setFeeSummaryOpen(false);
+    setGeneratedReceipt(null);
     setPaymentForm((current) => ({
       ...current,
       section,
@@ -398,6 +387,7 @@ const FeeManagement = () => {
 
   const handleSavePayment = async (e) => {
     e.preventDefault();
+    setGeneratedReceipt(null);
     const selectedStudent = studentOptions.find((student) => String(student.id) === String(paymentForm.studentId));
     if (!selectedStudent || !paymentForm.paidAmount) return;
     const paidAmount = Number(paymentForm.paidAmount) || 0;
@@ -415,7 +405,7 @@ const FeeManagement = () => {
     const { className, section, ...paymentPayload } = paymentForm;
 
     try {
-      await feeApi.savePayment({
+      const savedPayment = await feeApi.savePayment({
         ...paymentPayload,
         studentId: selectedStudent.id,
         structureId: 'overall_total',
@@ -436,6 +426,7 @@ const FeeManagement = () => {
         balanceRemaining,
         downloadLink: `receipt-${receiptNumber}.txt`,
       });
+      const generated = enrichReceiptForDisplay(savedPayment, selectedStudent);
       let noticeCreateError = '';
       try {
         await noticeApi.create(buildFeeCollectionNoticePayload({
@@ -448,9 +439,12 @@ const FeeManagement = () => {
           summary: selectedPaymentSummary,
           rows: selectedPaymentRows,
         }));
+        generated.noticeSent = true;
       } catch (noticeError) {
         noticeCreateError = noticeError.message || 'Payment saved, but fee collection notice could not be created.';
+        generated.noticeSent = false;
       }
+      setGeneratedReceipt(generated);
       setPaymentForm(initialPaymentForm);
       await refreshData();
       if (noticeCreateError) setLoadError(noticeCreateError);
@@ -551,10 +545,9 @@ const FeeManagement = () => {
         ) : null}
 
         {activeSection === 'home' ? (
-          <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <ActionCard icon={BadgeIndianRupee} title="Fee Structure Setup" text="Define cycle-based fees and monthly hostel, transport, or library service fees." onClick={() => setActiveSection('structures')} />
             <ActionCard icon={CreditCard} title="Fee Collection" text="Collect fee at the counter, with cash as the default mode and receipt-ready allocation." onClick={() => setActiveSection('payments')} />
-            <ActionCard icon={ReceiptText} title="Receipt Generation" text="Review receipt number, tax, balance, and download proof." onClick={() => setActiveSection('receipts')} />
             <ActionCard icon={CalendarClock} title="Due Fee Reports" text="Find pending balances, late fines, and reminder counts." onClick={() => setActiveSection('dues')} />
           </section>
         ) : (
@@ -890,30 +883,13 @@ const FeeManagement = () => {
                     <PrimaryButton type="submit" icon={CreditCard} label="Tap To Collect" />
                   </div>
                 </form>
+                {generatedReceipt ? (
+                  <ReceiptPreview receipt={generatedReceipt} onDownload={handleDownloadReceipt} />
+                ) : null}
                 {selectedPaymentStudent ? (
                   <PaymentHistoryTable rows={selectedPaymentHistory} />
                 ) : null}
               </Panel>
-        ) : null}
-
-        {activeSection === 'receipts' ? (
-          <Panel className="mt-8" title="Receipt Generation" description="Each successful collection stores proof of payment with receipt number, tax breakdown, balance, and download link.">
-            <div className="mt-6 max-w-md">
-              <SearchInput value={receiptSearch} onChange={setReceiptSearch} placeholder="Search receipt, student, transaction..." />
-            </div>
-            <div className="mt-6 grid gap-5 lg:grid-cols-2">
-              {filteredReceipts.map((receipt) => (
-                <RecordCard key={receipt.id} icon={ReceiptText} title={receipt.receiptNumber} subtitle={`${receipt.student?.name || 'Student pending'} | ${receipt.structure?.feeComponent || 'Component pending'}`}>
-                  <InfoPill icon={CalendarClock} text={resolveCoverageLabel(receipt)} />
-                  <InfoPill icon={FileText} text={receipt.taxBreakdown} />
-                  <InfoPill icon={IndianRupee} text={`Balance Rs ${receipt.balanceRemaining}`} />
-                  <button onClick={() => handleDownloadReceipt(receipt)} className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white transition hover:bg-emerald-600">
-                    <Download size={16} />
-                  </button>
-                </RecordCard>
-              ))}
-            </div>
-          </Panel>
         ) : null}
 
         {activeSection === 'dues' ? (
@@ -1003,9 +979,24 @@ const getClassSortValue = (className) => {
 const sectionTitle = (section) => ({
   structures: 'Fee Structure Setup',
   payments: 'Fee Counter Collection',
-  receipts: 'Receipt Generation',
   dues: 'Due Fee Reports',
 }[section] || 'Fee Management');
+
+const enrichReceiptForDisplay = (receipt, student) => ({
+  ...receipt,
+  student,
+  structure: {
+    feeComponent: Array.isArray(receipt.allocations) && receipt.allocations.length
+      ? `Overall Fee Payment (${receipt.allocations.length} allocations)`
+      : 'Overall Fee Payment',
+    billingType: receipt.billingType || 'overall_payment',
+    courseId: student?.className || 'Course pending',
+  },
+  receiptNumber: receipt.receiptNumber || `RCPT-${receipt.id}`,
+  taxBreakdown: receipt.taxBreakdown || calculateTaxBreakdown(receipt.paidAmount),
+  balanceRemaining: receipt.balanceRemaining ?? 0,
+  downloadLink: receipt.downloadLink || `receipt-${receipt.receiptNumber || receipt.id}.txt`,
+});
 
 const studentLabel = (value, students) => {
   if (!value) return 'Select student';
@@ -1189,6 +1180,43 @@ const InfoPill = ({ icon, text }) => (
   <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
     {React.createElement(icon, { size: 15, className: 'text-emerald-700' })}
     <span>{text}</span>
+  </div>
+);
+
+const ReceiptPreview = ({ receipt, onDownload }) => (
+  <div className="mt-8 rounded-[1.8rem] border border-emerald-200 bg-emerald-50/70 p-5">
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex min-w-0 gap-3">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white">
+          <ReceiptText size={20} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-emerald-700">Fees Receipt Generated</p>
+          <h4 className="mt-1 truncate text-xl font-black tracking-tight text-slate-950">{receipt.receiptNumber}</h4>
+          <p className="mt-1 text-sm font-semibold text-slate-600">{receipt.student?.name || 'Student pending'} | {receipt.student?.enrollmentNo || '-'}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onDownload(receipt)}
+        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700"
+      >
+        <Download size={15} />
+        Download
+      </button>
+    </div>
+    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <InvoiceStat label="Paid Amount" value={formatMoney(receipt.paidAmount)} strong tone="success" />
+      <InvoiceStat label="Balance" value={formatMoney(receipt.balanceRemaining)} tone={Number(receipt.balanceRemaining) > 0 ? 'danger' : 'success'} />
+      <InvoiceStat label="Mode" value={receipt.mode || 'Cash'} />
+      <InvoiceStat label="Notice" value={receipt.noticeSent ? 'Sent' : 'Pending'} tone={receipt.noticeSent ? 'success' : 'default'} />
+    </div>
+    <div className="mt-5 grid gap-2 rounded-2xl border border-emerald-100 bg-white p-4">
+      <SummaryLine label="Payment Date" value={receipt.paymentDate || '-'} />
+      <SummaryLine label="Cycle Window" value={resolveCoverageLabel(receipt)} />
+      <SummaryLine label={receipt.mode === 'Cash' ? 'Receipt / Voucher No.' : 'Transaction ID'} value={receipt.transactionId || '-'} />
+      <SummaryLine label="Tax Breakdown" value={receipt.taxBreakdown || '-'} />
+    </div>
   </div>
 );
 

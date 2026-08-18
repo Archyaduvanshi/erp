@@ -187,6 +187,7 @@ public class HostelService {
         resident.setCheckOutDate(null);
         resident.setMonthlyCharge(parseAmount(request.monthlyCharge(), room.getMonthlyCharge()));
         resident.setGuardianContact(trim(request.guardianContact()));
+        resident.setMessFood(defaultValue(request.messFood(), "select").toLowerCase(Locale.ROOT));
         resident.setEmergencyContact(trim(request.emergencyContact()));
         resident.setNotes(trimUpper(request.notes()));
         resident.setStatus(defaultValue(request.status(), "active").toLowerCase(Locale.ROOT));
@@ -327,6 +328,7 @@ public class HostelService {
                 resident.getCheckOutDate() == null ? null : resident.getCheckOutDate().toString(),
                 resident.getMonthlyCharge() == null ? "0" : resident.getMonthlyCharge().toPlainString(),
                 resident.getGuardianContact(),
+                defaultValue(resident.getMessFood(), "select"),
                 resident.getEmergencyContact(),
                 resident.getNotes(),
                 defaultValue(resident.getStatus(), "active"),

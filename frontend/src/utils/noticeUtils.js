@@ -8,10 +8,11 @@ export function getNoticeLiveStatus(notice) {
   return 'Published';
 }
 
-export function getPortalNotices(notices, role, studentClass = '', holidays = [], studentId = '') {
+export function getPortalNotices(notices, role, studentClass = '', holidays = [], studentId = '', teacherId = '') {
   const targetAudience = role === 'teacher' ? 'Teachers' : 'Students';
   const normalizedStudentClass = normalizeNoticeClass(studentClass);
   const normalizedStudentId = String(studentId || '');
+  const normalizedTeacherId = String(teacherId || '');
 
   return [
     ...(Array.isArray(notices) ? notices : []),
@@ -25,6 +26,7 @@ export function getPortalNotices(notices, role, studentClass = '', holidays = []
       if (notice.liveStatus !== 'Published') return false;
       if (notice.audience !== 'All' && notice.audience !== targetAudience) return false;
       if (notice.targetStudentId && String(notice.targetStudentId) !== normalizedStudentId) return false;
+      if (notice.targetTeacherId && String(notice.targetTeacherId) !== normalizedTeacherId) return false;
       if (targetAudience !== 'Students' || notice.audience === 'All') return true;
 
       const targetClasses = normalizeTargetClasses(notice.targetClasses);

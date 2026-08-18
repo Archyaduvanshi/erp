@@ -15,6 +15,8 @@ public record HostelResidentPayload(
         String monthlyCharge,
         @Pattern(regexp = "^$|\\d{10}", message = "Guardian contact must contain 10 digits")
         String guardianContact,
+        @Pattern(regexp = "^(select|vegetarian|non-vegetarian)?$", message = "Mess food must be select, vegetarian, or non-vegetarian")
+        String messFood,
         @Pattern(regexp = "^$|\\d{10}", message = "Emergency contact must contain 10 digits")
         String emergencyContact,
         @Size(max = 1000, message = "Notes cannot exceed 1000 characters")

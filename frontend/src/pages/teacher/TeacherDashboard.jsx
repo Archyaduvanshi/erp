@@ -17,7 +17,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { db } from '../../utils/db';
-import { attendanceApi, noticeApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { attendanceApi, noticeApi, salaryApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
 import { getCurrentMonthSalaryStatus, normalizeTeacherSalary } from '../../utils/salaryUtils';
 import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
 
@@ -28,6 +28,7 @@ const TeacherDashboard = () => {
   const [students, setStudents] = useState([]);
   const [classTimetables, setClassTimetables] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [salaryPayments, setSalaryPayments] = useState([]);
   const [examSlots] = useState(() => db.getAll('timetable_exam_slots'));
   const [notices, setNotices] = useState([]);
   const [loadError, setLoadError] = useState('');
@@ -35,8 +36,8 @@ const TeacherDashboard = () => {
   const teacher = useMemo(() => {
     if (!session || session.role !== 'teacher') return null;
     const matchingTeacher = teachers.find((entry) => String(entry.id) === String(session.teacherId)) || null;
-    return matchingTeacher ? normalizeTeacherSalary(matchingTeacher) : null;
-  }, [session, teachers]);
+    return matchingTeacher ? attachSalaryPayments(normalizeTeacherSalary(matchingTeacher), salaryPayments) : null;
+  }, [salaryPayments, session, teachers]);
 
   const teacherName = teacher
     ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
@@ -65,7 +66,7 @@ const TeacherDashboard = () => {
   const todayAttendanceCount = teacherAttendance.filter((record) => record.date === today).length;
   const upcomingExamCount = teacherExamDuty.filter((slot) => slot.examDate >= today).length;
   const currentSalaryStatus = getCurrentMonthSalaryStatus(teacher);
-  const portalNotices = useMemo(() => getPortalNotices(notices, 'teacher'), [notices]);
+  const portalNotices = useMemo(() => getPortalNotices(notices, 'teacher', '', [], '', teacher?.id || session?.teacherId), [notices, session?.teacherId, teacher?.id]);
 
   const handleLogout = () => {
     localStorage.removeItem('active_session');
@@ -82,18 +83,20 @@ const TeacherDashboard = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse, noticeResponse] = await Promise.all([
+        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse, noticeResponse, salaryPaymentResponse] = await Promise.all([
           teacherApi.getAll(),
           studentApi.getAll(),
           timetableApi.getClassTimetables(),
           attendanceApi.getAll(),
           noticeApi.getPortalAll(),
+          salaryApi.getPayments(session.teacherId),
         ]);
         setTeachers(teacherResponse);
         setStudents(studentResponse);
         setClassTimetables(timetableResponse);
         setAttendanceRecords(attendanceResponse);
         setNotices(noticeResponse);
+        setSalaryPayments(salaryPaymentResponse);
         setLoadError('');
       } catch (error) {
         setTeachers([]);
@@ -101,6 +104,7 @@ const TeacherDashboard = () => {
         setClassTimetables([]);
         setAttendanceRecords([]);
         setNotices([]);
+        setSalaryPayments([]);
         setLoadError(error.message || 'Unable to load dashboard data.');
       }
     };
@@ -322,5 +326,34 @@ const buildTeacherIdentityKeys = (teacher) => {
 };
 
 const normalizeTeacherValue = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const attachSalaryPayments = (teacher, salaryPayments = []) => {
+  if (!teacher) return null;
+  const paymentMap = new Map();
+  (Array.isArray(teacher.paymentHistory) ? teacher.paymentHistory : []).forEach((payment) => {
+    if (payment?.monthKey) paymentMap.set(payment.monthKey, payment);
+  });
+  salaryPayments.forEach((payment) => {
+    if (!payment?.monthKey) return;
+    paymentMap.set(payment.monthKey, {
+      monthKey: payment.monthKey,
+      baseSalary: Number(payment.baseSalary) || 0,
+      previousPendingAmount: Number(payment.previousPendingAmount) || 0,
+      bonusAmount: Number(payment.bonusAmount) || 0,
+      advanceAmount: Number(payment.advanceAmount) || 0,
+      leaveDeductionAmount: Number(payment.leaveDeductionAmount) || 0,
+      amount: Number(payment.totalAmount ?? payment.amount) || 0,
+      totalAmount: Number(payment.totalAmount ?? payment.amount) || 0,
+      paidOn: payment.paidOn || '',
+      settledMonthKeys: Array.isArray(payment.settledMonthKeys) ? payment.settledMonthKeys : [],
+      note: payment.note || '',
+    });
+  });
+
+  return {
+    ...teacher,
+    paymentHistory: [...paymentMap.values()],
+  };
+};
 
 export default TeacherDashboard;

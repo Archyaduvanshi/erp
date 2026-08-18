@@ -213,7 +213,7 @@ const Dashboard = () => {
             icon={<FileText className="text-fuchsia-700" size={42} />}
             title="Result"
             desc="Review published results, merit summaries, and student performance records"
-            onClick={() => navigate('/college/examinations')}
+            onClick={() => navigate('/college/results')}
           />
 
           <ModuleCard

@@ -357,6 +357,17 @@ export const feeApi = {
     })),
 };
 
+export const salaryApi = {
+  getPayments: (teacherId) =>
+    request(`/salary/payments${teacherId ? `?teacherId=${encodeURIComponent(teacherId)}` : ''}`, withInstituteHeaders()),
+
+  savePayment: (payload) =>
+    request('/salary/payments', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+};
+
 export const timetableApi = {
   getClassTimetables: () => request('/timetables/classes', withInstituteHeaders()),
 
@@ -477,6 +488,16 @@ export const marksApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     })),
+};
+
+export const resultApi = {
+  getClasses: () => request('/results/classes', withInstituteHeaders()),
+
+  getClassStudents: (className) =>
+    request(`/results/students?className=${encodeURIComponent(className)}`, withInstituteHeaders()),
+
+  getStudentResult: (className, studentId) =>
+    request(`/results/student?className=${encodeURIComponent(className)}&studentId=${encodeURIComponent(studentId)}`, withInstituteHeaders()),
 };
 
 export const noticeApi = {
