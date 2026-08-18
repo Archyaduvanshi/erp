@@ -15,6 +15,23 @@ import {
   Users,
 } from 'lucide-react';
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ComposedChart,
+  Legend,
+  Pie,
+  PieChart,
+  PolarAngleAxis,
+  RadialBar,
+  RadialBarChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   attendanceApi,
   feeApi,
   hostelApi,
@@ -256,22 +273,25 @@ const MetricCard = ({ icon, label, value, helper, tone }) => {
 const StackedFinanceChart = ({ data }) => {
   const total = data.reduce((sum, row) => sum + row.value, 0);
   return (
-    <div>
-      <div className="flex h-16 overflow-hidden rounded-xl bg-slate-100">
-        {data.map((row) => (
-          <div
-            key={row.label}
-            className={row.color}
-            style={{ width: `${total ? Math.max((row.value / total) * 100, row.value ? 6 : 0) : 0}%` }}
-            title={`${row.label}: ${formatCurrency(row.value)}`}
-          />
-        ))}
+    <div className="rounded-xl bg-slate-50 p-4">
+      <div className="h-64">
+        {total ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} dataKey="value" nameKey="label" innerRadius={64} outerRadius={96} paddingAngle={2}>
+                {data.map((row) => <Cell key={row.label} fill={row.fill} />)}
+              </Pie>
+              <Tooltip formatter={(value) => formatCurrency(value)} />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        ) : <EmptyChart />}
       </div>
       <div className="mt-5 grid gap-3 md:grid-cols-2">
         {data.map((row) => (
           <div key={row.label} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="flex items-center gap-2">
-              <span className={`h-3 w-3 rounded-full ${row.dot}`} />
+              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: row.fill }} />
               <span className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">{row.label}</span>
             </div>
             <p className="mt-2 text-lg font-black text-slate-950">{formatCurrency(row.value)}</p>
@@ -288,20 +308,22 @@ const DonutGauge = ({ value, label, tone }) => {
     cyan: '#0891b2',
     fuchsia: '#c026d3',
   };
-  const angle = Math.max(0, Math.min(Number(value) || 0, 100)) * 3.6;
+  const chartValue = Math.max(0, Math.min(Number(value) || 0, 100));
   const color = colors[tone] || colors.emerald;
 
   return (
-    <div className="flex min-h-60 items-center justify-center">
-      <div
-        className="grid h-52 w-52 place-items-center rounded-full"
-        style={{ background: `conic-gradient(${color} ${angle}deg, #e2e8f0 ${angle}deg 360deg)` }}
-      >
-        <div className="grid h-36 w-36 place-items-center rounded-full bg-white text-center shadow-inner">
-          <div>
-            <p className="text-4xl font-black tracking-tight text-slate-950">{value}%</p>
-            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</p>
-          </div>
+    <div className="relative flex min-h-60 items-center justify-center rounded-xl bg-slate-50">
+      <ResponsiveContainer width="100%" height={240}>
+        <RadialBarChart cx="50%" cy="50%" innerRadius="62%" outerRadius="86%" barSize={16} data={[{ name: label, value: chartValue, fill: color }]} startAngle={90} endAngle={-270}>
+          <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
+          <RadialBar dataKey="value" cornerRadius={12} background={{ fill: '#e2e8f0' }} />
+          <Tooltip formatter={(tooltipValue) => `${tooltipValue}%`} />
+        </RadialBarChart>
+      </ResponsiveContainer>
+      <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+        <div>
+          <p className="text-4xl font-black tracking-tight text-slate-950">{chartValue}%</p>
+          <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</p>
         </div>
       </div>
     </div>
@@ -316,48 +338,45 @@ const RingSummary = ({ value, primary, label, tone }) => (
 );
 
 const VerticalBars = ({ rows, valueLabel, tone }) => {
-  const max = Math.max(...rows.map((row) => row.value), 1);
   const colors = {
-    emerald: 'bg-emerald-500',
-    blue: 'bg-blue-500',
+    emerald: '#10b981',
+    blue: '#3b82f6',
   };
 
   return (
-    <div className="flex min-h-60 items-end gap-3 overflow-x-auto rounded-xl bg-slate-50 p-4">
-      {rows.length ? rows.map((row) => (
-        <div key={row.label} className="flex min-w-20 flex-1 flex-col items-center justify-end gap-2">
-          <span className="text-xs font-black text-slate-950">{row.value}</span>
-          <div className="flex h-40 w-full items-end rounded-lg bg-white">
-            <div className={`w-full rounded-lg ${colors[tone] || colors.emerald}`} style={{ height: `${Math.max((row.value / max) * 100, row.value ? 8 : 0)}%` }} />
-          </div>
-          <span className="w-full truncate text-center text-[10px] font-black uppercase tracking-[0.12em] text-slate-500" title={row.label}>
-            {row.label}
-          </span>
-          <span className="text-[10px] font-bold text-slate-400">{valueLabel}</span>
-        </div>
-      )) : (
-        <EmptyChart />
+    <div className="h-72 rounded-xl bg-slate-50 p-4">
+      {rows.length ? (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} margin={{ top: 10, right: 10, left: -16, bottom: 28 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <XAxis dataKey="label" angle={-24} textAnchor="end" interval={0} height={54} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 700 }} />
+            <YAxis tick={{ fontSize: 11, fill: '#64748b', fontWeight: 700 }} />
+            <Tooltip formatter={(value) => [`${value} ${valueLabel}`, 'Total']} />
+            <Bar dataKey="value" radius={[8, 8, 0, 0]} fill={colors[tone] || colors.emerald} />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="flex h-full"><EmptyChart /></div>
       )}
     </div>
   );
 };
 
 const HorizontalBars = ({ rows, valueLabel, tone }) => {
-  const max = Math.max(...rows.map((row) => row.value), 1);
-  const color = tone === 'blue' ? 'bg-blue-500' : 'bg-emerald-500';
+  const color = tone === 'blue' ? '#3b82f6' : '#10b981';
   return (
-    <div className="space-y-4 rounded-xl bg-slate-50 p-4">
-      {rows.length ? rows.map((row) => (
-        <div key={row.label}>
-          <div className="flex justify-between gap-3">
-            <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">{row.label}</span>
-            <span className="text-xs font-black text-slate-900">{row.value} {valueLabel}</span>
-          </div>
-          <div className="mt-2 h-3 overflow-hidden rounded-full bg-white">
-            <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max((row.value / max) * 100, row.value ? 8 : 0)}%` }} />
-          </div>
-        </div>
-      )) : <EmptyChart />}
+    <div className="h-60 rounded-xl bg-slate-50 p-4">
+      {rows.length ? (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart layout="vertical" data={rows} margin={{ top: 8, right: 20, left: 16, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+            <XAxis type="number" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 700 }} />
+            <YAxis type="category" dataKey="label" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 700 }} width={78} />
+            <Tooltip formatter={(value) => [`${value} ${valueLabel}`, 'Total']} />
+            <Bar dataKey="value" radius={[0, 8, 8, 0]} fill={color} />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : <div className="flex h-full"><EmptyChart /></div>}
     </div>
   );
 };
@@ -366,16 +385,23 @@ const SegmentChart = ({ rows }) => {
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   return (
     <div className="rounded-xl bg-slate-50 p-4">
-      <div className="flex h-9 overflow-hidden rounded-full bg-white">
-        {rows.map((row) => (
-          <div key={row.label} className={row.color} style={{ width: `${total ? Math.max((row.value / total) * 100, row.value ? 7 : 0) : 0}%` }} />
-        ))}
+      <div className="h-52">
+        {total ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={rows} dataKey="value" nameKey="label" innerRadius={48} outerRadius={78} paddingAngle={2}>
+                {rows.map((row) => <Cell key={row.label} fill={row.fill} />)}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        ) : <EmptyChart />}
       </div>
       <div className="mt-4 grid gap-3">
         {rows.length ? rows.map((row) => (
           <div key={row.label} className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              <span className={`h-3 w-3 shrink-0 rounded-full ${row.dot}`} />
+              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: row.fill }} />
               <span className="truncate text-xs font-black uppercase tracking-[0.12em] text-slate-500">{row.label}</span>
             </div>
             <span className="text-xs font-black text-slate-950">{row.value}</span>
@@ -387,18 +413,21 @@ const SegmentChart = ({ rows }) => {
 };
 
 const GroupedMonthChart = ({ rows }) => {
-  const max = Math.max(...rows.flatMap((row) => [row.fees, row.salary]), 1);
   return (
-    <div className="flex min-h-64 items-end gap-4 overflow-x-auto rounded-xl bg-slate-50 p-4">
-      {rows.length ? rows.map((row) => (
-        <div key={row.month} className="flex min-w-24 flex-1 flex-col items-center gap-3">
-          <div className="flex h-44 items-end gap-2">
-            <div className="w-7 rounded-t-lg bg-emerald-500" style={{ height: `${Math.max((row.fees / max) * 100, row.fees ? 8 : 0)}%` }} title={`Fee: ${formatCurrency(row.fees)}`} />
-            <div className="w-7 rounded-t-lg bg-blue-500" style={{ height: `${Math.max((row.salary / max) * 100, row.salary ? 8 : 0)}%` }} title={`Salary: ${formatCurrency(row.salary)}`} />
-          </div>
-          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{row.month}</span>
-        </div>
-      )) : <EmptyChart />}
+    <div className="h-72 rounded-xl bg-slate-50 p-4">
+      {rows.length ? (
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={rows} margin={{ top: 10, right: 16, left: 4, bottom: 6 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 700 }} />
+            <YAxis tickFormatter={(value) => compactNumber(value)} tick={{ fontSize: 11, fill: '#64748b', fontWeight: 700 }} />
+            <Tooltip formatter={(value) => formatCurrency(value)} />
+            <Legend />
+            <Bar dataKey="fees" name="Fee Collection" fill="#10b981" radius={[8, 8, 0, 0]} />
+            <Bar dataKey="salary" name="Salary Paid" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      ) : <div className="flex h-full"><EmptyChart /></div>}
     </div>
   );
 };
@@ -577,10 +606,10 @@ const buildReportData = (reports, query, filters) => {
     },
     charts: {
       financeMix: [
-        { label: 'Fee Collected', value: feeCollected, color: 'bg-emerald-500', dot: 'bg-emerald-500' },
-        { label: 'Fee Balance', value: feeBalance, color: 'bg-rose-500', dot: 'bg-rose-500' },
-        { label: 'Salary Paid', value: salaryPaid, color: 'bg-blue-500', dot: 'bg-blue-500' },
-        { label: 'Leave Deduction', value: leaveDeduction, color: 'bg-amber-500', dot: 'bg-amber-500' },
+        { label: 'Fee Collected', value: feeCollected, fill: '#10b981' },
+        { label: 'Fee Balance', value: feeBalance, fill: '#f43f5e' },
+        { label: 'Salary Paid', value: salaryPaid, fill: '#3b82f6' },
+        { label: 'Leave Deduction', value: leaveDeduction, fill: '#f59e0b' },
       ],
       classStrength: topRows(countBy(students, (student) => student.assignedClass || student.className || 'Unassigned'), 8),
       attendanceStatus: withSegmentColors(countBy(attendance, (record) => record.status || 'Pending')),
@@ -756,17 +785,16 @@ const buildMonthlyMovement = (feePayments, salaryPayments) => {
 
 const withSegmentColors = (map) => {
   const colors = [
-    ['bg-emerald-500', 'bg-emerald-500'],
-    ['bg-blue-500', 'bg-blue-500'],
-    ['bg-amber-500', 'bg-amber-500'],
-    ['bg-rose-500', 'bg-rose-500'],
-    ['bg-fuchsia-500', 'bg-fuchsia-500'],
+    '#10b981',
+    '#3b82f6',
+    '#f59e0b',
+    '#f43f5e',
+    '#c026d3',
   ];
   return [...map.entries()].map(([label, value], index) => ({
     label,
     value,
-    color: colors[index % colors.length][0],
-    dot: colors[index % colors.length][1],
+    fill: colors[index % colors.length],
   }));
 };
 
@@ -809,6 +837,11 @@ const formatCurrency = (value) => {
     maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
   }).format(amount);
 };
+
+const compactNumber = (value) => new Intl.NumberFormat('en-IN', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+}).format(Number(value) || 0);
 
 const downloadCsv = (fileName, rows) => {
   if (!rows.length) return;

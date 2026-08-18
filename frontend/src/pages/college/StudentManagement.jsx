@@ -677,6 +677,7 @@ const StudentManagement = () => {
               updateFormField={updateDetailField}
               clearFieldError={(field) => setFieldErrors((current) => ({ ...current, [field]: '' }))}
               fieldErrors={fieldErrors}
+              currentAcademicYear={currentAcademicYear}
               onBack={() => {
                 setSelectedStudent(null);
                 setDetailFormData(initialFormData);
@@ -1914,6 +1915,7 @@ function StudentDetailView({
   setFormData,
   updateFormField,
   fieldErrors,
+  currentAcademicYear,
   onBack,
   onSave,
   isSaving,
