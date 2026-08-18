@@ -9,6 +9,21 @@ const API_BASE_URL = resolveApiBaseUrl();
 
 const getInstituteId = () => localStorage.getItem('current_college_id');
 
+export const warmApi = () => {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+
+  return fetch(`${API_BASE_URL}/health`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+    signal: controller.signal,
+  })
+    .catch(() => null)
+    .finally(() => window.clearTimeout(timeoutId));
+};
+
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Accept')) {

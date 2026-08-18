@@ -1,103 +1,120 @@
-import React, { useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import './index.css';
 
 import LandingPage from './components/LandingPage';
-import ComingSoonPage from './components/ComingSoonPage';
 import RegisterInstitute from './pages/RegisterInstitute';
-import Dashboard from './pages/college/Dashboard';
 import Login from './pages/Login';
-import StudentManagement from './pages/college/StudentManagement';
-import StudentAttendance from './pages/student/StudentAttendance';
-import StudentDashboard from './pages/student/StudentDashboard';
-import StudentExaminations from './pages/student/StudentExaminations';
-import StudentFees from './pages/student/StudentFees';
-import StudentHostel from './pages/student/StudentHostel';
-import StudentLibrary from './pages/student/StudentLibrary';
-import StudentProfile from './pages/student/StudentProfile';
-import StudentTimetable from './pages/student/StudentTimetable';
-import StudentTransport from './pages/student/StudentTransport';
-import HostelManagement from './pages/college/HostelManagement';
-import TeacherManagement from './pages/college/TeacherManagement';
-import TeacherDashboard from './pages/teacher/TeacherDashboard';
-import TeacherAttendance from './pages/teacher/Attendance';
-import TeacherExaminations from './pages/teacher/Examinations';
-import TeacherMarks from './pages/teacher/Marks';
-import TeacherProfile from './pages/teacher/TeacherProfile';
-import TeacherSalary from './pages/teacher/TeacherSalary';
-import TeacherTimetable from './pages/teacher/Timetable';
-import TransportManagement from './pages/college/TransportManagement';
-import AttendanceManagement from './pages/college/AttendanceManagement';
-import CourseSubjectManagement from './pages/college/CourseSubjectManagement';
-import ExaminationManagement from './pages/college/ExaminationManagement';
-import LibraryManagement from './pages/college/LibraryManagement';
-import FeeManagement from './pages/college/FeeManagement';
-import TimetableManagement from './pages/college/TimetableManagement';
-import SalaryManagement from './pages/college/SalaryManagement';
-import HolidayManagement from './pages/college/HolidayManagement';
-import NoticeManagement from './pages/college/NoticeManagement';
-import SettingsManagement from './pages/college/SettingsManagement';
-import PortalNotices from './pages/portal/PortalNotices';
+import { warmApi } from './utils/api';
+
+const ComingSoonPage = lazy(() => import('./components/ComingSoonPage'));
+const Dashboard = lazy(() => import('./pages/college/Dashboard'));
+const StudentManagement = lazy(() => import('./pages/college/StudentManagement'));
+const TeacherManagement = lazy(() => import('./pages/college/TeacherManagement'));
+const TransportManagement = lazy(() => import('./pages/college/TransportManagement'));
+const AttendanceManagement = lazy(() => import('./pages/college/AttendanceManagement'));
+const CourseSubjectManagement = lazy(() => import('./pages/college/CourseSubjectManagement'));
+const ExaminationManagement = lazy(() => import('./pages/college/ExaminationManagement'));
+const LibraryManagement = lazy(() => import('./pages/college/LibraryManagement'));
+const HostelManagement = lazy(() => import('./pages/college/HostelManagement'));
+const FeeManagement = lazy(() => import('./pages/college/FeeManagement'));
+const TimetableManagement = lazy(() => import('./pages/college/TimetableManagement'));
+const SalaryManagement = lazy(() => import('./pages/college/SalaryManagement'));
+const HolidayManagement = lazy(() => import('./pages/college/HolidayManagement'));
+const NoticeManagement = lazy(() => import('./pages/college/NoticeManagement'));
+const SettingsManagement = lazy(() => import('./pages/college/SettingsManagement'));
+const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard'));
+const StudentAttendance = lazy(() => import('./pages/student/StudentAttendance'));
+const StudentExaminations = lazy(() => import('./pages/student/StudentExaminations'));
+const StudentFees = lazy(() => import('./pages/student/StudentFees'));
+const StudentHostel = lazy(() => import('./pages/student/StudentHostel'));
+const StudentLibrary = lazy(() => import('./pages/student/StudentLibrary'));
+const StudentProfile = lazy(() => import('./pages/student/StudentProfile'));
+const StudentTimetable = lazy(() => import('./pages/student/StudentTimetable'));
+const StudentTransport = lazy(() => import('./pages/student/StudentTransport'));
+const TeacherDashboard = lazy(() => import('./pages/teacher/TeacherDashboard'));
+const TeacherAttendance = lazy(() => import('./pages/teacher/Attendance'));
+const TeacherExaminations = lazy(() => import('./pages/teacher/Examinations'));
+const TeacherMarks = lazy(() => import('./pages/teacher/Marks'));
+const TeacherProfile = lazy(() => import('./pages/teacher/TeacherProfile'));
+const TeacherSalary = lazy(() => import('./pages/teacher/TeacherSalary'));
+const TeacherTimetable = lazy(() => import('./pages/teacher/Timetable'));
+const PortalNotices = lazy(() => import('./pages/portal/PortalNotices'));
 
 function App() {
+  useEffect(() => {
+    warmApi();
+  }, []);
+
   return (
     <Router>
-      <Routes>
-        {/* Public Landing Page */}
-        <Route path="/" element={<LandingPage />} />  
-        <Route path="/register-institute" element={<RegisterInstitute />} />
-        <Route path="/login" element={<Login />} />
-        
-        {/* College Admin Dashboard */}
-        <Route path="/college" element={<RequireCollegeAccess><Dashboard /></RequireCollegeAccess>} />
-        <Route path="/college/students" element={<RequireCollegeAccess><StudentManagement /></RequireCollegeAccess>} />
-        <Route path="/college/teachers" element={<RequireCollegeAccess><TeacherManagement /></RequireCollegeAccess>} />
-        <Route path="/college/transport" element={<RequireCollegeAccess><TransportManagement /></RequireCollegeAccess>} />
-        <Route path="/college/attendance" element={<RequireCollegeAccess><AttendanceManagement /></RequireCollegeAccess>} />
-        <Route path="/college/courses" element={<RequireCollegeAccess><CourseSubjectManagement /></RequireCollegeAccess>} />
-        <Route path="/college/examinations" element={<RequireCollegeAccess><ExaminationManagement /></RequireCollegeAccess>} />
-        <Route path="/college/library" element={<RequireCollegeAccess><LibraryManagement /></RequireCollegeAccess>} />
-        <Route path="/college/hostel" element={<RequireCollegeAccess><HostelManagement /></RequireCollegeAccess>} />
-        <Route path="/college/fees" element={<RequireCollegeAccess><FeeManagement /></RequireCollegeAccess>} />
-        <Route path="/college/salary" element={<RequireCollegeAccess><SalaryManagement /></RequireCollegeAccess>} />
-        <Route path="/college/salary/:teacherId" element={<RequireCollegeAccess><SalaryManagement /></RequireCollegeAccess>} />
-        <Route path="/college/timetable" element={<RequireCollegeAccess><TimetableManagement /></RequireCollegeAccess>} />
-        <Route path="/college/holidays" element={<RequireCollegeAccess><HolidayManagement /></RequireCollegeAccess>} />
-        <Route path="/college/notices" element={<RequireCollegeAccess><NoticeManagement /></RequireCollegeAccess>} />
-        <Route path="/college/reports" element={<RequireCollegeAccess><ComingSoonPage /></RequireCollegeAccess>} />
-        <Route path="/college/settings" element={<RequireCollegeAccess adminOnly><SettingsManagement /></RequireCollegeAccess>} />
-        <Route path="/college/*" element={<ComingSoonPage />} />
-        <Route path="/student" element={<StudentDashboard />} />
-        <Route path="/student/attendance" element={<StudentAttendance />} />
-        <Route path="/student/examinations" element={<StudentExaminations />} />
-        <Route path="/student/fees" element={<StudentFees />} />
-        <Route path="/student/hostel" element={<StudentHostel />} />
-        <Route path="/student/library" element={<StudentLibrary />} />
-        <Route path="/student/profile" element={<StudentProfile />} />
-        <Route path="/student/timetable" element={<StudentTimetable />} />
-        <Route path="/student/transport" element={<StudentTransport />} />
-        <Route path="/student/notices" element={<PortalNotices role="student" />} />
-        <Route path="/student/*" element={<ComingSoonPage />} />
-        <Route path="/teacher" element={<TeacherDashboard />} />
-        <Route path="/teacher/attendance" element={<TeacherAttendance />} />
-        <Route path="/teacher/examinations" element={<TeacherExaminations />} />
-        <Route path="/teacher/marks" element={<TeacherMarks />} />
-        <Route path="/teacher/mark" element={<TeacherMarks />} />
-        <Route path="/teacher/jmarks" element={<TeacherMarks />} />
-        <Route path="/teacher/Marks" element={<TeacherMarks />} />
-        <Route path="/teacher/profile" element={<TeacherProfile />} />
-        <Route path="/teacher/salary" element={<TeacherSalary />} />
-        <Route path="/teacher/timetable" element={<TeacherTimetable />} />
-        <Route path="/teacher/notices" element={<PortalNotices role="teacher" />} />
-        <Route path="/teacher/*" element={<ComingSoonPage />} />
+      <Suspense fallback={<RouteLoading />}>
+        <Routes>
+          {/* Public Landing Page */}
+          <Route path="/" element={<LandingPage />} />  
+          <Route path="/register-institute" element={<RegisterInstitute />} />
+          <Route path="/login" element={<Login />} />
+          
+          {/* College Admin Dashboard */}
+          <Route path="/college" element={<RequireCollegeAccess><Dashboard /></RequireCollegeAccess>} />
+          <Route path="/college/students" element={<RequireCollegeAccess><StudentManagement /></RequireCollegeAccess>} />
+          <Route path="/college/teachers" element={<RequireCollegeAccess><TeacherManagement /></RequireCollegeAccess>} />
+          <Route path="/college/transport" element={<RequireCollegeAccess><TransportManagement /></RequireCollegeAccess>} />
+          <Route path="/college/attendance" element={<RequireCollegeAccess><AttendanceManagement /></RequireCollegeAccess>} />
+          <Route path="/college/courses" element={<RequireCollegeAccess><CourseSubjectManagement /></RequireCollegeAccess>} />
+          <Route path="/college/examinations" element={<RequireCollegeAccess><ExaminationManagement /></RequireCollegeAccess>} />
+          <Route path="/college/library" element={<RequireCollegeAccess><LibraryManagement /></RequireCollegeAccess>} />
+          <Route path="/college/hostel" element={<RequireCollegeAccess><HostelManagement /></RequireCollegeAccess>} />
+          <Route path="/college/fees" element={<RequireCollegeAccess><FeeManagement /></RequireCollegeAccess>} />
+          <Route path="/college/salary" element={<RequireCollegeAccess><SalaryManagement /></RequireCollegeAccess>} />
+          <Route path="/college/salary/:teacherId" element={<RequireCollegeAccess><SalaryManagement /></RequireCollegeAccess>} />
+          <Route path="/college/timetable" element={<RequireCollegeAccess><TimetableManagement /></RequireCollegeAccess>} />
+          <Route path="/college/holidays" element={<RequireCollegeAccess><HolidayManagement /></RequireCollegeAccess>} />
+          <Route path="/college/notices" element={<RequireCollegeAccess><NoticeManagement /></RequireCollegeAccess>} />
+          <Route path="/college/reports" element={<RequireCollegeAccess><ComingSoonPage /></RequireCollegeAccess>} />
+          <Route path="/college/settings" element={<RequireCollegeAccess adminOnly><SettingsManagement /></RequireCollegeAccess>} />
+          <Route path="/college/*" element={<ComingSoonPage />} />
+          <Route path="/student" element={<StudentDashboard />} />
+          <Route path="/student/attendance" element={<StudentAttendance />} />
+          <Route path="/student/examinations" element={<StudentExaminations />} />
+          <Route path="/student/fees" element={<StudentFees />} />
+          <Route path="/student/hostel" element={<StudentHostel />} />
+          <Route path="/student/library" element={<StudentLibrary />} />
+          <Route path="/student/profile" element={<StudentProfile />} />
+          <Route path="/student/timetable" element={<StudentTimetable />} />
+          <Route path="/student/transport" element={<StudentTransport />} />
+          <Route path="/student/notices" element={<PortalNotices role="student" />} />
+          <Route path="/student/*" element={<ComingSoonPage />} />
+          <Route path="/teacher" element={<TeacherDashboard />} />
+          <Route path="/teacher/attendance" element={<TeacherAttendance />} />
+          <Route path="/teacher/examinations" element={<TeacherExaminations />} />
+          <Route path="/teacher/marks" element={<TeacherMarks />} />
+          <Route path="/teacher/mark" element={<TeacherMarks />} />
+          <Route path="/teacher/jmarks" element={<TeacherMarks />} />
+          <Route path="/teacher/Marks" element={<TeacherMarks />} />
+          <Route path="/teacher/profile" element={<TeacherProfile />} />
+          <Route path="/teacher/salary" element={<TeacherSalary />} />
+          <Route path="/teacher/timetable" element={<TeacherTimetable />} />
+          <Route path="/teacher/notices" element={<PortalNotices role="teacher" />} />
+          <Route path="/teacher/*" element={<ComingSoonPage />} />
 
-        {/* Fallback for modules that are not wired yet */}
-        <Route path="*" element={<ComingSoonPage backTo="/" backLabel="Back To Home" />} />
-      </Routes>
+          {/* Fallback for modules that are not wired yet */}
+          <Route path="*" element={<ComingSoonPage backTo="/" backLabel="Back To Home" />} />
+        </Routes>
+      </Suspense>
     </Router>
   );
 }
+
+const RouteLoading = () => (
+  <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-center">
+    <div>
+      <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600" />
+      <p className="mt-4 text-xs font-black uppercase tracking-[0.24em] text-slate-500">Loading</p>
+    </div>
+  </div>
+);
 
 const RequireCollegeAccess = ({ children, adminOnly = false }) => {
   const location = useLocation();

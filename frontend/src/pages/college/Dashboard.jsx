@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 const Dashboard = () => {
-  const [collegeData, setCollegeData] = useState(null);
+  const [collegeData, setCollegeData] = useState(() => getSessionInstitute());
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -32,22 +32,27 @@ const Dashboard = () => {
 
     let isMounted = true;
 
-    const getLocalInstitute = () => {
-      const allColleges = JSON.parse(localStorage.getItem('registered_colleges')) || [];
-      return allColleges.find((college) => String(college.id) === String(collegeId)) || null;
-    };
+    const localInstitute = getLocalInstitute(collegeId);
+    if (localInstitute) {
+      setCollegeData(localInstitute);
+    }
 
     const loadInstitute = async () => {
       try {
         const institute = await instituteApi.getById(collegeId);
         if (isMounted) {
           setCollegeData(institute);
+          cacheInstitute(institute);
         }
       } catch (error) {
-        const localInstitute = getLocalInstitute();
-
         if (isMounted && localInstitute) {
           setCollegeData(localInstitute);
+          return;
+        }
+
+        const sessionInstitute = getSessionInstitute();
+        if (isMounted && sessionInstitute) {
+          setCollegeData(sessionInstitute);
           return;
         }
 
@@ -249,5 +254,43 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
     <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{desc}</p>
   </button>
 );
+
+const getSessionInstitute = () => {
+  try {
+    const session = JSON.parse(localStorage.getItem('active_session') || 'null');
+    return session?.instituteName
+      ? {
+          instituteName: session.instituteName,
+          username: session.username,
+          type: session.type,
+          logo: session.logo,
+        }
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const getLocalInstitute = (collegeId) => {
+  try {
+    const allColleges = JSON.parse(localStorage.getItem('registered_colleges') || '[]');
+    return allColleges.find((college) => String(college.id) === String(collegeId)) || null;
+  } catch {
+    return null;
+  }
+};
+
+const cacheInstitute = (institute) => {
+  try {
+    const allColleges = JSON.parse(localStorage.getItem('registered_colleges') || '[]');
+    const nextColleges = allColleges.some((college) => String(college.id) === String(institute.id))
+      ? allColleges.map((college) => String(college.id) === String(institute.id) ? { ...college, ...institute } : college)
+      : [...allColleges, institute];
+
+    localStorage.setItem('registered_colleges', JSON.stringify(nextColleges));
+  } catch {
+    // Cache is only a speed-up for deployed navigation; ignore localStorage quota/parse issues.
+  }
+};
 
 export default Dashboard;
