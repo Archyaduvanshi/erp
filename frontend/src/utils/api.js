@@ -500,6 +500,21 @@ export const resultApi = {
     request(`/results/student?className=${encodeURIComponent(className)}&studentId=${encodeURIComponent(studentId)}`, withInstituteHeaders()),
 };
 
+export const reportApi = {
+  getSnapshots: () => request('/reports', withInstituteHeaders()),
+
+  saveSnapshot: (payload) =>
+    request('/reports', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  deleteSnapshot: (id) =>
+    request(`/reports/${id}`, withInstituteHeaders({
+      method: 'DELETE',
+    })),
+};
+
 export const noticeApi = {
   getAll: () => request('/notices', withInstituteHeaders()),
 

@@ -1,5 +1,5 @@
 import { AlertCircle, BarChart3, ListFilter, Table2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   attendanceApi,
   examApi,
@@ -8,6 +8,7 @@ import {
   hostelApi,
   libraryApi,
   marksApi,
+  reportApi,
   salaryApi,
   studentApi,
   teacherApi,
@@ -75,6 +76,7 @@ const initialData = {
   rooms: [],
   residents: [],
   holidays: [],
+  reportSnapshots: [],
 };
 
 const loaders = {
@@ -98,6 +100,7 @@ const loaders = {
   rooms: () => hostelApi.getRooms(),
   residents: () => hostelApi.getResidents(),
   holidays: () => holidayApi.getAll(),
+  reportSnapshots: () => reportApi.getSnapshots(),
 };
 
 const columns = {
@@ -175,6 +178,7 @@ export default function ReportsManagement() {
   const [data, setData] = useState(initialData);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(true);
+  const lastSavedReportKey = useRef('');
 
   const loadData = async () => {
     setLoading(true);
@@ -206,6 +210,28 @@ export default function ReportsManagement() {
   const reports = useMemo(() => buildReports(data, filters), [data, filters]);
   const currentReports = reports[activeCategory] || [];
   const report = currentReports.find((item) => item.id === selectedReport) || currentReports[0];
+
+  useEffect(() => {
+    if (loading || !report?.id) return undefined;
+
+    const snapshot = serializeReportSnapshot(activeCategory, report, filters);
+    const snapshotKey = `${snapshot.category}:${snapshot.reportKey}:${snapshot.filtersJson}:${snapshot.rowCount}:${snapshot.rowsJson.length}`;
+    if (lastSavedReportKey.current === snapshotKey) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      reportApi.saveSnapshot(snapshot)
+        .then((savedSnapshot) => {
+          lastSavedReportKey.current = snapshotKey;
+          setData((current) => ({
+            ...current,
+            reportSnapshots: [savedSnapshot, ...(current.reportSnapshots || [])].slice(0, 50),
+          }));
+        })
+        .catch(() => null);
+    }, 900);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeCategory, filters, loading, report]);
 
   useEffect(() => {
     const firstReport = reports[activeCategory]?.[0];
@@ -1061,4 +1087,18 @@ function safeJson(value) {
 
 function avg(rows, key) {
   return rows.length ? rows.reduce((sum, row) => sum + Number(row[key] || 0), 0) / rows.length : 0;
+}
+
+function serializeReportSnapshot(category, report, filters) {
+  return {
+    category,
+    reportKey: report.id,
+    title: report.title,
+    filtersJson: JSON.stringify(filters || {}),
+    kpisJson: JSON.stringify(report.kpis || []),
+    chartsJson: JSON.stringify(report.charts || []),
+    rowsJson: JSON.stringify(report.rows || []),
+    rowCount: Array.isArray(report.rows) ? report.rows.length : 0,
+    generatedAt: new Date().toISOString().replace('Z', ''),
+  };
 }
