@@ -713,6 +713,7 @@ const StudentManagement = () => {
               handleSave={handleSave}
               draftSystemId={draftSystemId}
               draftAssignedClass={draftAssignedClass}
+              currentAcademicYear={currentAcademicYear}
               handleDocumentAdd={handleDocumentAdd}
               handleDocumentRemove={handleDocumentRemove}
               handleDocumentBrowse={handleDocumentBrowse}
@@ -949,6 +950,7 @@ const EnrollmentWizard = ({
   handleSave,
   draftSystemId,
   draftAssignedClass,
+  currentAcademicYear,
   handleDocumentAdd,
   handleDocumentRemove,
   handleDocumentBrowse,

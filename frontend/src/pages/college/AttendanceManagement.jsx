@@ -782,99 +782,82 @@ const RegisterTable = ({ titleLine, subtitleLine, nameHeader, secondaryHeader = 
       <p className="text-center text-lg font-black tracking-tight text-slate-950">{titleLine}</p>
       <p className="mt-2 text-center text-sm font-semibold text-slate-600">{subtitleLine}</p>
     </div>
-    <div className="flex w-full overflow-hidden">
-      <div className="shrink-0 border-r border-slate-200 bg-white">
-        <table className="border-collapse text-left">
-          <thead>
-            <tr className="bg-slate-950 text-white">
-              <th className="min-w-56 border-b border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em]">
-                {nameHeader}
+    <div className="w-full overflow-x-auto">
+      <table className="min-w-max border-collapse text-center">
+        <thead>
+          <tr className="bg-slate-950 text-white">
+            <th className="sticky left-0 z-30 min-w-56 border-b border-r border-slate-800 bg-slate-950 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.2em] shadow-[8px_0_18px_-14px_rgba(15,23,42,0.75)]">
+              {nameHeader}
+            </th>
+            {secondaryHeader ? (
+              <th className="min-w-32 border-b border-l border-slate-800 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.2em]">
+                {secondaryHeader}
               </th>
-              {secondaryHeader ? (
-                <th className="min-w-32 border-b border-l border-slate-800 px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em]">
-                  {secondaryHeader}
-                </th>
-              ) : null}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`name-${row.id}`} className="odd:bg-white even:bg-slate-50">
-                <td className="border-b border-slate-200 px-4 py-3 text-sm font-black text-slate-950">
-                  {row.name}
-                </td>
-                {secondaryHeader ? (
-                  <td className="border-b border-l border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">
-                    {row.employeeId || '-'}
-                  </td>
-                ) : null}
-              </tr>
+            ) : null}
+            {dayColumns.map((dayNumber) => (
+              <th
+                key={`day-${dayNumber}`}
+                className="min-w-14 border-b border-l border-slate-800 px-3 py-3 text-[11px] font-black uppercase tracking-[0.18em]"
+              >
+                {dayNumber}
+              </th>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={`days-${row.id}`} className="odd:bg-white even:bg-slate-50">
+              <td className="sticky left-0 z-20 min-w-56 border-b border-r border-slate-200 bg-inherit px-4 py-3 text-left text-sm font-black text-slate-950 shadow-[8px_0_18px_-14px_rgba(15,23,42,0.5)]">
+                {row.name}
+              </td>
+              {secondaryHeader ? (
+                <td className="min-w-32 border-b border-l border-slate-200 px-4 py-3 text-left text-sm font-semibold text-slate-600">
+                  {row.employeeId || '-'}
+                </td>
+              ) : null}
+              {row.days.map((value, index) => {
+                const dayNumber = dayColumns[index];
+                const holidayLabel = holidayColumnMap?.get(dayNumber);
 
-      <div className="min-w-0 flex-1 overflow-x-auto">
-        <table className="w-max border-collapse text-center">
-          <thead>
-            <tr className="bg-slate-950 text-white">
-              {dayColumns.map((dayNumber) => (
-                <th
-                  key={`day-${dayNumber}`}
-                  className="min-w-14 border-b border-l border-slate-800 px-3 py-3 text-[11px] font-black uppercase tracking-[0.18em]"
-                >
-                  {dayNumber}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, rowIndex) => (
-              <tr key={`days-${row.id}`} className="odd:bg-white even:bg-slate-50">
-                {row.days.map((value, index) => {
-                  const dayNumber = dayColumns[index];
-                  const holidayLabel = holidayColumnMap?.get(dayNumber);
+                if (holidayLabel && rowIndex > 0) {
+                  return null;
+                }
 
-                  if (holidayLabel && rowIndex > 0) {
-                    return null;
-                  }
-
-                  if (holidayLabel) {
-                    return (
-                      <td
-                        key={`${row.id}-day-${dayNumber}-holiday`}
-                        rowSpan={rows.length}
-                        className="min-w-14 border-b border-l border-slate-200 bg-amber-50 px-1 py-3 align-middle"
-                      >
-                        <div className="mx-auto flex min-h-full items-center justify-center">
-                          <span className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700 [writing-mode:vertical-rl] [text-orientation:mixed]">
-                            {holidayLabel}
-                          </span>
-                        </div>
-                      </td>
-                    );
-                  }
-
+                if (holidayLabel) {
                   return (
                     <td
-                      key={`${row.id}-day-${dayNumber}`}
-                      className={`min-w-14 border-b border-l border-slate-200 px-3 py-3 text-sm font-black ${
-                        value === 'P'
-                          ? 'text-emerald-700'
-                          : value === 'A'
-                            ? 'text-rose-700'
-                            : 'text-slate-300'
-                      }`}
+                      key={`${row.id}-day-${dayNumber}-holiday`}
+                      rowSpan={rows.length}
+                      className="min-w-14 border-b border-l border-slate-200 bg-amber-50 px-1 py-3 align-middle"
                     >
-                      {value || '-'}
+                      <div className="mx-auto flex min-h-full items-center justify-center">
+                        <span className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700 [writing-mode:vertical-rl] [text-orientation:mixed]">
+                          {holidayLabel}
+                        </span>
+                      </div>
                     </td>
                   );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                }
+
+                return (
+                  <td
+                    key={`${row.id}-day-${dayNumber}`}
+                    className={`min-w-14 border-b border-l border-slate-200 px-3 py-3 text-sm font-black ${
+                      value === 'P'
+                        ? 'text-emerald-700'
+                        : value === 'A'
+                          ? 'text-rose-700'
+                          : 'text-slate-300'
+                    }`}
+                  >
+                    {value || '-'}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   </div>
 );
