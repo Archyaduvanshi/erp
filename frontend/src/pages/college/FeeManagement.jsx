@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -15,11 +16,8 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { feeApi, noticeApi, studentApi } from '../../utils/api';
-import { isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
+import { feeApi } from '../../utils/api';
 import {
-  allocateOverallAmount,
-  buildFeeRow,
   calculateTaxBreakdown,
   formatBillingType,
   formatCoveredMonths,
@@ -33,6 +31,7 @@ import {
 
 const today = getTodayKey();
 const ALL_STUDENTS_CATEGORY = 'All Students';
+const PAGE_SIZE = 25;
 
 const initialStructureForm = {
   courseId: '',
@@ -61,12 +60,8 @@ const initialPaymentForm = {
 
 const FeeManagement = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState('home');
-  const [students, setStudents] = useState([]);
-  const [structures, setStructures] = useState([]);
-  const [payments, setPayments] = useState([]);
-  const [notices, setNotices] = useState([]);
-  const [feeClasses, setFeeClasses] = useState([]);
   const [structureForm, setStructureForm] = useState(initialStructureForm);
   const [paymentForm, setPaymentForm] = useState(initialPaymentForm);
   const [selectedFeeClass, setSelectedFeeClass] = useState('');
@@ -78,92 +73,162 @@ const FeeManagement = () => {
   const [loadError, setLoadError] = useState('');
   const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
   const [generatedReceipt, setGeneratedReceipt] = useState(null);
+  const debouncedDueSearch = useDebouncedValue(dueSearch, 350);
+
+  const overviewQuery = useQuery({
+    queryKey: ['fees', 'overview'],
+    queryFn: () => feeApi.getOverview(),
+    staleTime: 45_000,
+  });
+
+  const classesQuery = useQuery({
+    queryKey: ['fees', 'classes'],
+    queryFn: () => feeApi.getClasses(),
+    staleTime: 45_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const structuresQuery = useQuery({
+    queryKey: ['fees', 'structures', selectedFeeClass, structureCategoryFilter],
+    queryFn: () => feeApi.getStructures({ className: selectedFeeClass, category: structureCategoryFilter }),
+    enabled: activeSection === 'structures',
+    staleTime: 45_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const studentSearchQuery = useInfiniteQuery({
+    queryKey: ['fees', 'students', paymentForm.className, paymentForm.section],
+    queryFn: ({ pageParam = 0 }) => feeApi.searchStudents({
+      className: paymentForm.className,
+      section: paymentForm.section,
+      page: pageParam,
+      size: PAGE_SIZE,
+    }),
+    enabled: activeSection === 'payments' && Boolean(paymentForm.className),
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const selectedStudentSummaryQuery = useQuery({
+    queryKey: ['fees', 'student-summary', paymentForm.studentId],
+    queryFn: () => feeApi.getStudentSummary(paymentForm.studentId),
+    enabled: activeSection === 'payments' && Boolean(paymentForm.studentId),
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const selectedStudentPaymentsQuery = useInfiniteQuery({
+    queryKey: ['fees', 'student-payments', paymentForm.studentId],
+    queryFn: ({ pageParam = 0 }) => feeApi.getStudentPayments(paymentForm.studentId, { page: pageParam, size: PAGE_SIZE }),
+    enabled: activeSection === 'payments' && Boolean(paymentForm.studentId),
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const duesQuery = useInfiniteQuery({
+    queryKey: ['fees', 'dues', debouncedDueSearch],
+    queryFn: ({ pageParam = 0 }) => feeApi.getDues({ search: debouncedDueSearch, page: pageParam, size: PAGE_SIZE }),
+    enabled: activeSection === 'dues',
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const saveStructureMutation = useMutation({
+    mutationFn: feeApi.saveStructure,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees', 'structures'] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'classes'] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'overview'] });
+    },
+  });
+
+  const savePaymentMutation = useMutation({
+    mutationFn: feeApi.savePayment,
+    onSuccess: (_data, payload) => {
+      queryClient.invalidateQueries({ queryKey: ['fees', 'student-summary', String(payload.studentId)] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'student-summary', payload.studentId] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'student-payments', String(payload.studentId)] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'student-payments', payload.studentId] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'overview'] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'dues'] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'receipts'] });
+    },
+  });
+
+  const deleteStructureMutation = useMutation({
+    mutationFn: feeApi.deleteStructure,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees', 'structures'] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'overview'] });
+    },
+  });
+
+  const voidPaymentMutation = useMutation({
+    mutationFn: (id) => feeApi.voidPayment(id, { reason: 'Voided from Fees Management.' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees'] });
+    },
+  });
+
+  const verifyPaymentMutation = useMutation({
+    mutationFn: feeApi.verifyPayment,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees'] });
+    },
+  });
+
+  const rejectPaymentMutation = useMutation({
+    mutationFn: (id) => feeApi.rejectPayment(id, { reason: 'Rejected by admin verification.' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees'] });
+    },
+  });
+
+  const feeClasses = classesQuery.data || [];
+  const structures = structuresQuery.data || [];
+  const studentOptions = useMemo(() => pagesContent(studentSearchQuery.data)
+    .map((student) => ({
+      id: student.id,
+      name: student.studentName || student.enrollmentNo || 'Unnamed student',
+      className: normalizeClassName(student.className) || 'Course pending',
+      sectionName: student.section || '',
+      enrollmentNo: student.enrollmentNo || `Student ${student.id}`,
+      category: student.category || 'General',
+      transportStatus: student.transportStatus,
+      hostelStatus: student.hostelStatus,
+      libraryStatus: student.libraryStatus,
+      libraryMonthlyCharge: student.libraryMonthlyCharge,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+  [studentSearchQuery.data]);
+  const selectedStudentPayments = pagesContent(selectedStudentPaymentsQuery.data);
+  const dueRows = pagesContent(duesQuery.data);
 
   useEffect(() => {
-    refreshData();
-  }, []);
-
-  const refreshData = async () => {
-    try {
-      const [studentResponse, structureResponse, paymentResponse, classResponse, noticeResponse] = await Promise.all([
-        studentApi.getAll(),
-        feeApi.getStructures(),
-        feeApi.getPayments(),
-        feeApi.getClasses(),
-        noticeApi.getAll(),
-      ]);
-      setStudents(studentResponse);
-      setStructures(structureResponse);
-      setPayments(paymentResponse);
-      setFeeClasses(classResponse);
-      setNotices(noticeResponse);
-      setLoadError('');
-    } catch (error) {
-      setStudents([]);
-      setStructures([]);
-      setPayments([]);
-      setFeeClasses([]);
-      setNotices([]);
-      setLoadError(error.message || 'Unable to load fee data from database.');
-    }
-  };
-
-  const studentOptions = useMemo(() => {
-    return students
-      .map((student) => ({
-        id: student.id,
-        name: `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Unnamed student',
-        className: getStudentClassName(student) || 'Course pending',
-        sectionName: getStudentSectionName(student),
-        enrollmentNo: student.enrollmentNo || student.systemId || `Student ${student.id}`,
-        category: student.admissionCategory || student.category || 'General',
-        transportOptIn: student.transportOptIn,
-        hostelOptIn: student.hostelOptIn,
-        libraryOptIn: student.libraryOptIn,
-        transportStatus: student.transportStatus,
-        hostelStatus: student.hostelStatus,
-        libraryStatus: student.libraryStatus,
-        libraryMonthlyCharge: student.libraryMonthlyCharge,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [students]);
+    const error = overviewQuery.error || classesQuery.error || structuresQuery.error || studentSearchQuery.error || selectedStudentSummaryQuery.error || selectedStudentPaymentsQuery.error || duesQuery.error;
+    setLoadError(error?.message || '');
+  }, [classesQuery.error, duesQuery.error, overviewQuery.error, selectedStudentPaymentsQuery.error, selectedStudentSummaryQuery.error, structuresQuery.error, studentSearchQuery.error]);
 
   const courseOptions = useMemo(() => {
     return [
       ...new Set([
         ...feeClasses.map((className) => normalizeClassName(className)).filter(Boolean),
-        ...students.map((student) => getStudentClassName(student)).filter(Boolean),
         ...structures.map((structure) => normalizeClassName(structure.courseId)).filter(Boolean),
       ]),
     ].sort(compareClassNames);
-  }, [feeClasses, students, structures]);
-
-  const successfulPayments = useMemo(() => {
-    return payments.filter((payment) => payment.paymentStatus === 'Success');
-  }, [payments]);
-
-  const reportRows = useMemo(() => {
-    return structures.flatMap((structure) => {
-      const matchingStudents = studentOptions
-        .filter((student) => student.className === normalizeClassName(structure.courseId))
-        .filter((student) => isStructureCategoryApplicable(structure, student));
-      return matchingStudents.map((student) => {
-        return {
-          id: `${structure.id}-${student.id}`,
-          structure,
-          student,
-          ...buildFeeRow(structure, student.id, successfulPayments),
-        };
-      });
-    });
-  }, [structures, studentOptions, successfulPayments]);
+  }, [feeClasses, structures]);
 
   const receiptRows = useMemo(() => {
-    return payments
+    return selectedStudentPayments
       .map((payment) => {
         const structure = structures.find((entry) => String(entry.id) === String(payment.structureId));
         const student = studentOptions.find((entry) => String(entry.id) === String(payment.studentId));
-        const report = reportRows.find((entry) => String(entry.structure.id) === String(payment.structureId) && String(entry.student.id) === String(payment.studentId));
         const overallLabel = Array.isArray(payment.allocations) && payment.allocations.length > 0
           ? `Overall Fee Payment (${payment.allocations.length} allocations)`
           : 'Overall Fee Payment';
@@ -177,12 +242,12 @@ const FeeManagement = () => {
           student,
           receiptNumber: payment.receiptNumber || `RCPT-${payment.id}`,
           taxBreakdown: payment.taxBreakdown || calculateTaxBreakdown(payment.paidAmount),
-          balanceRemaining: payment.balanceRemaining ?? report?.totalOutstanding ?? 0,
+          balanceRemaining: payment.balanceRemaining ?? 0,
           downloadLink: payment.downloadLink || `receipt-${payment.id}.txt`,
         };
       })
       .sort((a, b) => new Date(b.paymentDate || b.createdAt || 0) - new Date(a.paymentDate || a.createdAt || 0));
-  }, [payments, reportRows, structures, studentOptions]);
+  }, [selectedStudentPayments, structures, studentOptions]);
 
   const filteredFeeClasses = useMemo(() => {
     const query = structureSearch.trim().toLowerCase();
@@ -208,26 +273,10 @@ const FeeManagement = () => {
       .sort((a, b) => String(a.feeComponent || '').localeCompare(String(b.feeComponent || '')));
   }, [selectedFeeClass, structureCategoryFilter, structures]);
 
-  const filteredDueRows = useMemo(() => {
-    const query = dueSearch.trim().toLowerCase();
-    return reportRows.filter((row) => {
-      if (row.totalOutstanding <= 0) return false;
-      if (!isFeeStructureApplicableToStudent(row.structure, row.student)) return false;
-      if (row.billingType === 'monthly_active' && row.serviceMonthsCount <= 0) return false;
-      if (!query) return true;
-      return (
-        row.student.name.toLowerCase().includes(query) ||
-        row.student.enrollmentNo.toLowerCase().includes(query) ||
-        row.student.className.toLowerCase().includes(query) ||
-        row.structure.feeComponent.toLowerCase().includes(query)
-      );
-    });
-  }, [dueSearch, reportRows]);
-
   const selectedPaymentStudent = studentOptions.find((student) => String(student.id) === String(paymentForm.studentId));
   const collectionClassOptions = useMemo(() => {
-    return [...new Set(studentOptions.map((student) => student.className).filter(Boolean))].sort(compareClassNames);
-  }, [studentOptions]);
+    return [...new Set(courseOptions.filter(Boolean))].sort(compareClassNames);
+  }, [courseOptions]);
   const collectionSectionOptions = useMemo(() => {
     if (!paymentForm.className) return [];
     return [...new Set(
@@ -245,49 +294,83 @@ const FeeManagement = () => {
     });
   }, [collectionSectionOptions.length, paymentForm.className, paymentForm.section, studentOptions]);
   const canSelectCollectionStudent = Boolean(paymentForm.className) && (collectionSectionOptions.length === 0 || Boolean(paymentForm.section));
+  const filteredDueRows = useMemo(() => dueRows.map((row) => ({
+    id: row.studentId,
+    student: {
+      name: row.studentName,
+      enrollmentNo: row.enrollmentNo,
+      className: row.className,
+    },
+    structure: {
+      feeComponent: row.dueStatus || 'Outstanding',
+      billingType: 'cycle_based',
+    },
+    billingType: 'cycle_based',
+    currentCycleLabel: 'Current session',
+    lateFeeFine: 0,
+    totalOutstanding: Number(row.outstanding) || 0,
+    reminderCount: Number(row.outstanding) > 0 ? 1 : 0,
+  })), [dueRows]);
   const selectedPaymentRows = useMemo(() => {
     if (!selectedPaymentStudent) return [];
-    return reportRows
-      .filter((row) => String(row.student.id) === String(selectedPaymentStudent.id))
-      .filter((row) => {
-        if (!isFeeStructureApplicableToStudent(row.structure, selectedPaymentStudent)) return false;
-        return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
-      });
-  }, [reportRows, selectedPaymentStudent]);
+    if (selectedStudentSummaryQuery.data?.components) {
+      return selectedStudentSummaryQuery.data.components.map((component) => ({
+        id: component.feeStructureId,
+        structure: {
+          id: component.feeStructureId,
+          feeComponent: component.feeComponent,
+          feeType: 'college_fee',
+          billingType: 'cycle_based',
+        },
+        billingType: 'cycle_based',
+        currentCycleLabel: component.dueDate || 'Current session',
+        currentCycleMonths: [],
+        serviceMonthsCount: 0,
+        totalOutstanding: Number(component.outstandingAmount) || 0,
+        currentCycleDueAmount: Number(component.outstandingAmount) || 0,
+        previousPendingAmount: 0,
+        lateFeeFine: 0,
+        reminderCount: Number(component.outstandingAmount) > 0 ? 1 : 0,
+      }));
+    }
+    return [];
+  }, [selectedPaymentStudent, selectedStudentSummaryQuery.data]);
   const selectedPaymentOutstandingTotal = useMemo(() => (
     selectedPaymentRows.reduce((sum, row) => sum + (Number(row.totalOutstanding) || 0), 0)
   ), [selectedPaymentRows]);
   const selectedPaymentSummary = useMemo(() => {
-    const previousPending = selectedPaymentRows.reduce((sum, row) => sum + (Number(row.previousPendingAmount) || 0), 0);
-    const collegeFee = selectedPaymentRows
-      .filter((row) => row.structure?.feeType !== 'facility_fee')
-      .reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
-    const facilityFee = selectedPaymentRows
-      .filter((row) => row.structure?.feeType === 'facility_fee')
-      .reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
+    if (selectedStudentSummaryQuery.data) {
+      const summary = selectedStudentSummaryQuery.data;
+      return {
+        previousPending: Number(summary.previousPending) || 0,
+        collegeFee: Number(summary.currentDue) || 0,
+        facilityFee: 0,
+        facilityRows: [],
+        totalPayable: Number(summary.totalOutstanding) || 0,
+        paidAmount: Number(paymentForm.paidAmount) || 0,
+        newPending: Math.max((Number(summary.totalOutstanding) || 0) - (Number(paymentForm.paidAmount) || 0), 0),
+      };
+    }
     const paidAmount = Number(paymentForm.paidAmount) || 0;
     return {
-      previousPending,
-      collegeFee,
-      facilityFee,
-      facilityRows: selectedPaymentRows.filter((row) => row.structure?.feeType === 'facility_fee'),
+      previousPending: 0,
+      collegeFee: selectedPaymentOutstandingTotal,
+      facilityFee: 0,
+      facilityRows: [],
       totalPayable: selectedPaymentOutstandingTotal,
       paidAmount,
       newPending: Math.max(selectedPaymentOutstandingTotal - paidAmount, 0),
     };
-  }, [paymentForm.paidAmount, selectedPaymentOutstandingTotal, selectedPaymentRows]);
+  }, [paymentForm.paidAmount, selectedPaymentOutstandingTotal, selectedPaymentRows, selectedStudentSummaryQuery.data]);
   const selectedPaymentHistory = useMemo(() => {
     if (!selectedPaymentStudent) return [];
     return receiptRows
       .filter((receipt) => String(receipt.studentId) === String(selectedPaymentStudent.id))
       .map((receipt) => ({
         ...receipt,
-        noticeSent: notices.some((notice) => (
-          String(notice.targetStudentId || '') === String(selectedPaymentStudent.id)
-          && String(notice.details || '').includes(receipt.receiptNumber)
-        )),
+        noticeSent: receipt.notificationStatus === 'SENT',
       }));
-  }, [notices, receiptRows, selectedPaymentStudent]);
+  }, [receiptRows, selectedPaymentStudent]);
 
   const handleSaveFeeStructure = async (e) => {
     e.preventDefault();
@@ -299,7 +382,7 @@ const FeeManagement = () => {
     if (!selectedFeeClass || !feeCategory || !feeComponent || !amount) return;
 
     try {
-      await feeApi.saveStructure({
+      await saveStructureMutation.mutateAsync({
         courseId: selectedFeeClass,
         category: feeCategory,
         feeComponent,
@@ -320,7 +403,6 @@ const FeeManagement = () => {
         cycleMonths: current.cycleMonths,
         dueDate: current.dueDate || today,
       }));
-      await refreshData();
     } catch (error) {
       setLoadError(error.message || 'Unable to save fee structure in database.');
     }
@@ -340,19 +422,11 @@ const FeeManagement = () => {
   const handleStudentSelect = (studentId) => {
     setFeeSummaryOpen(false);
     setGeneratedReceipt(null);
-    const selectedStudent = studentOptions.find((student) => String(student.id) === studentId);
-    const studentRows = reportRows
-      .filter((row) => String(row.student.id) === String(studentId))
-      .filter((row) => {
-        if (!isFeeStructureApplicableToStudent(row.structure, selectedStudent)) return false;
-        return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
-      });
-    const studentOutstanding = studentRows.reduce((sum, row) => sum + (Number(row.totalOutstanding) || 0), 0);
     setPaymentForm((current) => ({
       ...current,
       studentId,
       paymentTarget: 'due_auto',
-      paidAmount: studentOutstanding > 0 ? String(studentOutstanding) : current.paidAmount,
+      paidAmount: '',
     }));
   };
 
@@ -392,62 +466,31 @@ const FeeManagement = () => {
     if (!selectedStudent || !paymentForm.paidAmount) return;
     const paidAmount = Number(paymentForm.paidAmount) || 0;
     if (paidAmount <= 0) return;
-    const allocations = allocateOverallAmount(paidAmount, selectedPaymentRows, 'due_auto');
-    if (allocations.length === 0) return;
-    const currentDuePaid = allocations
-      .filter((allocation) => allocation.kind === 'Current Due')
-      .reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0);
-    const balanceRemaining = Math.max(selectedPaymentOutstandingTotal - currentDuePaid, 0);
-    const receiptNumber = `FEE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
-    const counterReference = receiptNumber;
+    if (paymentForm.paymentTarget !== 'advance_only' && selectedPaymentRows.length === 0) return;
     const counterNote = paymentForm.mode === 'Cash' ? 'Collected at college counter' : 'Collected through digital mode';
 
     const { className, section, ...paymentPayload } = paymentForm;
 
     try {
-      const savedPayment = await feeApi.savePayment({
+      const savedPayment = await savePaymentMutation.mutateAsync({
         ...paymentPayload,
         studentId: selectedStudent.id,
         structureId: 'overall_total',
-        transactionId: counterReference,
+        transactionId: paymentForm.transactionId || '',
         gatewayRef: counterNote,
         paidAmount,
-        allocations,
-        coveredMonths: [],
-        resolvedMonths: [],
+        idempotencyKey: crypto.randomUUID(),
         coverageLabel: paymentForm.paymentTarget === 'advance_only'
           ? 'Advance payment for upcoming cycle'
           : 'Overall payment auto-adjusted',
         activeFromMonth: '',
-        billedMonthsCount: allocations.reduce((sum, allocation) => sum + (allocation.coveredMonths?.length || 0), 0),
+        billedMonthsCount: 0,
         billingType: 'overall_payment',
-        receiptNumber,
-        taxBreakdown: calculateTaxBreakdown(paidAmount),
-        balanceRemaining,
-        downloadLink: `receipt-${receiptNumber}.txt`,
       });
       const generated = enrichReceiptForDisplay(savedPayment, selectedStudent);
-      let noticeCreateError = '';
-      try {
-        await noticeApi.create(buildFeeCollectionNoticePayload({
-          student: selectedStudent,
-          receiptNumber,
-          paidAmount,
-          balanceRemaining,
-          mode: paymentForm.mode,
-          paymentDate: paymentForm.paymentDate || today,
-          summary: selectedPaymentSummary,
-          rows: selectedPaymentRows,
-        }));
-        generated.noticeSent = true;
-      } catch (noticeError) {
-        noticeCreateError = noticeError.message || 'Payment saved, but fee collection notice could not be created.';
-        generated.noticeSent = false;
-      }
+      generated.noticeSent = savedPayment.notificationStatus === 'SENT';
       setGeneratedReceipt(generated);
       setPaymentForm(initialPaymentForm);
-      await refreshData();
-      if (noticeCreateError) setLoadError(noticeCreateError);
     } catch (error) {
       setLoadError(error.message || 'Unable to save payment in database.');
     }
@@ -457,11 +500,10 @@ const FeeManagement = () => {
     if (!window.confirm(message)) return;
     try {
       if (module === 'fee_structures') {
-        await feeApi.deleteStructure(recordId);
+        await deleteStructureMutation.mutateAsync(recordId);
       } else if (module === 'fee_payments') {
-        await feeApi.deletePayment(recordId);
+        await voidPaymentMutation.mutateAsync(recordId);
       }
-      await refreshData();
     } catch (error) {
       setLoadError(error.message || 'Unable to delete fee record from database.');
     }
@@ -805,6 +847,15 @@ const FeeManagement = () => {
                       }}
                     />
                   </div>
+                  {studentSearchQuery.hasNextPage ? (
+                    <div className="md:col-span-2">
+                      <LoadMoreButton
+                        label={`Load More Students (${studentOptions.length}/${studentSearchQuery.data?.pages?.at(-1)?.totalElements || studentOptions.length})`}
+                        loading={studentSearchQuery.isFetchingNextPage}
+                        onClick={() => studentSearchQuery.fetchNextPage()}
+                      />
+                    </div>
+                  ) : null}
                   {selectedPaymentStudent ? (
                     <div className="md:col-span-2 rounded-[1.8rem] border border-emerald-100 bg-emerald-50/70 p-4">
                       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -887,7 +938,21 @@ const FeeManagement = () => {
                   <ReceiptPreview receipt={generatedReceipt} onDownload={handleDownloadReceipt} />
                 ) : null}
                 {selectedPaymentStudent ? (
-                  <PaymentHistoryTable rows={selectedPaymentHistory} />
+                  <>
+                    <PaymentHistoryTable
+                      rows={selectedPaymentHistory}
+                      onVerify={(id) => verifyPaymentMutation.mutateAsync(id)}
+                      onReject={(id) => rejectPaymentMutation.mutateAsync(id)}
+                      verifying={verifyPaymentMutation.isPending || rejectPaymentMutation.isPending}
+                    />
+                    {selectedStudentPaymentsQuery.hasNextPage ? (
+                      <LoadMoreButton
+                        label={`Load More Payments (${selectedPaymentHistory.length}/${selectedStudentPaymentsQuery.data?.pages?.at(-1)?.totalElements || selectedPaymentHistory.length})`}
+                        loading={selectedStudentPaymentsQuery.isFetchingNextPage}
+                        onClick={() => selectedStudentPaymentsQuery.fetchNextPage()}
+                      />
+                    ) : null}
+                  </>
                 ) : null}
               </Panel>
         ) : null}
@@ -907,6 +972,13 @@ const FeeManagement = () => {
                   <InfoPill icon={CalendarClock} text={`${row.reminderCount} reminders`} />
                 </RecordCard>
               ))}
+              {duesQuery.hasNextPage ? (
+                <LoadMoreButton
+                  label={`Load More Dues (${filteredDueRows.length}/${duesQuery.data?.pages?.at(-1)?.totalElements || filteredDueRows.length})`}
+                  loading={duesQuery.isFetchingNextPage}
+                  onClick={() => duesQuery.fetchNextPage()}
+                />
+              ) : null}
             </div>
           </Panel>
         ) : null}
@@ -931,18 +1003,6 @@ const normalizeClassName = (className = '') => String(className)
   ?.replace(/\s+-\s+section\s+.+$/i, '')
   .replace(/\s+section\s+.+$/i, '')
   .trim() || '';
-
-const normalizeCategory = (category = '') => String(category || 'General').trim().toLowerCase();
-
-const isAllStudentsCategory = (category = '') => {
-  const normalizedCategory = normalizeCategory(category);
-  return !normalizedCategory || normalizedCategory === normalizeCategory(ALL_STUDENTS_CATEGORY) || normalizedCategory === 'all';
-};
-
-const isStructureCategoryApplicable = (structure = {}, student = {}) => {
-  if (isAllStudentsCategory(structure.category)) return true;
-  return normalizeCategory(structure.category) === normalizeCategory(student.category);
-};
 
 const resolveStructureComponentName = (structure = {}) => {
   if (structure.feeType !== 'facility_fee') return 'College Fee';
@@ -1176,6 +1236,17 @@ const PrimaryButton = ({ type, icon, label, onClick }) => (
   </button>
 );
 
+const LoadMoreButton = ({ label, loading, onClick }) => (
+  <button
+    type="button"
+    disabled={loading}
+    onClick={onClick}
+    className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {loading ? 'Loading...' : label}
+  </button>
+);
+
 const InfoPill = ({ icon, text }) => (
   <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
     {React.createElement(icon, { size: 15, className: 'text-emerald-700' })}
@@ -1310,7 +1381,7 @@ const SummaryDetailLine = ({ label, meta, value }) => (
   </div>
 );
 
-const PaymentHistoryTable = ({ rows }) => (
+const PaymentHistoryTable = ({ rows, onVerify, onReject, verifying }) => (
   <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
     <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
       <h4 className="text-sm font-black text-slate-950">Payment History</h4>
@@ -1328,6 +1399,7 @@ const PaymentHistoryTable = ({ rows }) => (
               <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Notice</th>
               <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Amount</th>
               <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Balance</th>
+              <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -1344,6 +1416,30 @@ const PaymentHistoryTable = ({ rows }) => (
                 </td>
                 <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(receipt.paidAmount)}</td>
                 <td className="px-4 py-4 text-right font-semibold text-slate-600">{formatMoney(receipt.balanceRemaining)}</td>
+                <td className="px-4 py-4">
+                  {String(receipt.paymentStatus || '').toUpperCase() === 'PENDING_VERIFICATION' ? (
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={verifying}
+                        onClick={() => onVerify?.(receipt.id)}
+                        className="rounded-full bg-emerald-600 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Verify
+                      </button>
+                      <button
+                        type="button"
+                        disabled={verifying}
+                        onClick={() => onReject?.(receipt.id)}
+                        className="rounded-full bg-rose-600 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="block text-right text-xs font-semibold text-slate-400">-</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1356,5 +1452,31 @@ const PaymentHistoryTable = ({ rows }) => (
     )}
   </div>
 );
+
+function pageContent(page) {
+  return Array.isArray(page) ? page : page?.content || [];
+}
+
+function pagesContent(data) {
+  if (!data?.pages) return pageContent(data);
+  return data.pages.flatMap(pageContent);
+}
+
+function nextPageParam(lastPage) {
+  if (!lastPage || Array.isArray(lastPage) || lastPage.last) return undefined;
+  const nextPage = Number(lastPage.number || 0) + 1;
+  return nextPage < Number(lastPage.totalPages || 0) ? nextPage : undefined;
+}
+
+function useDebouncedValue(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delay);
+    return () => window.clearTimeout(timeoutId);
+  }, [delay, value]);
+
+  return debouncedValue;
+}
 
 export default FeeManagement;

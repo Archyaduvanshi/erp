@@ -13,6 +13,12 @@ import com.erp.backend.student.entity.Student;
 public interface LibraryMembershipRepository extends JpaRepository<LibraryMembership, Long> {
     
     Optional<LibraryMembership> findByStudentIdAndStatus(Long studentId, String status);
+
+    Optional<LibraryMembership> findByInstituteIdAndStudentIdAndStatus(Long instituteId, Long studentId, String status);
+
+    Optional<LibraryMembership> findByInstituteIdAndStudentId(Long instituteId, Long studentId);
+
+    Optional<LibraryMembership> findByInstituteIdAndId(Long instituteId, Long id);
     
     List<LibraryMembership> findByStudentId(Long studentId);
     

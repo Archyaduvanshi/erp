@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -17,7 +18,8 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { noticeApi } from '../../utils/api';
+import { curriculumApi, noticeApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const today = new Date().toISOString().split('T')[0];
 const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
@@ -31,20 +33,24 @@ const initialNoticeForm = {
   expireDate: '',
   status: 'Draft',
   isPinned: false,
+  targetClassIds: [],
   summary: '',
   details: '',
 };
 
 const NoticeManagement = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
-  const [notices, setNotices] = useState([]);
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
+  const collegeId = session?.id || '';
   const [noticeForm, setNoticeForm] = useState(initialNoticeForm);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [audienceFilter, setAudienceFilter] = useState('All');
+  const [priorityFilter, setPriorityFilter] = useState('All');
+  const [page, setPage] = useState(0);
   const [selectedNoticeId, setSelectedNoticeId] = useState(null);
   const [loadError, setLoadError] = useState('');
 
@@ -53,67 +59,105 @@ const NoticeManagement = () => {
       navigate('/login');
       return;
     }
-
-    refreshData();
   }, [collegeId, navigate, session]);
 
-  const refreshData = async () => {
-    try {
-      const records = await noticeApi.getAll();
-      const visibleRecords = records.filter((notice) => !notice.targetStudentId && !notice.targetTeacherId);
-      setNotices(visibleRecords);
-      setSelectedNoticeId((currentId) => (
-        currentId && visibleRecords.some((notice) => String(notice.id) === String(currentId)) ? currentId : visibleRecords[0]?.id || null
-      ));
-      setLoadError('');
-    } catch (error) {
-      setNotices([]);
-      setLoadError(error.message || 'Unable to load notices.');
-    }
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedSearchTerm, statusFilter, audienceFilter, priorityFilter]);
+
+  const overviewQuery = useQuery({
+    queryKey: ['notices', 'overview'],
+    queryFn: noticeApi.getOverview,
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+  });
+
+  const noticesQuery = useQuery({
+    queryKey: ['notices', 'admin', {
+      page,
+      size: 25,
+      search: debouncedSearchTerm,
+      status: statusFilter,
+      audience: audienceFilter,
+      priority: priorityFilter,
+    }],
+    queryFn: () => noticeApi.getAll({
+      page,
+      size: 25,
+      search: debouncedSearchTerm,
+      status: statusFilter === 'All' ? '' : statusFilter,
+      audience: audienceFilter === 'All' ? '' : audienceFilter,
+      priority: priorityFilter === 'All' ? '' : priorityFilter,
+    }),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+    placeholderData: keepPreviousData,
+  });
+
+  const classOptionsQuery = useQuery({
+    queryKey: ['curriculum', 'classes', 'notice-targets'],
+    queryFn: () => curriculumApi.getClassSummaries(),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+  });
+
+  const detailQuery = useQuery({
+    queryKey: ['notices', 'detail', selectedNoticeId],
+    queryFn: () => noticeApi.getById(selectedNoticeId),
+    enabled: Boolean(selectedNoticeId),
+  });
+
+  const filteredNotices = Array.isArray(noticesQuery.data?.content) ? noticesQuery.data.content : [];
+  const selectedListNotice = filteredNotices.find((notice) => String(notice.id) === String(selectedNoticeId)) || filteredNotices[0] || null;
+  const selectedNotice = detailQuery.data || selectedListNotice;
+  const classOptions = Array.isArray(classOptionsQuery.data) ? classOptionsQuery.data : [];
+  const stats = overviewQuery.data || { total: 0, published: 0, scheduled: 0, urgent: 0 };
+
+  useEffect(() => {
+    setSelectedNoticeId((currentId) => (
+      currentId && filteredNotices.some((notice) => String(notice.id) === String(currentId)) ? currentId : filteredNotices[0]?.id || null
+    ));
+  }, [filteredNotices]);
+
+  const invalidateNoticeQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ['notices', 'admin'] });
+    queryClient.invalidateQueries({ queryKey: ['notices', 'overview'] });
+    queryClient.invalidateQueries({ queryKey: ['notices', 'portal'] });
+    if (selectedNoticeId) queryClient.invalidateQueries({ queryKey: ['notices', 'detail', selectedNoticeId] });
   };
 
-  const enrichedNotices = useMemo(() => (
-    notices.map((notice) => ({
-      ...notice,
-      liveStatus: getLiveStatus(notice),
-    }))
-  ), [notices]);
+  const saveNoticeMutation = useMutation({
+    mutationFn: ({ id, payload }) => (id ? noticeApi.update(id, payload) : noticeApi.create(payload)),
+    onSuccess: (savedNotice) => {
+      setNoticeForm(initialNoticeForm);
+      setEditingId(null);
+      setSelectedNoticeId(savedNotice?.id || null);
+      setLoadError('');
+      invalidateNoticeQueries();
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save notice.'),
+  });
 
-  const filteredNotices = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+  const updateNoticeMutation = useMutation({
+    mutationFn: ({ id, payload }) => noticeApi.update(id, payload),
+    onSuccess: () => {
+      setLoadError('');
+      invalidateNoticeQueries();
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to update notice.'),
+  });
 
-    return enrichedNotices
-      .filter((notice) => {
-        const matchesStatus = statusFilter === 'All' || notice.liveStatus === statusFilter || notice.status === statusFilter;
-        const matchesAudience = audienceFilter === 'All' || notice.audience === audienceFilter;
-        if (!matchesStatus || !matchesAudience) return false;
-        if (!query) return true;
-
-        return (
-          notice.title?.toLowerCase().includes(query) ||
-          notice.category?.toLowerCase().includes(query) ||
-          notice.audience?.toLowerCase().includes(query) ||
-          notice.priority?.toLowerCase().includes(query) ||
-          notice.summary?.toLowerCase().includes(query) ||
-          notice.details?.toLowerCase().includes(query)
-        );
-      })
-      .sort((a, b) => {
-        if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-        return new Date(b.publishDate || b.createdAt || 0) - new Date(a.publishDate || a.createdAt || 0);
-      });
-  }, [audienceFilter, enrichedNotices, searchTerm, statusFilter]);
-
-  const selectedNotice = useMemo(() => (
-    enrichedNotices.find((notice) => String(notice.id) === String(selectedNoticeId)) || filteredNotices[0] || null
-  ), [enrichedNotices, filteredNotices, selectedNoticeId]);
-
-  const stats = useMemo(() => ({
-    total: notices.length,
-    published: enrichedNotices.filter((notice) => notice.liveStatus === 'Published').length,
-    scheduled: enrichedNotices.filter((notice) => notice.liveStatus === 'Scheduled').length,
-    urgent: enrichedNotices.filter((notice) => notice.priority === 'Urgent').length,
-  }), [enrichedNotices, notices.length]);
+  const deleteNoticeMutation = useMutation({
+    mutationFn: noticeApi.delete,
+    onSuccess: () => {
+      setSelectedNoticeId(null);
+      setLoadError('');
+      invalidateNoticeQueries();
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to delete notice.'),
+  });
 
   const handleSaveNotice = async (e) => {
     e.preventDefault();
@@ -122,41 +166,31 @@ const NoticeManagement = () => {
       ...noticeForm,
       title: noticeForm.title.trim(),
       expireDate: noticeForm.expireDate || null,
+      targetClassIds: noticeForm.audience === 'Students' ? noticeForm.targetClassIds : [],
       summary: noticeForm.summary.trim(),
       details: noticeForm.details.trim(),
     };
 
     if (!payload.title || !payload.publishDate || !payload.summary || !payload.details) return;
 
-    try {
-      if (editingId) {
-        await noticeApi.update(editingId, payload);
-      } else {
-        await noticeApi.create(payload);
-      }
-
-      setNoticeForm(initialNoticeForm);
-      setEditingId(null);
-      await refreshData();
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save notice.');
-    }
+    saveNoticeMutation.mutate({ id: editingId, payload });
   };
 
-  const handleEditNotice = (notice) => {
-    setEditingId(notice.id);
+  const handleEditNotice = async (notice) => {
+    const fullNotice = notice.details ? notice : await noticeApi.getById(notice.id);
+    setEditingId(fullNotice.id);
     setNoticeForm({
-      title: notice.title || '',
-      category: notice.category || 'General',
-      audience: notice.audience || 'All',
-      priority: notice.priority || 'Normal',
-      publishDate: notice.publishDate || today,
-      expireDate: notice.expireDate || '',
-      status: notice.status || 'Draft',
-      isPinned: Boolean(notice.isPinned),
-      summary: notice.summary || '',
-      details: notice.details || '',
+      title: fullNotice.title || '',
+      category: fullNotice.category || 'General',
+      audience: fullNotice.audience || 'All',
+      priority: fullNotice.priority || 'Normal',
+      publishDate: fullNotice.publishDate || today,
+      expireDate: fullNotice.expireDate || '',
+      status: fullNotice.status || 'Draft',
+      isPinned: Boolean(fullNotice.isPinned),
+      targetClassIds: Array.isArray(fullNotice.targetClassIds) ? fullNotice.targetClassIds : [],
+      summary: fullNotice.summary || '',
+      details: fullNotice.details || '',
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -168,20 +202,13 @@ const NoticeManagement = () => {
 
   const handleDeleteNotice = async (noticeId) => {
     if (!window.confirm('Delete this notice permanently?')) return;
-    try {
-      await noticeApi.delete(noticeId);
-      await refreshData();
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to delete notice.');
-    }
+    deleteNoticeMutation.mutate(noticeId);
   };
 
   const handleQuickUpdate = async (notice, patch) => {
     try {
-      await noticeApi.update(notice.id, toNoticePayload({ ...notice, ...patch }));
-      await refreshData();
-      setLoadError('');
+      const fullNotice = notice.details ? notice : await noticeApi.getById(notice.id);
+      updateNoticeMutation.mutate({ id: notice.id, payload: toNoticePayload({ ...fullNotice, ...patch }) });
     } catch (error) {
       setLoadError(error.message || 'Unable to update notice.');
     }
@@ -211,9 +238,9 @@ const NoticeManagement = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
+        {loadError || noticesQuery.error || overviewQuery.error ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {loadError || noticesQuery.error?.message || overviewQuery.error?.message}
           </div>
         ) : null}
         <section className="overflow-hidden rounded-3xl bg-[linear-gradient(140deg,#111827_0%,#4c1d95_58%,#0f766e_100%)] p-7 text-white shadow-[0_30px_80px_-42px_rgba(76,29,149,0.8)] lg:p-10">
@@ -263,7 +290,7 @@ const NoticeManagement = () => {
                   label="Audience"
                   value={noticeForm.audience}
                   onChange={(e) => setNoticeForm({ ...noticeForm, audience: e.target.value })}
-                  options={['All', 'Students', 'Teachers', 'Parents', 'Staff']}
+                  options={['All', 'Students', 'Teachers']}
                 />
                 <SelectInput
                   label="Priority"
@@ -290,6 +317,15 @@ const NoticeManagement = () => {
                   onChange={(e) => setNoticeForm({ ...noticeForm, expireDate: e.target.value })}
                 />
               </div>
+
+              {noticeForm.audience === 'Students' ? (
+                <MultiSelectInput
+                  label="Target Classes"
+                  options={classOptions.map((item) => ({ value: item.classId || item.id, label: item.className || item.name || item.assignedClass }))}
+                  values={noticeForm.targetClassIds}
+                  onChange={(targetClassIds) => setNoticeForm({ ...noticeForm, targetClassIds })}
+                />
+              ) : null}
 
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
                 <input
@@ -340,8 +376,8 @@ const NoticeManagement = () => {
           <section className="space-y-8">
             <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-38px_rgba(15,23,42,0.35)] lg:p-8">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <FormTitle title="Notice Register" description={`${filteredNotices.length} notice record(s) found`} />
-                <div className="grid gap-3 md:grid-cols-[1fr_160px_160px]">
+                <FormTitle title="Notice Register" description={`${noticesQuery.data?.totalElements || 0} notice record(s) found`} />
+                <div className="grid gap-3 md:grid-cols-[1fr_150px_150px_150px]">
                   <SearchInput value={searchTerm} onChange={setSearchTerm} />
                   <SelectInput
                     label="Status"
@@ -353,7 +389,13 @@ const NoticeManagement = () => {
                     label="Audience"
                     value={audienceFilter}
                     onChange={(e) => setAudienceFilter(e.target.value)}
-                    options={['All', 'Students', 'Teachers', 'Parents', 'Staff']}
+                    options={['All', 'Students', 'Teachers']}
+                  />
+                  <SelectInput
+                    label="Priority"
+                    value={priorityFilter}
+                    onChange={(e) => setPriorityFilter(e.target.value)}
+                    options={['All', 'Urgent', 'High', 'Normal', 'Low']}
                   />
                 </div>
               </div>
@@ -377,6 +419,7 @@ const NoticeManagement = () => {
                   ))
                 )}
               </div>
+              <PaginationBar page={page} totalPages={noticesQuery.data?.totalPages || 1} onPageChange={setPage} />
             </div>
 
             <section className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-38px_rgba(15,23,42,0.35)] lg:p-8">
@@ -494,6 +537,38 @@ const SelectInput = ({ label, options, ...props }) => (
   </div>
 );
 
+const MultiSelectInput = ({ label, options, values, onChange }) => {
+  const selectedValues = new Set((values || []).map(String));
+  return (
+    <div className="space-y-2.5">
+      <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+      <div className="grid gap-2 rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+        {options.length ? options.filter((option) => option.value).map((option) => {
+          const value = String(option.value);
+          return (
+            <label key={value} className="flex items-center gap-3 text-sm font-bold text-slate-700">
+              <input
+                type="checkbox"
+                checked={selectedValues.has(value)}
+                onChange={(event) => {
+                  const nextValues = event.target.checked
+                    ? [...selectedValues, value]
+                    : [...selectedValues].filter((item) => item !== value);
+                  onChange(nextValues.map(Number).filter(Number.isFinite));
+                }}
+                className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+              />
+              {option.label}
+            </label>
+          );
+        }) : (
+          <p className="text-sm font-semibold text-slate-500">No active classes found.</p>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const SearchInput = ({ value, onChange }) => (
   <div className="relative min-w-0">
     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -505,6 +580,33 @@ const SearchInput = ({ value, onChange }) => (
     />
   </div>
 );
+
+const PaginationBar = ({ page, totalPages, onPageChange }) => {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+      <button
+        type="button"
+        disabled={page <= 0}
+        onClick={() => onPageChange(Math.max(page - 1, 0))}
+        className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-violet-300 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Previous
+      </button>
+      <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+        Page {page + 1} of {totalPages}
+      </span>
+      <button
+        type="button"
+        disabled={page + 1 >= totalPages}
+        onClick={() => onPageChange(page + 1)}
+        className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-violet-300 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Next
+      </button>
+    </div>
+  );
+};
 
 const IconButton = ({ label, icon: Icon, onClick, danger = false }) => (
   <button
@@ -589,6 +691,7 @@ function toNoticePayload(notice) {
     title: notice.title || '',
     category: notice.category || 'General',
     audience: notice.audience || 'All',
+    targetClassIds: notice.audience === 'Students' && Array.isArray(notice.targetClassIds) ? notice.targetClassIds : [],
     priority: notice.priority || 'Normal',
     publishDate: notice.publishDate || today,
     expireDate: notice.expireDate || null,

@@ -2,6 +2,9 @@ package com.erp.backend.examination.entity;
 
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.AcademicSession;
+import com.erp.backend.curriculum.entity.ClassSection;
+import com.erp.backend.curriculum.entity.SchoolClass;
 import com.erp.backend.institute.entity.Institute;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -33,6 +36,22 @@ public class ExamDateSheet {
     @JoinColumn(name = "institute_id", nullable = false)
     private Institute institute;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "academic_session_id")
+    private AcademicSession academicSession;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "exam_id")
+    private Exam exam;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "class_id")
+    private SchoolClass schoolClass;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "section_id")
+    private ClassSection section;
+
     @Column(nullable = false)
     private String className;
 
@@ -55,6 +74,8 @@ public class ExamDateSheet {
     private String fileData;
 
     private String fileType;
+    private String status = "PUBLISHED";
+    private Long createdByAccountId;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

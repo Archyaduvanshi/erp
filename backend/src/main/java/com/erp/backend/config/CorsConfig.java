@@ -8,13 +8,6 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
-    private static final String[] DEFAULT_ALLOWED_ORIGINS = {
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "https://erpfrontend-gilt.vercel.app",
-            "https://erpfrontend-kohl.vercel.app"
-    };
-
     @Value("${app.cors.allowed-origins:}")
     private String allowedOrigins;
 
@@ -27,20 +20,19 @@ public class CorsConfig implements WebMvcConfigurer {
                 .allowedOrigins(parseOrigins())
                 .allowedOriginPatterns(parsePatterns())
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
-                .allowedHeaders("*");
+                .allowedHeaders("Authorization", "Content-Type", "Accept")
+                .exposedHeaders("X-Access-Token")
+                .allowCredentials(true);
     }
 
     private String[] parseOrigins() {
-        return java.util.stream.Stream.concat(
-                        java.util.Arrays.stream(DEFAULT_ALLOWED_ORIGINS),
-                        StringUtils.hasText(allowedOrigins)
-                                ? java.util.Arrays.stream(allowedOrigins.split(","))
-                                : java.util.stream.Stream.empty()
-                )
+        return StringUtils.hasText(allowedOrigins)
+                ? java.util.Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .filter(StringUtils::hasText)
                 .distinct()
-                .toArray(String[]::new);
+                .toArray(String[]::new)
+                : new String[0];
     }
 
     private String[] parsePatterns() {

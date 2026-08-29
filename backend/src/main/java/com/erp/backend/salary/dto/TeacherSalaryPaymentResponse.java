@@ -1,12 +1,14 @@
 package com.erp.backend.salary.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 public record TeacherSalaryPaymentResponse(
         Long id,
         Long teacherId,
+        String paymentReference,
         String monthKey,
         BigDecimal baseSalary,
         BigDecimal previousPendingAmount,
@@ -20,7 +22,11 @@ public record TeacherSalaryPaymentResponse(
         Integer allowedLeaves,
         Integer extraLeaveDays,
         BigDecimal perDaySalary,
-        String paidOn,
+        LocalDate paidOn,
+        String status,
+        String idempotencyKey,
+        String paymentMode,
+        String transactionReference,
         List<String> settledMonthKeys,
         String note,
         LocalDateTime createdAt,

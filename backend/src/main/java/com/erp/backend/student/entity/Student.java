@@ -2,6 +2,7 @@ package com.erp.backend.student.entity;
 
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.SchoolClass;
 import com.erp.backend.institute.entity.Institute;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -9,17 +10,32 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "students")
+@Table(
+        name = "students",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_students_institute_enrollment", columnNames = {"institute_id", "enrollment_no"}),
+                @UniqueConstraint(name = "uk_students_institute_class_roll", columnNames = {"institute_id", "assigned_class", "roll_no"})
+        },
+        indexes = {
+                @Index(name = "idx_students_institute_created", columnList = "institute_id, created_at"),
+                @Index(name = "idx_students_institute_class", columnList = "institute_id, assigned_class"),
+                @Index(name = "idx_students_institute_class_id_status", columnList = "institute_id, class_id, status"),
+                @Index(name = "idx_students_institute_status", columnList = "institute_id, status"),
+                @Index(name = "idx_students_institute_class_status", columnList = "institute_id, assigned_class, status")
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -32,6 +48,10 @@ public class Student {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "institute_id", nullable = false)
     private Institute institute;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "class_id")
+    private SchoolClass schoolClass;
 
     @Column(nullable = false)
     private String firstName;
@@ -77,7 +97,6 @@ public class Student {
     private String hostelStatus;
     private String libraryStatus;
     private String libraryMonthlyCharge;
-    private String studentPortalPassword;
     private String documentType;
     private String otherDocumentName;
     private String fileUploadPath;
@@ -93,7 +112,6 @@ public class Student {
     @Column(columnDefinition = "TEXT")
     private String photoUrl;
 
-    private String systemId;
     private String status;
 
     @Column(nullable = false, updatable = false)

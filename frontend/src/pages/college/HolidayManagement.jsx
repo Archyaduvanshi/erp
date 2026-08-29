@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
   ClipboardList,
+  Pencil,
   Plus,
   Search,
   Trash2,
 } from 'lucide-react';
-import { holidayApi, studentApi } from '../../utils/api';
+import { academicSessionApi, curriculumApi, holidayApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const today = getLocalDateKey();
 const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
@@ -19,53 +22,101 @@ const initialHolidayForm = {
   holidayDate: today,
   holidayType: 'Public Holiday',
   audience: 'All',
-  targetClasses: ['All'],
+  targetClassIds: [],
   notes: '',
 };
 
 const HolidayManagement = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
-  const [holidays, setHolidays] = useState([]);
-  const [students, setStudents] = useState([]);
+  const queryClient = useQueryClient();
+  const { session } = useAuth();
+  const collegeId = session?.id || '';
   const [holidayForm, setHolidayForm] = useState(initialHolidayForm);
+  const [editingHolidayId, setEditingHolidayId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loadError, setLoadError] = useState('');
+  const sessionsQuery = useQuery({
+    queryKey: ['academic-sessions', collegeId],
+    queryFn: () => academicSessionApi.getAll(),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+    staleTime: 15 * 60 * 1000,
+  });
+  const currentAcademicSession = useMemo(() => {
+    const sessions = sessionsQuery.data || [];
+    return sessions.find((item) => item.current) || sessions[0] || null;
+  }, [sessionsQuery.data]);
+  const holidayRange = useMemo(() => getHolidayRange(currentAcademicSession, today), [currentAcademicSession]);
+  const academicSessionId = currentAcademicSession?.id || null;
+  const holidayQueryKey = useMemo(() => ['holidays', collegeId, holidayRange.from, holidayRange.to], [collegeId, holidayRange.from, holidayRange.to]);
+  const classOptionsQueryKey = useMemo(() => ['holiday-class-options', collegeId, academicSessionId], [collegeId, academicSessionId]);
+
+  const holidaysQuery = useQuery({
+    queryKey: holidayQueryKey,
+    queryFn: () => holidayApi.getAll(holidayRange),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId) && !sessionsQuery.isLoading,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const classOptionsQuery = useQuery({
+    queryKey: classOptionsQueryKey,
+    queryFn: () => curriculumApi.getClassSummaries(academicSessionId),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const holidays = holidaysQuery.data || [];
+  const classOptions = useMemo(() => {
+    return (classOptionsQuery.data || [])
+      .filter((schoolClass) => String(schoolClass.status || '').toUpperCase() !== 'ARCHIVED')
+      .map((schoolClass) => ({
+        id: schoolClass.classId,
+        name: schoolClass.className,
+      }))
+      .filter((schoolClass) => schoolClass.id && schoolClass.name)
+      .sort((first, second) => first.name.localeCompare(second.name));
+  }, [classOptionsQuery.data]);
 
   useEffect(() => {
     if (!isCollegeModuleSession(session) || !collegeId) {
       navigate('/login');
-      return;
     }
-
-    refreshData();
   }, [collegeId, navigate, session]);
 
-  const refreshData = async () => {
-    try {
-      const [holidayRecords, studentRecords] = await Promise.all([
-        holidayApi.getAll(),
-        studentApi.getAll(),
-      ]);
-      setHolidays(holidayRecords);
-      setStudents(studentRecords);
+  const saveHolidayMutation = useMutation({
+    mutationFn: ({ id, payload }) => (id ? holidayApi.update(id, payload) : holidayApi.create(payload)),
+    onSuccess: (savedHoliday, variables) => {
+      queryClient.setQueryData(holidayQueryKey, (current = []) => {
+        if (variables.id) {
+          return current.map((holiday) => holiday.id === variables.id ? savedHoliday : holiday);
+        }
+        return [savedHoliday, ...current];
+      });
+      setHolidayForm({
+        ...initialHolidayForm,
+        holidayDate: savedHoliday.holidayDate || holidayForm.holidayDate,
+      });
+      setEditingHolidayId(null);
       setLoadError('');
-    } catch (error) {
-      setHolidays([]);
-      setStudents([]);
-      setLoadError(error.message || 'Unable to load holidays.');
-    }
-  };
+    },
+    onError: (error) => {
+      setLoadError(error.message || 'Unable to save holiday.');
+    },
+  });
 
-  const classOptions = useMemo(() => {
-    const classSet = new Set();
-    students.forEach((student) => {
-      const className = getStudentBaseClass(student);
-      if (className) classSet.add(className);
-    });
-    return [...classSet].sort((first, second) => first.localeCompare(second));
-  }, [students]);
+  const deleteHolidayMutation = useMutation({
+    mutationFn: (holidayId) => holidayApi.delete(holidayId),
+    onSuccess: (_, holidayId) => {
+      queryClient.setQueryData(holidayQueryKey, (current = []) => current.filter((holiday) => holiday.id !== holidayId));
+      if (editingHolidayId === holidayId) {
+        setEditingHolidayId(null);
+        setHolidayForm(initialHolidayForm);
+      }
+      setLoadError('');
+    },
+    onError: (error) => {
+      setLoadError(error.message || 'Unable to delete holiday.');
+    },
+  });
 
   const filteredHolidays = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -78,7 +129,8 @@ const HolidayManagement = () => {
           String(holiday.holidayType || '').toLowerCase().includes(query) ||
           String(holiday.audience || '').toLowerCase().includes(query) ||
           String(holiday.notes || '').toLowerCase().includes(query) ||
-          String(holiday.holidayDate || '').toLowerCase().includes(query)
+          String(holiday.holidayDate || '').toLowerCase().includes(query) ||
+          getHolidayClassLabel(holiday).toLowerCase().includes(query)
         );
       })
       .sort((a, b) => {
@@ -89,9 +141,13 @@ const HolidayManagement = () => {
       });
   }, [holidays, searchTerm]);
 
-  const upcomingHolidays = filteredHolidays.filter((holiday) => holiday.holidayDate >= today);
-  const pastHolidays = filteredHolidays.filter((holiday) => holiday.holidayDate < today);
-  const nextHoliday = upcomingHolidays[0] || null;
+  const upcomingHolidays = useMemo(() => holidays.filter((holiday) => holiday.holidayDate >= today), [holidays]);
+  const pastHolidays = useMemo(() => holidays.filter((holiday) => holiday.holidayDate < today), [holidays]);
+  const nextHoliday = useMemo(() => (
+    [...upcomingHolidays]
+      .sort((a, b) => new Date(`${a.holidayDate}T00:00:00`).getTime() - new Date(`${b.holidayDate}T00:00:00`).getTime())
+      [0] || null
+  ), [upcomingHolidays]);
 
   const handleSaveHoliday = async (e) => {
     e.preventDefault();
@@ -102,64 +158,66 @@ const HolidayManagement = () => {
 
     if (!title || !holidayDate) return;
 
-    try {
-      await holidayApi.create({
+    saveHolidayMutation.mutate({
+      id: editingHolidayId,
+      payload: {
         title,
         holidayDate,
         holidayType: holidayForm.holidayType,
         audience: holidayForm.audience,
-        targetClasses: holidayForm.audience === 'Students' ? holidayForm.targetClasses : ['All'],
+        targetClassIds: holidayForm.audience === 'Students' ? holidayForm.targetClassIds : [],
         notes,
-      });
-
-      setHolidayForm({
-        ...initialHolidayForm,
-        holidayDate,
-      });
-      await refreshData();
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save holiday.');
-    }
+      },
+    });
   };
 
   const handleDeleteHoliday = async (holidayId) => {
     if (!window.confirm('Delete this holiday entry?')) return;
-    try {
-      await holidayApi.delete(holidayId);
-      await refreshData();
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to delete holiday.');
-    }
+    deleteHolidayMutation.mutate(holidayId);
+  };
+
+  const handleEditHoliday = (holiday) => {
+    const legacyTargetIds = Array.isArray(holiday.targetClassIds) && holiday.targetClassIds.length
+      ? holiday.targetClassIds
+      : resolveLegacyTargetClassIds(holiday.targetClasses, classOptions);
+    setEditingHolidayId(holiday.id);
+    setHolidayForm({
+      title: holiday.title || '',
+      holidayDate: holiday.holidayDate || today,
+      holidayType: holiday.holidayType || 'Public Holiday',
+      audience: holiday.audience || 'All',
+      targetClassIds: legacyTargetIds,
+      notes: holiday.notes || '',
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAudienceChange = (audience) => {
     setHolidayForm((current) => ({
       ...current,
       audience,
-      targetClasses: ['All'],
+      targetClassIds: [],
     }));
   };
 
-  const handleTargetClassToggle = (className) => {
+  const handleTargetClassToggle = (classId) => {
     setHolidayForm((current) => {
-      if (className === 'All') {
+      if (classId === 'All') {
         return {
           ...current,
-          targetClasses: ['All'],
+          targetClassIds: [],
         };
       }
 
-      const currentClasses = current.targetClasses.filter((value) => value !== 'All');
-      const isSelected = currentClasses.includes(className);
+      const currentClasses = current.targetClassIds || [];
+      const isSelected = currentClasses.includes(classId);
       const nextClasses = isSelected
-        ? currentClasses.filter((value) => value !== className)
-        : [...currentClasses, className];
+        ? currentClasses.filter((value) => value !== classId)
+        : [...currentClasses, classId];
 
       return {
         ...current,
-        targetClasses: nextClasses.length ? nextClasses : ['All'],
+        targetClassIds: nextClasses,
       };
     });
   };
@@ -188,6 +246,11 @@ const HolidayManagement = () => {
         {loadError ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
             {loadError}
+          </div>
+        ) : null}
+        {sessionsQuery.isError || holidaysQuery.isError || classOptionsQuery.isError ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {sessionsQuery.error?.message || holidaysQuery.error?.message || classOptionsQuery.error?.message || 'Unable to load holidays.'}
           </div>
         ) : null}
         <section className="overflow-hidden rounded-4xl border border-orange-200/70 bg-[linear-gradient(140deg,#9a3412_0%,#ea580c_52%,#fb923c_100%)] text-white shadow-[0_30px_80px_-40px_rgba(154,52,18,0.85)]">
@@ -221,7 +284,9 @@ const HolidayManagement = () => {
                 <Plus size={20} />
               </div>
               <div>
-                <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Add Holiday</h3>
+                <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">
+                  {editingHolidayId ? 'Update Holiday' : 'Add Holiday'}
+                </h3>
                 <p className="text-sm font-semibold text-slate-500">Choose the day on which the holiday occurs.</p>
               </div>
             </div>
@@ -293,15 +358,15 @@ const HolidayManagement = () => {
                   <div className="grid gap-3 rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-900 focus-within:border-orange-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-orange-100 md:grid-cols-2 lg:grid-cols-3">
                     <ClassCheckOption
                       label="All"
-                      checked={holidayForm.targetClasses.includes('All')}
+                      checked={!holidayForm.targetClassIds.length}
                       onChange={() => handleTargetClassToggle('All')}
                     />
-                    {classOptions.map((className) => (
+                    {classOptions.map((schoolClass) => (
                       <ClassCheckOption
-                        key={className}
-                        label={className}
-                        checked={!holidayForm.targetClasses.includes('All') && holidayForm.targetClasses.includes(className)}
-                        onChange={() => handleTargetClassToggle(className)}
+                        key={schoolClass.id}
+                        label={schoolClass.name}
+                        checked={holidayForm.targetClassIds.includes(schoolClass.id)}
+                        onChange={() => handleTargetClassToggle(schoolClass.id)}
                       />
                     ))}
                   </div>
@@ -324,9 +389,10 @@ const HolidayManagement = () => {
               <button
                 type="submit"
                 className="inline-flex items-center gap-2 rounded-2xl bg-orange-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-orange-200 transition hover:bg-orange-700"
+                disabled={saveHolidayMutation.isPending}
               >
                 <Plus size={16} />
-                Save Holiday
+                {editingHolidayId ? 'Update Holiday' : 'Save Holiday'}
               </button>
             </form>
           </section>
@@ -424,8 +490,16 @@ const HolidayManagement = () => {
                           </td>
                           <td className="border-b border-slate-200 px-4 py-3 text-center">
                             <button
+                              onClick={() => handleEditHoliday(holiday)}
+                              className="mr-2 inline-flex items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-black text-orange-700 transition hover:bg-orange-100"
+                            >
+                              <Pencil size={15} />
+                              Edit
+                            </button>
+                            <button
                               onClick={() => handleDeleteHoliday(holiday.id)}
                               className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-black text-rose-700 transition hover:bg-rose-100"
+                              disabled={deleteHolidayMutation.isPending}
                             >
                               <Trash2 size={15} />
                               Delete
@@ -484,10 +558,26 @@ function getLocalDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function getStudentBaseClass(student) {
-  const className = String(student.className || '').trim();
-  if (className) return className;
-  return String(student.assignedClass || '').split('/')[0]?.trim() || '';
+function getHolidayRange(academicSession, fallbackDateValue) {
+  if (academicSession?.startDate && academicSession?.endDate) {
+    return {
+      from: academicSession.startDate,
+      to: academicSession.endDate,
+    };
+  }
+
+  return getFallbackAcademicYearRange(fallbackDateValue);
+}
+
+function getFallbackAcademicYearRange(dateValue) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const startYear = month >= 4 ? year : year - 1;
+  return {
+    from: `${startYear}-04-01`,
+    to: `${startYear + 1}-03-31`,
+  };
 }
 
 function formatLongDate(value) {
@@ -514,11 +604,23 @@ function formatShortDate(value) {
 
 function getHolidayClassLabel(holiday) {
   if (holiday.audience !== 'Students') return 'All';
+  if (Array.isArray(holiday.targetClassTargets) && holiday.targetClassTargets.length) {
+    return holiday.targetClassTargets.map((target) => target.className).join(', ');
+  }
   if (Array.isArray(holiday.targetClasses) && holiday.targetClasses.length) {
     return holiday.targetClasses.join(', ');
   }
   if (holiday.targetClasses) return String(holiday.targetClasses);
   return 'All';
+}
+
+function resolveLegacyTargetClassIds(targetClasses, classOptions) {
+  if (!Array.isArray(targetClasses) || !targetClasses.length) return [];
+  const classIdByName = new Map(classOptions.map((schoolClass) => [String(schoolClass.name || '').toLowerCase(), schoolClass.id]));
+  return targetClasses
+    .filter((className) => String(className || '').toLowerCase() !== 'all')
+    .map((className) => classIdByName.get(String(className || '').toLowerCase()))
+    .filter(Boolean);
 }
 
 function getHolidaySortTime(holiday) {

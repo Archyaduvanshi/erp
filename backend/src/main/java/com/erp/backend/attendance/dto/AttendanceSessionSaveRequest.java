@@ -5,13 +5,16 @@ import java.util.List;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 
-public record AttendanceSaveRequest(
-        @NotBlank(message = "Class name is required") String className,
+public record AttendanceSessionSaveRequest(
+        @NotNull(message = "Academic session is required") Long academicSessionId,
+        @NotNull(message = "Class is required") Long classId,
+        Long sectionId,
         @NotBlank(message = "Attendance date is required") String date,
-        @NotBlank(message = "Lecture number is required") String lectureNumber,
-        @NotBlank(message = "Subject is required") String subject,
-        @NotBlank(message = "Marked by is required") String markedBy,
+        Integer periodNumber,
+        Long classSubjectId,
+        Long markedByTeacherId,
         @Valid @NotEmpty(message = "At least one student attendance entry is required") List<AttendanceEntryPayload> entries
 ) {
 }

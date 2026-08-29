@@ -13,65 +13,65 @@ import {
   Megaphone,
   Pin,
   Settings,
-  Shield,
   UserRound,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { attendanceApi, noticeApi, salaryApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { academicSessionApi, attendanceApi, noticeApi, salaryApi, teacherApi } from '../../utils/api';
 import { getCurrentMonthSalaryStatus, normalizeTeacherSalary } from '../../utils/salaryUtils';
-import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
+import { formatNoticeDate } from '../../utils/noticeUtils';
+import { useAuth } from '../../context/AuthContext';
+
+const FEATURE_CARDS = {
+  admissionStudent: { title: 'Student Management', route: '/college/students', icon: UserRound, tone: 'text-cyan-700' },
+  teacher: { title: 'Teacher Management', route: '/college/teachers', icon: GraduationCap, tone: 'text-violet-700' },
+  library: { title: 'Library Management', route: '/college/library', icon: BookOpen, tone: 'text-blue-700' },
+  hostel: { title: 'Hostel Management', route: '/college/hostel', icon: Pin, tone: 'text-emerald-700' },
+  fees: { title: 'Fees Management', route: '/college/fees', icon: Banknote, tone: 'text-amber-700' },
+  transport: { title: 'Transport Management', route: '/college/transport', icon: CalendarDays, tone: 'text-sky-700' },
+  attendance: { title: 'Attendance Management', route: '/college/attendance', icon: CheckCircle2, tone: 'text-emerald-700' },
+  courses: { title: 'Course & Subject', route: '/college/courses', icon: BookOpen, tone: 'text-indigo-700' },
+  examinations: { title: 'Examination Management', route: '/college/examinations', icon: FileText, tone: 'text-rose-700' },
+  timetable: { title: 'Timetable Management', route: '/college/timetable', icon: CalendarDays, tone: 'text-teal-700' },
+  salary: { title: 'Salary Management', route: '/college/salary', icon: Banknote, tone: 'text-emerald-700' },
+  notices: { title: 'Notice Management', route: '/college/notices', icon: Megaphone, tone: 'text-orange-700' },
+  holidays: { title: 'Holiday Management', route: '/college/holidays', icon: CalendarDays, tone: 'text-pink-700' },
+};
 
 const TeacherDashboard = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [teachers, setTeachers] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [classTimetables, setClassTimetables] = useState([]);
+  const { session, logout } = useAuth();
+  const [teacherProfile, setTeacherProfile] = useState(null);
+  const [attendanceTargets, setAttendanceTargets] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [salaryPayments, setSalaryPayments] = useState([]);
-  const [examSlots] = useState(() => db.getAll('timetable_exam_slots'));
   const [notices, setNotices] = useState([]);
   const [loadError, setLoadError] = useState('');
 
   const teacher = useMemo(() => {
     if (!session || session.role !== 'teacher') return null;
-    const matchingTeacher = teachers.find((entry) => String(entry.id) === String(session.teacherId)) || null;
-    return matchingTeacher ? attachSalaryPayments(normalizeTeacherSalary(matchingTeacher), salaryPayments) : null;
-  }, [salaryPayments, session, teachers]);
+    return teacherProfile ? attachSalaryPayments(normalizeTeacherSalary(teacherProfile), salaryPayments) : null;
+  }, [salaryPayments, session, teacherProfile]);
 
   const teacherName = teacher
-    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
+    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.employeeId || 'Teacher'
     : 'Teacher';
 
-  const teachingClasses = useMemo(() => deriveTeacherClassesFromTimetables(classTimetables, teacher), [classTimetables, teacher]);
-
-  const assignedStudents = useMemo(() => {
-    if (!teachingClasses.length) return [];
-    return students.filter((student) => teachingClasses.includes(student.assignedClass));
-  }, [students, teachingClasses]);
-
-  const teacherAttendance = useMemo(() => {
-    if (!teachingClasses.length) return [];
-    return attendanceRecords
-      .filter((record) => teachingClasses.includes(record.className))
-      .filter((record) => normalizeTeacherValue(record.markedBy) === normalizeTeacherValue(teacherName));
-  }, [attendanceRecords, teacherName, teachingClasses]);
-
-  const teacherExamDuty = useMemo(() => {
-    if (!teacherName) return [];
-    return examSlots.filter((slot) => slot.invigilatorName === teacherName);
-  }, [examSlots, teacherName]);
+  const assignedStudentCount = useMemo(
+    () => attendanceTargets.reduce((sum, target) => sum + (Number(target.studentCount) || 0), 0),
+    [attendanceTargets],
+  );
 
   const today = new Date().toISOString().split('T')[0];
-  const todayAttendanceCount = teacherAttendance.filter((record) => record.date === today).length;
-  const upcomingExamCount = teacherExamDuty.filter((slot) => slot.examDate >= today).length;
+  const todayAttendanceCount = attendanceRecords.filter((record) => record.date === today && record.status === 'Present').length;
   const currentSalaryStatus = getCurrentMonthSalaryStatus(teacher);
-  const portalNotices = useMemo(() => getPortalNotices(notices, 'teacher', '', [], '', teacher?.id || session?.teacherId), [notices, session?.teacherId, teacher?.id]);
+  const portalNotices = notices;
+  const assignedFeatureCards = useMemo(() => (
+    (session?.assignedFeatures || [])
+      .filter((feature) => feature?.enabled && FEATURE_CARDS[feature.feature])
+      .map((feature) => ({ ...feature, ...FEATURE_CARDS[feature.feature] }))
+  ), [session?.assignedFeatures]);
 
   const handleLogout = () => {
-    localStorage.removeItem('active_session');
-    localStorage.removeItem('current_college_id');
-    navigate('/login');
+    logout().finally(() => navigate('/login'));
   };
 
   useEffect(() => {
@@ -83,25 +83,33 @@ const TeacherDashboard = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [teacherResponse, studentResponse, timetableResponse, attendanceResponse, noticeResponse, salaryPaymentResponse] = await Promise.all([
-          teacherApi.getAll(),
-          studentApi.getAll(),
-          timetableApi.getClassTimetables(),
-          attendanceApi.getAll(),
-          noticeApi.getPortalAll(),
-          salaryApi.getPayments(session.teacherId),
+        const sessions = await academicSessionApi.getAll();
+        const activeSession = sessions.find((item) => item.current) || sessions[0] || null;
+        const month = today.slice(0, 7);
+        const [teacherResponse, targetResponse, noticeResponse, salarySummaryResponse] = await Promise.all([
+          teacherApi.getById(session.teacherId),
+          activeSession ? attendanceApi.getMyTeacherTargets(activeSession.id) : Promise.resolve([]),
+          noticeApi.getPortalAll({ page: 0, size: 5 }),
+          salaryApi.getMySummary({ monthKey: month }),
         ]);
-        setTeachers(teacherResponse);
-        setStudents(studentResponse);
-        setClassTimetables(timetableResponse);
-        setAttendanceRecords(attendanceResponse);
-        setNotices(noticeResponse);
-        setSalaryPayments(salaryPaymentResponse);
+        const monthlyResponses = activeSession
+          ? await Promise.all(targetResponse.map((target) => attendanceApi.getClassMonthly({
+              academicSessionId: activeSession.id,
+              classId: target.classId,
+              sectionId: target.sectionId,
+              month,
+              teacherId: session.teacherId,
+            })))
+          : [];
+        setTeacherProfile(teacherResponse);
+        setAttendanceTargets(targetResponse);
+        setAttendanceRecords(flattenMonthlyAttendance(monthlyResponses));
+        setNotices(Array.isArray(noticeResponse?.content) ? noticeResponse.content : noticeResponse);
+        setSalaryPayments(salarySummaryResponse?.latestPayments || []);
         setLoadError('');
       } catch (error) {
-        setTeachers([]);
-        setStudents([]);
-        setClassTimetables([]);
+        setTeacherProfile(null);
+        setAttendanceTargets([]);
         setAttendanceRecords([]);
         setNotices([]);
         setSalaryPayments([]);
@@ -112,7 +120,7 @@ const TeacherDashboard = () => {
     if (session?.role === 'teacher') {
       loadData();
     }
-  }, [session]);
+  }, [session, today]);
 
   if (!session || session.role !== 'teacher') return null;
 
@@ -182,8 +190,7 @@ const TeacherDashboard = () => {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <MetricCard label="Attendance Today" value={todayAttendanceCount} icon={CheckCircle2} />
-              <MetricCard label="Exam Duty" value={upcomingExamCount} icon={Shield} />
-              <MetricCard label="Students In Class" value={assignedStudents.length} icon={CalendarDays} />
+              <MetricCard label="Students In Class" value={assignedStudentCount} icon={CalendarDays} />
               <MetricCard label="Salary This Month" value={currentSalaryStatus?.isPaid ? 'Paid' : 'Pending'} icon={Banknote} />
               <MetricCard label="Notices" value={portalNotices.length} icon={Megaphone} />
             </div>
@@ -222,7 +229,7 @@ const TeacherDashboard = () => {
           <ModuleCard
             icon={<UserRound className="text-teal-700" size={42} />}
             title="My Profile"
-            desc={`Teacher ID ${teacher?.teacherSystemId || 'Pending'} | Salary ${currentSalaryStatus?.isPaid ? 'paid' : 'pending'} this month`}
+            desc={`Employee ID ${teacher?.employeeId || 'Pending'} | Salary ${currentSalaryStatus?.isPaid ? 'paid' : 'pending'} this month`}
             onClick={() => navigate('/teacher/profile')}
           />
           <ModuleCard
@@ -231,6 +238,19 @@ const TeacherDashboard = () => {
             desc={`See whether ${currentSalaryStatus?.monthKey ? 'this month' : 'your'} salary is paid or pending.`}
             onClick={() => navigate('/teacher/salary')}
           />
+          {assignedFeatureCards.map((feature) => {
+            const Icon = feature.icon;
+            const operationLabel = feature.operation === 'read_write' ? 'Read + Write access' : 'Read only access';
+            return (
+              <ModuleCard
+                key={`${feature.feature}-${feature.teacherId || session.teacherId}`}
+                icon={<Icon className={feature.tone} size={42} />}
+                title={feature.title}
+                desc={`${operationLabel}. Open assigned management feature from your teacher dashboard.`}
+                onClick={() => navigate(feature.route)}
+              />
+            );
+          })}
         </section>
       </div>
     </div>
@@ -286,46 +306,18 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
   </button>
 );
 
-const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
-  if (!teacher) return [];
-
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
-  const classSet = new Set();
-
-  classTimetables.forEach((record) => {
-    if (attendanceTeacherMatches(record, teacherKeys) && record.className) {
-      classSet.add(record.className);
-    }
-  });
-
-  return [...classSet];
-};
-
-const resolveTimetableAttendanceTeacher = (record) => String(
-  record?.templateData?.attendanceTeacher
-    || record?.templateMeta?.attendanceTeacher
-    || '',
-).trim();
-
-const attendanceTeacherMatches = (record, teacherKeys) => {
-  const attendanceTeacher = normalizeTeacherValue(resolveTimetableAttendanceTeacher(record));
-  return Boolean(attendanceTeacher) && teacherKeys.some((key) => key === attendanceTeacher);
-};
-
-const buildTeacherIdentityKeys = (teacher) => {
-  const fullName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
-  return [
-    fullName,
-    teacher?.teacherSystemId,
-    teacher?.employeeId,
-    fullName && teacher?.teacherSystemId ? `${fullName} (${teacher.teacherSystemId})` : '',
-    fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
-  ]
-    .map((value) => String(value || '').trim().toLowerCase())
-    .filter(Boolean);
-};
-
-const normalizeTeacherValue = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const flattenMonthlyAttendance = (monthlyResponses = []) => (
+  monthlyResponses.flatMap((monthResponse) => (
+    (monthResponse?.students || []).flatMap((student) => (
+      Object.entries(student.days || {}).map(([date, status]) => ({
+        id: `${student.studentId}-${date}`,
+        date,
+        studentId: student.studentId,
+        status,
+      }))
+    ))
+  ))
+);
 
 const attachSalaryPayments = (teacher, salaryPayments = []) => {
   if (!teacher) return null;

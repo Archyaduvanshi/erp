@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -14,7 +15,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { courseBookApi, examApi, studentApi, teacherApi } from '../../utils/api';
+import { examApi, studentApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const initialDateSheetForm = {
   className: '',
@@ -50,18 +52,18 @@ function FieldError({ text }) {
 
 const ExaminationManagement = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState('home');
-  const [students, setStudents] = useState([]);
-  const [teachers, setTeachers] = useState([]);
-  const [courseBooks, setCourseBooks] = useState([]);
-  const [dateSheets, setDateSheets] = useState([]);
-  const [questionPapers, setQuestionPapers] = useState([]);
-  const [admitCards, setAdmitCards] = useState([]);
   const [dateSheetForm, setDateSheetForm] = useState(initialDateSheetForm);
   const [admitCardForm, setAdmitCardForm] = useState(initialAdmitCardForm);
   const [dateSheetSearch, setDateSheetSearch] = useState('');
   const [questionSearch, setQuestionSearch] = useState('');
+  const [dateSheetLimit, setDateSheetLimit] = useState(25);
+  const [questionPaperLimit, setQuestionPaperLimit] = useState(25);
+  const [admitCardLimit, setAdmitCardLimit] = useState(25);
+  const [studentLimit, setStudentLimit] = useState(20);
+  const [studentSearch, setStudentSearch] = useState('');
   const [selectedQuestionPaperClass, setSelectedQuestionPaperClass] = useState('');
   const [selectedQuestionPaperExamType, setSelectedQuestionPaperExamType] = useState('');
   const [selectedQuestionPaperSubject, setSelectedQuestionPaperSubject] = useState('');
@@ -71,47 +73,95 @@ const ExaminationManagement = () => {
   const [admitCardFieldErrors, setAdmitCardFieldErrors] = useState({});
   const [templatePreview, setTemplatePreview] = useState(null);
   const [questionPaperPreview, setQuestionPaperPreview] = useState(null);
+  const debouncedDateSheetSearch = useDebouncedValue(dateSheetSearch, 350);
+  const debouncedQuestionSearch = useDebouncedValue(questionSearch, 350);
+  const debouncedAdmitSearch = useDebouncedValue(admitSearch, 350);
+  const debouncedStudentSearch = useDebouncedValue(studentSearch, 350);
 
-  useEffect(() => {
-    const loadData = async () => {
-      await refreshData();
-    };
+  const overviewQuery = useQuery({
+    queryKey: ['examinations', 'overview'],
+    queryFn: () => examApi.getOverview(),
+  });
 
-    loadData();
-  }, []);
+  const optionsQuery = useQuery({
+    queryKey: ['examinations', 'options'],
+    queryFn: () => examApi.getOptions(),
+  });
+
+  const dateSheetsQuery = useQuery({
+    queryKey: ['examinations', 'date-sheets', debouncedDateSheetSearch, dateSheetLimit],
+    queryFn: () => examApi.getDateSheets({ search: debouncedDateSheetSearch, page: 0, size: dateSheetLimit }),
+    enabled: activeSection === 'datesheet' || activeSection === 'datesheet-preview',
+    placeholderData: keepPreviousData,
+  });
+
+  const questionPapersQuery = useQuery({
+    queryKey: ['examinations', 'question-papers', debouncedQuestionSearch, questionPaperLimit],
+    queryFn: () => examApi.getQuestionPapers({ search: debouncedQuestionSearch, page: 0, size: questionPaperLimit }),
+    enabled: activeSection === 'questionpaper',
+    placeholderData: keepPreviousData,
+  });
+
+  const admitCardsQuery = useQuery({
+    queryKey: ['examinations', 'admit-cards', debouncedAdmitSearch, admitCardLimit],
+    queryFn: () => examApi.getAdmitCards({ search: debouncedAdmitSearch, page: 0, size: admitCardLimit }),
+    enabled: activeSection === 'admitcard',
+    placeholderData: keepPreviousData,
+  });
+
+  const studentsQuery = useQuery({
+    queryKey: ['examinations', 'student-search', debouncedStudentSearch, studentLimit],
+    queryFn: () => studentApi.getPage({ search: debouncedStudentSearch, size: studentLimit, sort: 'firstName,asc' }),
+    enabled: activeSection === 'admitcard',
+    placeholderData: keepPreviousData,
+  });
+
+  const students = normalizePageItems(studentsQuery.data);
+  const curriculumClasses = optionsQuery.data?.classes || [];
+  const subjectsByClass = buildSubjectsByClassFromOptions(curriculumClasses);
+  const dateSheets = normalizePageItems(dateSheetsQuery.data);
+  const questionPapers = normalizePageItems(questionPapersQuery.data);
+  const admitCards = normalizePageItems(admitCardsQuery.data);
+  const dateSheetPageInfo = pageInfo(dateSheetsQuery.data, dateSheets.length);
+  const questionPaperPageInfo = pageInfo(questionPapersQuery.data, questionPapers.length);
+  const admitCardPageInfo = pageInfo(admitCardsQuery.data, admitCards.length);
+  const studentPageInfo = pageInfo(studentsQuery.data, students.length);
+  const queryError = [
+    overviewQuery.error,
+    optionsQuery.error,
+    dateSheetsQuery.error,
+    questionPapersQuery.error,
+    admitCardsQuery.error,
+    studentsQuery.error,
+  ].find(Boolean);
 
   const refreshData = async () => {
-    try {
-      const [studentResponse, teacherResponse, courseBookResponse, dateSheetResponse, questionPaperResponse, admitCardResponse] = await Promise.all([
-        studentApi.getAll(),
-        teacherApi.getAll(),
-        courseBookApi.getAll(),
-        examApi.getDateSheets(),
-        examApi.getQuestionPapers(),
-        examApi.getAdmitCards(),
-      ]);
-      setStudents(studentResponse);
-      setTeachers(teacherResponse);
-      setCourseBooks(courseBookResponse);
-      setDateSheets(dateSheetResponse);
-      setQuestionPapers(questionPaperResponse);
-      setAdmitCards(admitCardResponse);
-      setLoadError('');
-    } catch (error) {
-      setStudents([]);
-      setTeachers([]);
-      setCourseBooks([]);
-      setDateSheets([]);
-      setQuestionPapers([]);
-      setAdmitCards([]);
-      setLoadError(error.message || 'Unable to load examination records.');
-    }
+    await queryClient.invalidateQueries({ queryKey: ['examinations', 'overview'] });
+    await queryClient.invalidateQueries({ queryKey: ['examinations', 'date-sheets'] });
+    await queryClient.invalidateQueries({ queryKey: ['examinations', 'question-papers'] });
+    await queryClient.invalidateQueries({ queryKey: ['examinations', 'admit-cards'] });
+    setLoadError('');
   };
+
+  useEffect(() => {
+    setDateSheetLimit(25);
+  }, [debouncedDateSheetSearch]);
+
+  useEffect(() => {
+    setQuestionPaperLimit(25);
+  }, [debouncedQuestionSearch]);
+
+  useEffect(() => {
+    setAdmitCardLimit(25);
+  }, [debouncedAdmitSearch]);
+
+  useEffect(() => {
+    setStudentLimit(20);
+  }, [debouncedStudentSearch]);
 
   const availableClasses = useMemo(() => {
     const classes = [
-      ...students.map((student) => normalizeClassValue(student.assignedClass || student.className)),
-      ...teachers.map((teacher) => normalizeClassValue(teacher.assignedClass || teacher.className)),
+      ...curriculumClasses.map((record) => normalizeClassValue(record.className)),
       ...dateSheets.map((record) => normalizeClassValue(record.className)),
       ...questionPapers.map((record) => normalizeClassValue(record.className)),
       ...admitCards.map((record) => normalizeClassValue(record.className)),
@@ -121,34 +171,11 @@ const ExaminationManagement = () => {
     return uniqueClasses.length
       ? uniqueClasses.sort((a, b) => a.localeCompare(b))
       : fallbackExamClasses;
-  }, [admitCards, dateSheets, questionPapers, students, teachers]);
+  }, [admitCards, curriculumClasses, dateSheets, questionPapers]);
 
   const availableBaseClasses = useMemo(() => (
     [...new Set(availableClasses.map((className) => parseClassDescriptor(className).baseClass).filter(Boolean))]
   ), [availableClasses]);
-
-  const subjectsByClass = useMemo(() => {
-    return courseBooks.reduce((accumulator, record) => {
-      const className = normalizeClassValue(record.className);
-      const subjectName = formatExamFormText(record.subjectName).trim();
-      if (!className || !subjectName) return accumulator;
-
-      const exactKeys = [
-        className,
-        normalizeExamClassLabel(className),
-        parseClassDescriptor(className).baseClass,
-      ].filter(Boolean);
-
-      exactKeys.forEach((key) => {
-        const normalizedKey = normalizeExamClassLabel(key);
-        if (!normalizedKey) return;
-        if (!accumulator[normalizedKey]) accumulator[normalizedKey] = new Set();
-        accumulator[normalizedKey].add(subjectName);
-      });
-
-      return accumulator;
-    }, {});
-  }, [courseBooks]);
 
   const availableExamTitles = useMemo(() => {
     const examTitles = [
@@ -356,8 +383,9 @@ const ExaminationManagement = () => {
         examStartDate: templatePreview.examStartDate,
         examEndDate: templatePreview.examEndDate,
         fileName,
-        fileData,
         fileType: 'application/vnd.ms-excel',
+        classColumns: templatePreview.classColumns,
+        subjectGrid: templatePreview.subjectGrid,
       });
 
       const link = document.createElement('a');
@@ -393,7 +421,7 @@ const ExaminationManagement = () => {
     setAdmitCardForm((current) => ({
       ...current,
       studentId,
-      rollNo: formatExamFormText(selectedStudent.rollNo || selectedStudent.enrollmentNo || selectedStudent.systemId || ''),
+      rollNo: formatExamFormText(selectedStudent.rollNo || selectedStudent.enrollmentNo || ''),
       className: formatExamFormText(selectedStudent.assignedClass || ''),
     }));
   };
@@ -417,9 +445,9 @@ const ExaminationManagement = () => {
       await examApi.saveAdmitCard({
         ...admitCardForm,
         examTitle: formatExamFormText(admitCardForm.examTitle).trim(),
-        studentId: selectedStudent.systemId || String(selectedStudent.id),
+        studentId: selectedStudent.enrollmentNo || String(selectedStudent.id),
         studentName: `${selectedStudent.firstName || ''} ${selectedStudent.lastName || ''}`.trim(),
-        rollNo: selectedStudent.rollNo || selectedStudent.enrollmentNo || selectedStudent.systemId || admitCardForm.rollNo,
+        rollNo: selectedStudent.rollNo || selectedStudent.enrollmentNo || admitCardForm.rollNo,
         className: selectedStudent.assignedClass || admitCardForm.className,
         centerName: formatExamFormText(admitCardForm.centerName).trim(),
         reportingTime: admitCardForm.reportingTime.trim(),
@@ -432,6 +460,31 @@ const ExaminationManagement = () => {
     } catch (error) {
       setAdmitCardFieldErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save admit card.');
+    }
+  };
+
+  const handleBulkAdmitCardGenerate = async () => {
+    const validationErrors = validateBulkAdmitCardForm(admitCardForm);
+    if (Object.keys(validationErrors).length) {
+      setAdmitCardFieldErrors(validationErrors);
+      setLoadError('');
+      return;
+    }
+
+    try {
+      await examApi.generateAdmitCards({
+        examTitle: formatExamFormText(admitCardForm.examTitle).trim(),
+        className: formatExamFormText(admitCardForm.className).trim(),
+        centerName: formatExamFormText(admitCardForm.centerName).trim(),
+        reportingTime: admitCardForm.reportingTime.trim(),
+        examDate: admitCardForm.examDate,
+      });
+      setAdmitCardFieldErrors({});
+      await refreshData();
+      setLoadError('');
+    } catch (error) {
+      setAdmitCardFieldErrors(error.fieldErrors || {});
+      setLoadError(error.message || 'Unable to generate admit cards.');
     }
   };
 
@@ -509,9 +562,9 @@ const ExaminationManagement = () => {
   };
 
   const quickStats = [
-    { label: 'Date Sheets', value: dateSheets.length, icon: CalendarDays, tone: 'from-sky-500 to-cyan-500' },
-    { label: 'Question Papers', value: questionPapers.length, icon: ScrollText, tone: 'from-amber-500 to-orange-500' },
-    { label: 'Admit Cards', value: admitCards.length, icon: Ticket, tone: 'from-emerald-500 to-teal-500' },
+    { label: 'Date Sheets', value: overviewQuery.data?.publishedDateSheets ?? dateSheets.length, icon: CalendarDays, tone: 'from-sky-500 to-cyan-500' },
+    { label: 'Question Papers', value: overviewQuery.data?.questionPapersUploaded ?? questionPapers.length, icon: ScrollText, tone: 'from-amber-500 to-orange-500' },
+    { label: 'Admit Cards', value: overviewQuery.data?.admitCardsGenerated ?? admitCards.length, icon: Ticket, tone: 'from-emerald-500 to-teal-500' },
   ];
 
   return (
@@ -539,9 +592,9 @@ const ExaminationManagement = () => {
       </div>
 
       <div className="mx-auto max-w-5xl px-3 py-4 sm:px-5 sm:py-6 lg:px-6 lg:py-8">
-        {loadError ? (
+        {loadError || queryError ? (
           <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-            {loadError}
+            {loadError || queryError?.message || 'Unable to load examination records.'}
           </div>
         ) : null}
 
@@ -566,6 +619,10 @@ const ExaminationManagement = () => {
               onSearch={setDateSheetSearch}
               onGenerateTemplate={handleGenerateDateSheetTemplate}
               onDelete={(recordId) => handleDelete('exam_datesheets', recordId, 'Delete this exam date sheet entry?')}
+              hasMore={dateSheetPageInfo.hasMore}
+              loadedCount={dateSheetPageInfo.loadedCount}
+              totalCount={dateSheetPageInfo.totalCount}
+              onLoadMore={() => setDateSheetLimit((current) => current + 25)}
             />
           ) : null}
 
@@ -595,6 +652,10 @@ const ExaminationManagement = () => {
               onSelectSubject={setSelectedQuestionPaperSubject}
               onView={handleViewPaper}
               onDownload={handleDownloadPaper}
+              hasMore={questionPaperPageInfo.hasMore}
+              loadedCount={questionPaperPageInfo.loadedCount}
+              totalCount={questionPaperPageInfo.totalCount}
+              onLoadMore={() => setQuestionPaperLimit((current) => current + 25)}
             />
           ) : null}
 
@@ -609,8 +670,19 @@ const ExaminationManagement = () => {
               records={filteredAdmitCards}
               searchValue={admitSearch}
               onSearch={setAdmitSearch}
+              studentSearchValue={studentSearch}
+              onStudentSearch={setStudentSearch}
+              hasMoreStudents={studentPageInfo.hasMore}
+              onLoadMoreStudents={() => setStudentLimit((current) => current + 20)}
+              studentLoadedCount={studentPageInfo.loadedCount}
+              studentTotalCount={studentPageInfo.totalCount}
+              hasMoreRecords={admitCardPageInfo.hasMore}
+              onLoadMoreRecords={() => setAdmitCardLimit((current) => current + 25)}
+              loadedRecordCount={admitCardPageInfo.loadedCount}
+              totalRecordCount={admitCardPageInfo.totalCount}
               onStudentSelect={handleStudentSelect}
               onSave={handleAdmitCardSave}
+              onBulkGenerate={handleBulkAdmitCardGenerate}
               onDelete={(recordId) => handleDelete('exam_admit_cards', recordId, 'Delete this admit card record?')}
               onPrint={handlePrintAdmitCard}
             />
@@ -694,6 +766,10 @@ const DateSheetSection = ({
   onSearch,
   onGenerateTemplate,
   onDelete,
+  hasMore,
+  loadedCount,
+  totalCount,
+  onLoadMore,
 }) => {
   const updateField = (field, value) => {
     setForm({ ...form, [field]: value });
@@ -951,23 +1027,26 @@ const DateSheetSection = ({
         />
 
         {filteredRecords.length ? (
-          <div className="mt-6 grid gap-4">
-            {filteredRecords.map((record) => (
-              <RecordCard
-                key={record.id}
-                icon={FileText}
-                tone="bg-sky-100 text-sky-700"
-                title={record.className || 'Class pending'}
-                subtitle={record.examType || 'Exam pending'}
-                pills={[
-                  { icon: FileText, text: record.fileName || 'Saved file' },
-                  { icon: CalendarDays, text: record.examStartDate && record.examEndDate ? `${record.examStartDate} to ${record.examEndDate}` : 'Date range pending' },
-                  { icon: Download, text: record.shiftsPerDay ? `${record.shiftsPerDay} shift(s) | ${formatShiftDurationLabel(record.shiftDurationHours, record.shiftDurationUnit)}` : 'Shift count pending' },
-                ]}
-                actions={<IconButton icon={Trash2} onClick={() => onDelete(record.id)} danger />}
-              />
-            ))}
-          </div>
+          <>
+            <div className="mt-6 grid gap-4">
+              {filteredRecords.map((record) => (
+                <RecordCard
+                  key={record.id}
+                  icon={FileText}
+                  tone="bg-sky-100 text-sky-700"
+                  title={record.className || 'Class pending'}
+                  subtitle={record.examType || 'Exam pending'}
+                  pills={[
+                    { icon: FileText, text: record.fileName || 'Saved schedule' },
+                    { icon: CalendarDays, text: record.examStartDate && record.examEndDate ? `${record.examStartDate} to ${record.examEndDate}` : 'Date range pending' },
+                    { icon: Download, text: record.shiftsPerDay ? `${record.shiftsPerDay} shift(s) | ${formatShiftDurationLabel(record.shiftDurationHours, record.shiftDurationUnit)}` : 'Shift count pending' },
+                  ]}
+                  actions={<IconButton icon={Trash2} onClick={() => onDelete(record.id)} danger />}
+                />
+              ))}
+            </div>
+            <LoadMoreRow hasMore={hasMore} loadedCount={loadedCount} totalCount={totalCount} onLoadMore={onLoadMore} />
+          </>
         ) : (
           <EmptyState icon={CalendarDays} title="No saved date sheets yet" description="Generate Excel date sheet karte hi records yahan show hone lagenge." />
         )}
@@ -1096,6 +1175,10 @@ const QuestionPaperSection = ({
   onSelectSubject,
   onView,
   onDownload,
+  hasMore,
+  loadedCount,
+  totalCount,
+  onLoadMore,
 }) => (
   <div className="space-y-6">
     <Panel>
@@ -1172,28 +1255,31 @@ const QuestionPaperSection = ({
                     </div>
 
                     {records.length ? (
-                      <div className="mt-5 grid gap-4">
-                        {records.map((record) => (
-                          <RecordCard
-                            key={record.id}
-                            icon={ScrollText}
-                            tone="bg-amber-100 text-amber-700"
-                            title={record.subjectName || 'Subject pending'}
-                            subtitle={record.examTitle || 'Exam type pending'}
-                            pills={[
-                              { icon: FileText, text: record.className || 'Class pending' },
-                              { icon: FileText, text: record.uploadedBy || 'Teacher not added' },
-                              { icon: ScrollText, text: record.fileName || 'File missing' },
-                            ]}
-                            actions={(
-                              <div className="flex flex-wrap gap-2">
-                                <ActionButton icon={Eye} label="View" onClick={() => onView(record)} />
-                                <ActionButton icon={Download} label="Download" onClick={() => onDownload(record)} />
-                              </div>
-                            )}
-                          />
-                        ))}
-                      </div>
+                      <>
+                        <div className="mt-5 grid gap-4">
+                          {records.map((record) => (
+                            <RecordCard
+                              key={record.id}
+                              icon={ScrollText}
+                              tone="bg-amber-100 text-amber-700"
+                              title={record.subjectName || 'Subject pending'}
+                              subtitle={record.examTitle || 'Exam type pending'}
+                              pills={[
+                                { icon: FileText, text: record.className || 'Class pending' },
+                                { icon: FileText, text: record.uploadedBy || 'Teacher not added' },
+                                { icon: ScrollText, text: record.fileName || 'File missing' },
+                              ]}
+                              actions={(
+                                <div className="flex flex-wrap gap-2">
+                                  <ActionButton icon={Eye} label="View" onClick={() => onView(record)} />
+                                  <ActionButton icon={Download} label="Download" onClick={() => onDownload(record)} />
+                                </div>
+                              )}
+                            />
+                          ))}
+                        </div>
+                        <LoadMoreRow hasMore={hasMore} loadedCount={loadedCount} totalCount={totalCount} onLoadMore={onLoadMore} />
+                      </>
                     ) : (
                       <div className="mt-5">
                         <EmptyState icon={ScrollText} title="No paper found" description="Selected subject ke liye abhi koi question paper available nahi hai." />
@@ -1259,7 +1345,32 @@ const QuestionPaperPreviewModal = ({ paper, onClose, onDownload }) => (
   </div>
 );
 
-const AdmitCardSection = ({ form, setForm, fieldErrors, setFieldErrors, students, examTitles, records, searchValue, onSearch, onStudentSelect, onSave, onDelete, onPrint }) => {
+const AdmitCardSection = ({
+  form,
+  setForm,
+  fieldErrors,
+  setFieldErrors,
+  students,
+  examTitles,
+  records,
+  searchValue,
+  onSearch,
+  studentSearchValue,
+  onStudentSearch,
+  hasMoreStudents,
+  onLoadMoreStudents,
+  studentLoadedCount,
+  studentTotalCount,
+  hasMoreRecords,
+  onLoadMoreRecords,
+  loadedRecordCount,
+  totalRecordCount,
+  onStudentSelect,
+  onSave,
+  onBulkGenerate,
+  onDelete,
+  onPrint,
+}) => {
   const updateField = (field, value) => {
     setForm({ ...form, [field]: value });
     setFieldErrors((current) => ({ ...current, [field]: '' }));
@@ -1296,6 +1407,16 @@ const AdmitCardSection = ({ form, setForm, fieldErrors, setFieldErrors, students
             }}
             error={fieldErrors.studentId}
           />
+          <div className="md:col-span-2">
+            <SearchInput value={studentSearchValue} onChange={onStudentSearch} placeholder="Search student name, enrollment, roll no..." />
+            <LoadMoreRow
+              hasMore={hasMoreStudents}
+              loadedCount={studentLoadedCount}
+              totalCount={studentTotalCount}
+              onLoadMore={onLoadMoreStudents}
+              compact
+            />
+          </div>
           <CreativeInput label="Roll No" value={form.rollNo} onChange={(e) => updateField('rollNo', e.target.value)} placeholder="Auto from student" error={fieldErrors.rollNo} />
           <CreativeInput label="Class / Section" value={form.className} onChange={(e) => updateField('className', e.target.value)} placeholder="Auto from student" error={fieldErrors.className} />
           <CreativeInput label="Exam Date" type="date" value={form.examDate} onChange={(e) => updateField('examDate', e.target.value)} error={fieldErrors.examDate} />
@@ -1304,7 +1425,10 @@ const AdmitCardSection = ({ form, setForm, fieldErrors, setFieldErrors, students
             <CreativeInput label="Exam Center / Venue" value={form.centerName} onChange={(e) => updateField('centerName', e.target.value)} placeholder="Main Examination Hall" error={fieldErrors.centerName} />
           </div>
           <div className="md:col-span-2">
-            <PrimaryButton type="submit" icon={Ticket} label="Save Admit Card" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <PrimaryButton type="submit" icon={Ticket} label="Save Admit Card" />
+              <ActionButton icon={Ticket} label="Bulk Generate Class" onClick={onBulkGenerate} />
+            </div>
           </div>
         </form>
       <datalist id="admit-exam-options">
@@ -1322,29 +1446,32 @@ const AdmitCardSection = ({ form, setForm, fieldErrors, setFieldErrors, students
       />
 
       {records.length ? (
-        <div className="mt-6 grid gap-4">
-          {records.map((record) => (
-            <RecordCard
-              key={record.id}
-              icon={Ticket}
-              tone="bg-emerald-100 text-emerald-700"
-              title={record.studentName || 'Student pending'}
-              subtitle={record.examTitle || 'Exam title pending'}
-              pills={[
-                { icon: FileText, text: record.className || 'Class pending' },
-                { icon: Ticket, text: record.rollNo || 'Roll no pending' },
-                { icon: CalendarDays, text: record.examDate || 'Date pending' },
-                { icon: ScrollText, text: `${record.reportingTime || '--'} | ${record.centerName || 'Center pending'}` },
-              ]}
-              actions={(
-                <div className="flex flex-wrap gap-2">
-                  <ActionButton icon={Printer} label="Print" onClick={() => onPrint(record)} />
-                  <IconButton icon={Trash2} onClick={() => onDelete(record.id)} danger />
-                </div>
-              )}
-            />
-          ))}
-        </div>
+        <>
+          <div className="mt-6 grid gap-4">
+            {records.map((record) => (
+              <RecordCard
+                key={record.id}
+                icon={Ticket}
+                tone="bg-emerald-100 text-emerald-700"
+                title={record.studentName || 'Student pending'}
+                subtitle={record.examTitle || 'Exam title pending'}
+                pills={[
+                  { icon: FileText, text: record.className || 'Class pending' },
+                  { icon: Ticket, text: record.rollNo || 'Roll no pending' },
+                  { icon: CalendarDays, text: record.examDate || 'Date pending' },
+                  { icon: ScrollText, text: `${record.reportingTime || '--'} | ${record.centerName || 'Center pending'}` },
+                ]}
+                actions={(
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton icon={Printer} label="Print" onClick={() => onPrint(record)} />
+                    <IconButton icon={Trash2} onClick={() => onDelete(record.id)} danger />
+                  </div>
+                )}
+              />
+            ))}
+          </div>
+          <LoadMoreRow hasMore={hasMoreRecords} loadedCount={loadedRecordCount} totalCount={totalRecordCount} onLoadMore={onLoadMoreRecords} />
+        </>
       ) : (
         <EmptyState icon={Ticket} title="No admit cards yet" description="First admit card save karte hi printable records yahan show hone lagenge." />
       )}
@@ -1500,6 +1627,24 @@ const SearchInput = ({ value, onChange, placeholder }) => (
   </div>
 );
 
+const LoadMoreRow = ({ hasMore, loadedCount, totalCount, onLoadMore, compact = false }) => {
+  if (!totalCount || totalCount <= loadedCount) return null;
+  return (
+    <div className={`flex flex-col gap-2 text-xs font-bold text-slate-500 sm:flex-row sm:items-center sm:justify-between ${compact ? 'mt-3' : 'mt-5'}`}>
+      <span>{loadedCount} of {totalCount} loaded</span>
+      {hasMore ? (
+        <button
+          type="button"
+          onClick={onLoadMore}
+          className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] text-slate-700 transition hover:border-sky-300 hover:text-sky-700"
+        >
+          Load More
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
 const CreativeInput = ({ label, onChange, type = 'text', className = '', error = '', ...props }) => {
   const shouldUppercase = !['date', 'time', 'number'].includes(type);
   const handleChange = (event) => {
@@ -1606,23 +1751,85 @@ const normalizeExamClassLabel = (value) => String(value || '')
   .replace(/\s*\/\s*/g, '/')
   .replace(/\s+/g, ' ');
 
-const getSubjectsForExamClass = (subjectsByClass, className) => {
-  const descriptor = parseClassDescriptor(className);
-  const keys = [
-    className,
-    descriptor.baseClass,
-    normalizeExamClassLabel(className),
-    normalizeExamClassLabel(descriptor.baseClass),
-  ].filter(Boolean);
+const buildSubjectsByClass = (subjectPairs) => (
+  subjectPairs.reduce((accumulator, [classRecord, subjects]) => {
+    getCurriculumClassSubjectKeys(classRecord.className).forEach((key) => {
+      if (!accumulator[key]) accumulator[key] = new Set();
+      subjects.forEach((subject) => {
+        const subjectName = formatExamFormText(subject.subjectName).trim();
+        if (subjectName) accumulator[key].add(subjectName);
+      });
+    });
 
+    return accumulator;
+  }, {})
+);
+
+const buildSubjectsByClassFromOptions = (classes = []) => (
+  classes.reduce((accumulator, classRecord) => {
+    getCurriculumClassSubjectKeys(classRecord.className).forEach((key) => {
+      accumulator[key] = accumulator[key] || new Set();
+      (classRecord.subjects || []).forEach((subject) => {
+        const subjectName = formatExamFormText(subject.subjectName).trim();
+        if (subjectName) accumulator[key].add(subjectName);
+      });
+    });
+    return accumulator;
+  }, {})
+);
+
+const normalizePageItems = (response) => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.content)) return response.content;
+  return [];
+};
+
+const pageInfo = (response, loadedCount) => {
+  const totalCount = Number(response?.totalElements ?? loadedCount);
+  return {
+    loadedCount,
+    totalCount,
+    hasMore: totalCount > loadedCount,
+  };
+};
+
+const useDebouncedValue = (value, delay = 350) => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delay);
+    return () => window.clearTimeout(timeoutId);
+  }, [value, delay]);
+
+  return debouncedValue;
+};
+
+const getSubjectsForExamClass = (subjectsByClass, className) => {
   const subjects = new Set();
-  keys.forEach((key) => {
-    const classSubjects = subjectsByClass?.[normalizeExamClassLabel(key)];
+  getCurriculumClassSubjectKeys(className).forEach((key) => {
+    const classSubjects = subjectsByClass?.[key];
     if (!classSubjects) return;
     classSubjects.forEach((subjectName) => subjects.add(subjectName));
   });
 
   return [...subjects].sort((left, right) => left.localeCompare(right));
+};
+
+const getCurriculumClassSubjectKeys = (value) => {
+  const normalized = normalizeClassValue(value);
+  if (!normalized) return [];
+  const classNumber = extractLeadingClassNumber(normalized);
+  const exactKey = normalizeExamClassLabel(normalized);
+  if (classNumber && classNumber >= 1 && classNumber <= 8) {
+    const baseClass = parseClassDescriptor(normalized).baseClass || normalized.split('/')[0].trim();
+    return [...new Set([exactKey, normalizeExamClassLabel(baseClass)].filter(Boolean))];
+  }
+  return [exactKey];
+};
+
+const extractLeadingClassNumber = (value) => {
+  const match = String(value || '').trim().match(/^(?:class\s*)?(\d{1,2})(?:\b|\s|\/)/i);
+  return match ? Number(match[1]) : null;
 };
 
 const buildExamSubjectCellKey = (className, dateValue, shiftIndex) => (
@@ -1677,6 +1884,16 @@ const validateAdmitCardForm = (form) => {
   if (!String(form.examTitle || '').trim()) errors.examTitle = 'Please enter exam title.';
   if (!form.studentId) errors.studentId = 'Please select student.';
   if (!String(form.rollNo || '').trim()) errors.rollNo = 'Roll number is required.';
+  if (!String(form.className || '').trim()) errors.className = 'Class / section is required.';
+  if (!form.examDate) errors.examDate = 'Please select exam date.';
+  if (!form.reportingTime) errors.reportingTime = 'Please select reporting time.';
+  if (!String(form.centerName || '').trim()) errors.centerName = 'Please enter exam center.';
+  return errors;
+};
+
+const validateBulkAdmitCardForm = (form) => {
+  const errors = {};
+  if (!String(form.examTitle || '').trim()) errors.examTitle = 'Please enter exam title.';
   if (!String(form.className || '').trim()) errors.className = 'Class / section is required.';
   if (!form.examDate) errors.examDate = 'Please select exam date.';
   if (!form.reportingTime) errors.reportingTime = 'Please select reporting time.';

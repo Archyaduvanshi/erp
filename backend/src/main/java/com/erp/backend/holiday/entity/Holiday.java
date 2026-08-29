@@ -2,6 +2,8 @@ package com.erp.backend.holiday.entity;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.erp.backend.institute.entity.Institute;
 import jakarta.persistence.Column;
@@ -12,6 +14,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -51,6 +54,9 @@ public class Holiday {
 
     @Column(length = 2000)
     private String notes;
+
+    @OneToMany(mappedBy = "holiday")
+    private List<HolidayTargetClass> targetClassMappings = new ArrayList<>();
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

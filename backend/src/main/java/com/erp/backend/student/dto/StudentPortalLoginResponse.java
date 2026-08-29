@@ -7,7 +7,6 @@ public record StudentPortalLoginResponse(
         String instituteType,
         String instituteLogo,
         Long studentId,
-        String studentSystemId,
         String enrollmentNo,
         String studentName
 ) {

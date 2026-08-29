@@ -10,10 +10,10 @@ public record HostelResponse(
         String wardenName,
         String contactNumber,
         String status,
-        Integer totalRooms,
-        Integer totalBeds,
-        Integer occupiedBeds,
-        Integer vacantBeds,
+        Long totalRooms,
+        Long totalBeds,
+        Long occupiedBeds,
+        Long vacantBeds,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

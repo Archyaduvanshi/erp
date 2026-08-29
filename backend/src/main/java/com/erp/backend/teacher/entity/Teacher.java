@@ -1,5 +1,6 @@
 package com.erp.backend.teacher.entity;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.erp.backend.institute.entity.Institute;
@@ -9,17 +10,32 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "teachers")
+@Table(
+        name = "teachers",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_teachers_institute_employee", columnNames = {"institute_id", "employee_id"}),
+                @UniqueConstraint(name = "uk_teachers_institute_email", columnNames = {"institute_id", "personal_email"}),
+                @UniqueConstraint(name = "uk_teachers_institute_mobile", columnNames = {"institute_id", "mobile_number"})
+        },
+        indexes = {
+                @Index(name = "idx_teachers_institute_created", columnList = "institute_id, created_at"),
+                @Index(name = "idx_teachers_institute_status", columnList = "institute_id, status"),
+                @Index(name = "idx_teachers_institute_contract", columnList = "institute_id, contract_type"),
+                @Index(name = "idx_teachers_institute_specialization", columnList = "institute_id, specialization")
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -52,9 +68,11 @@ public class Teacher {
     private String contractType;
     private String leaveBalance;
     private String salary;
+
+    @Column(precision = 12, scale = 2)
+    private BigDecimal salaryAmount;
     private String dob;
     private String joiningDate;
-    private String teacherPortalPassword;
     private String documentType;
     private String otherDocumentName;
     private String fileUploadPath;
@@ -73,7 +91,6 @@ public class Teacher {
     @Column(columnDefinition = "TEXT")
     private String photoUrl;
 
-    private String teacherSystemId;
     private String status;
     private String attendanceStatus;
 

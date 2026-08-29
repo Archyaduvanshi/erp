@@ -9,6 +9,8 @@ public record TransportAttendanceResponse(
         String studentName,
         String className,
         Long driverId,
+        Long routeId,
+        Long routeOperationId,
         String driverName,
         String busNumber,
         String routeName,

@@ -21,6 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class ImageKitUploadService {
     private static final String IMAGEKIT_UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
+    private static final long MAX_REGISTRATION_LOGO_BYTES = 5L * 1024L * 1024L;
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -83,6 +84,11 @@ public class ImageKitUploadService {
         }
     }
 
+    public ImageKitUploadResponse uploadRegistrationLogo(MultipartFile file) {
+        validateRegistrationLogo(file);
+        return upload(file, "/erp/registration/logos");
+    }
+
     private byte[] buildMultipartBody(MultipartFile file, String folder, String boundary) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
@@ -122,6 +128,56 @@ public class ImageKitUploadService {
     private String sanitizeFileName(String fileName) {
         String safeName = StringUtils.hasText(fileName) ? fileName.trim() : "upload";
         return safeName.replaceAll("[\\\\/\\r\\n\"]", "-");
+    }
+
+    private void validateRegistrationLogo(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Institution logo is required.");
+        }
+        if (file.getSize() > MAX_REGISTRATION_LOGO_BYTES) {
+            throw new IllegalArgumentException("Institution logo must be 5 MB or smaller.");
+        }
+        String contentType = StringUtils.hasText(file.getContentType()) ? file.getContentType().toLowerCase() : "";
+        if (!contentType.equals("image/jpeg") && !contentType.equals("image/png") && !contentType.equals("image/webp")) {
+            throw new IllegalArgumentException("Institution logo must be JPEG, PNG, or WEBP.");
+        }
+        try {
+            byte[] bytes = file.getBytes();
+            if (!hasAllowedImageSignature(bytes, contentType)) {
+                throw new IllegalArgumentException("Institution logo file signature does not match JPEG, PNG, or WEBP.");
+            }
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("Institution logo could not be read.");
+        }
+    }
+
+    private boolean hasAllowedImageSignature(byte[] bytes, String contentType) {
+        if ("image/jpeg".equals(contentType)) {
+            return bytes.length >= 3
+                    && (bytes[0] & 0xFF) == 0xFF
+                    && (bytes[1] & 0xFF) == 0xD8
+                    && (bytes[2] & 0xFF) == 0xFF;
+        }
+        if ("image/png".equals(contentType)) {
+            byte[] png = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+            if (bytes.length < png.length) return false;
+            for (int index = 0; index < png.length; index++) {
+                if (bytes[index] != png[index]) return false;
+            }
+            return true;
+        }
+        if ("image/webp".equals(contentType)) {
+            return bytes.length >= 12
+                    && bytes[0] == 'R'
+                    && bytes[1] == 'I'
+                    && bytes[2] == 'F'
+                    && bytes[3] == 'F'
+                    && bytes[8] == 'W'
+                    && bytes[9] == 'E'
+                    && bytes[10] == 'B'
+                    && bytes[11] == 'P';
+        }
+        return false;
     }
 
     private boolean isConfiguredSecret(String value) {

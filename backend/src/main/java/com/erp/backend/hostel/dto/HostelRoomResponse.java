@@ -1,6 +1,7 @@
 package com.erp.backend.hostel.dto;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 public record HostelRoomResponse(
         Long id,
@@ -13,7 +14,7 @@ public record HostelRoomResponse(
         String acType,
         Integer capacity,
         Integer occupiedBeds,
-        String monthlyCharge,
+        BigDecimal monthlyCharge,
         String amenities,
         String status,
         LocalDateTime createdAt,

@@ -26,6 +26,13 @@ export default function ReportFilters({ filters, values, options, onChange, onRe
                 onChange={(event) => onChange(filter.key, event.target.value)}
                 className="h-11 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 text-sm font-semibold normal-case tracking-normal text-slate-900 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
               />
+            ) : filter.type === 'text' ? (
+              <input
+                type="search"
+                value={values[filter.key] ?? ''}
+                onChange={(event) => onChange(filter.key, event.target.value)}
+                className="h-11 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 text-sm font-semibold normal-case tracking-normal text-slate-900 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+              />
             ) : (
               <select
                 value={values[filter.key] ?? ALL_VALUE}

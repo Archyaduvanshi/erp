@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -12,19 +13,15 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { examApi, marksApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { academicSessionApi, examApi, marksApi, studentApi, timetableApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const FALLBACK_EXAM_TYPES = ['Class Test 1', 'Class Test 2', 'Unit Test 1', 'Half Yearly', 'Annual Exam'];
 
 const TeacherMarks = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [teachers, setTeachers] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [classTimetables, setClassTimetables] = useState([]);
-  const [dateSheets, setDateSheets] = useState([]);
-  const [marksRecords, setMarksRecords] = useState([]);
-  const [examRenames, setExamRenames] = useState([]);
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [marksMap, setMarksMap] = useState({});
@@ -43,55 +40,71 @@ const TeacherMarks = () => {
     }
   }, [navigate, session]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [teacherResponse, studentResponse, timetableResponse, dateSheetResponse, marksResponse, renameResponse] = await Promise.all([
-          teacherApi.getAll(),
-          studentApi.getAll(),
-          timetableApi.getClassTimetables(),
-          examApi.getDateSheets(),
-          marksApi.getAll(),
-          marksApi.getExamRenames(),
-        ]);
-        setTeachers(teacherResponse);
-        setStudents(studentResponse);
-        setClassTimetables(timetableResponse);
-        setDateSheets(dateSheetResponse);
-        setMarksRecords(marksResponse);
-        setExamRenames(renameResponse);
-        setLoadError('');
-      } catch (error) {
-        setTeachers([]);
-        setStudents([]);
-        setClassTimetables([]);
-        setDateSheets([]);
-        setLoadError(error.message || 'Unable to load teacher marks data.');
-      }
-    };
+  const sessionsQuery = useQuery({
+    queryKey: ['marks', 'academic-sessions'],
+    queryFn: academicSessionApi.getAll,
+    enabled: session?.role === 'teacher',
+  });
 
-    if (session?.role === 'teacher') {
-      loadData();
-    }
-  }, [session]);
+  const currentAcademicSession = useMemo(() => (
+    (sessionsQuery.data || []).find((entry) => entry.current) || (sessionsQuery.data || [])[0] || null
+  ), [sessionsQuery.data]);
 
-  const teacher = useMemo(() => {
-    if (!session || session.role !== 'teacher') return null;
-    return teachers.find((entry) => String(entry.id) === String(session.teacherId)) || null;
-  }, [session, teachers]);
+  const timetableQuery = useQuery({
+    queryKey: ['marks', 'teacher-timetable', currentAcademicSession?.id],
+    queryFn: () => timetableApi.getMyTeacherTimetable(currentAcademicSession?.id),
+    enabled: session?.role === 'teacher' && Boolean(currentAcademicSession?.id),
+  });
 
-  const teacherName = teacher
-    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
-    : 'Teacher';
+  const dateSheetsQuery = useQuery({
+    queryKey: ['marks', 'date-sheets', currentAcademicSession?.id, selectedClass],
+    queryFn: examApi.getDateSheets,
+    enabled: session?.role === 'teacher' && Boolean(selectedClass),
+    placeholderData: keepPreviousData,
+  });
+
+  const studentsQuery = useQuery({
+    queryKey: ['marks', 'students', selectedClass],
+    queryFn: () => studentApi.getPage({ assignedClass: selectedClass, size: 500, sort: 'firstName,asc' }),
+    enabled: session?.role === 'teacher' && Boolean(selectedClass),
+    placeholderData: keepPreviousData,
+  });
+
+  const marksQuery = useQuery({
+    queryKey: ['marks', 'register', selectedClass, selectedSubject],
+    queryFn: () => marksApi.getAll(selectedClass, selectedSubject),
+    enabled: session?.role === 'teacher' && Boolean(selectedClass && selectedSubject),
+    placeholderData: keepPreviousData,
+  });
+
+  const renamesQuery = useQuery({
+    queryKey: ['marks', 'exam-renames'],
+    queryFn: marksApi.getExamRenames,
+    enabled: session?.role === 'teacher',
+  });
+
+  const students = useMemo(() => normalizePageItems(studentsQuery.data), [studentsQuery.data]);
+  const teacherTimetablePeriods = timetableQuery.data?.week || [];
+  const dateSheets = dateSheetsQuery.data || [];
+  const marksRecords = marksQuery.data || [];
+  const examRenames = renamesQuery.data || [];
+  const teacherName = session?.username || 'Teacher';
+  const queryError = [
+    sessionsQuery.error,
+    timetableQuery.error,
+    dateSheetsQuery.error,
+    studentsQuery.error,
+    marksQuery.error,
+    renamesQuery.error,
+  ].find(Boolean);
 
   const teacherSubjectsByClass = useMemo(() => (
-    deriveTeacherSubjectsByClass(classTimetables, teacher)
-  ), [classTimetables, teacher]);
+    deriveTeacherSubjectsByClass(teacherTimetablePeriods)
+  ), [teacherTimetablePeriods]);
 
   const teachingClasses = useMemo(() => {
-    const classes = Object.keys(teacherSubjectsByClass);
-    return classes.filter((className) => students.some((student) => student.assignedClass === className));
-  }, [students, teacherSubjectsByClass]);
+    return Object.keys(teacherSubjectsByClass);
+  }, [teacherSubjectsByClass]);
 
   const filteredClasses = useMemo(() => {
     const query = classSearch.trim().toLowerCase();
@@ -238,15 +251,14 @@ const TeacherMarks = () => {
     )));
 
     try {
-      const renameResponse = await marksApi.renameExam({
+      await marksApi.renameExam({
         className: selectedClass,
         subjectName: selectedSubject,
         oldTitle: oldExamTitle,
         newTitle: nextExamTitle,
       });
-      const marksResponse = await marksApi.getAll();
-      setExamRenames(renameResponse);
-      setMarksRecords(marksResponse);
+      queryClient.invalidateQueries({ queryKey: ['marks', 'exam-renames'] });
+      queryClient.invalidateQueries({ queryKey: ['marks', 'register', selectedClass, selectedSubject] });
       setRenameDraft(null);
       setLoadError('');
       setSaveMessage(`${oldExamTitle} column ka naam ${nextExamTitle} ho gaya.`);
@@ -272,6 +284,7 @@ const TeacherMarks = () => {
 
     try {
       await marksApi.saveRegister({
+        academicSessionId: currentAcademicSession?.id,
         className: selectedClass,
         subjectName: selectedSubject,
         uploadedBy: teacherName,
@@ -287,8 +300,8 @@ const TeacherMarks = () => {
           })),
         })),
       });
-      const marksResponse = await marksApi.getAll();
-      setMarksRecords(marksResponse);
+      queryClient.invalidateQueries({ queryKey: ['marks', 'register', selectedClass, selectedSubject] });
+      queryClient.invalidateQueries({ queryKey: ['results'] });
       setLoadError('');
       setSaveMessage(`${selectedClass} ${selectedSubject} ki marks register sheet database me save ho gayi.`);
     } catch (error) {
@@ -334,9 +347,9 @@ const TeacherMarks = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
+        {loadError || queryError ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {loadError || queryError?.message || 'Unable to load teacher marks data.'}
           </div>
         ) : null}
 
@@ -638,27 +651,15 @@ const canSaveMarksRegister = (examColumns, students, marksMap, maxMarksMap) => {
   });
 };
 
-const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
-  if (!teacher) return {};
-
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
+const deriveTeacherSubjectsByClass = (periods = []) => {
   const subjectsByClass = {};
 
-  classTimetables.forEach((record) => {
-    const template = readTeacherTimetableTemplate(record);
-    if (!record?.className || !template?.rows?.length) return;
-
-    const subjectSet = subjectsByClass[record.className] || new Set();
-    template.rows.forEach((row) => {
-      (row.slots || []).forEach((slot) => {
-        if (!slotMatchesTeacher(slot, teacherKeys)) return;
-        addCleanValue(subjectSet, slot?.subjectName);
-      });
-    });
-
-    if (subjectSet.size) {
-      subjectsByClass[record.className] = subjectSet;
-    }
+  periods.forEach((period) => {
+    const className = period.className;
+    if (!className) return;
+    const subjectSet = subjectsByClass[className] || new Set();
+    addCleanValue(subjectSet, period.subjectName);
+    subjectsByClass[className] = subjectSet;
   });
 
   return Object.entries(subjectsByClass)
@@ -667,6 +668,12 @@ const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
       accumulator[className] = [...subjectSet].sort((left, right) => left.localeCompare(right));
       return accumulator;
     }, {});
+};
+
+const normalizePageItems = (response) => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.content)) return response.content;
+  return [];
 };
 
 const readTeacherTimetableTemplate = (record) => {
@@ -743,9 +750,9 @@ const buildTeacherIdentityKeys = (teacher) => {
   const fullName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
   return [
     fullName,
-    teacher?.teacherSystemId,
     teacher?.employeeId,
-    fullName && teacher?.teacherSystemId ? `${fullName} (${teacher.teacherSystemId})` : '',
+    teacher?.employeeId,
+    fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
     fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
   ]
     .map((value) => String(value || '').trim().toLowerCase())
@@ -762,7 +769,7 @@ const getStudentName = (student) => (
 );
 
 const getStudentRollNo = (student) => (
-  String(student.rollNo || student.enrollmentNo || student.systemId || student.id || '-')
+  String(student.rollNo || student.enrollmentNo || student.id || '-')
 );
 
 const addCleanValue = (targetSet, value) => {

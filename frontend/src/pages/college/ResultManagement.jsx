@@ -1,37 +1,99 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, GraduationCap, Search } from 'lucide-react';
-import { resultApi } from '../../utils/api';
+import { academicSessionApi, resultApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const ResultManagement = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [classes, setClasses] = useState([]);
-  const [classStudents, setClassStudents] = useState([]);
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState('');
-  const [studentResult, setStudentResult] = useState(null);
+  const [selectedExamId, setSelectedExamId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (!session || !['admin', 'feature'].includes(session.role)) {
       navigate('/login');
-      return;
     }
-
-    const loadClasses = async () => {
-      try {
-        setClasses(await resultApi.getClasses());
-        setLoadError('');
-      } catch (error) {
-        setClasses([]);
-        setLoadError(error.message || 'Unable to load result data from database.');
-      }
-    };
-
-    loadClasses();
   }, [navigate, session]);
+
+  const sessionsQuery = useQuery({
+    queryKey: ['results', 'academic-sessions'],
+    queryFn: academicSessionApi.getAll,
+    enabled: ['admin', 'feature'].includes(session?.role),
+  });
+
+  const currentAcademicSession = useMemo(() => (
+    (sessionsQuery.data || []).find((entry) => entry.current) || (sessionsQuery.data || [])[0] || null
+  ), [sessionsQuery.data]);
+
+  const classesQuery = useQuery({
+    queryKey: ['results', 'classes', currentAcademicSession?.id],
+    queryFn: () => resultApi.getClasses({ academicSessionId: currentAcademicSession?.id }),
+    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id),
+  });
+
+  const classStudentsQuery = useQuery({
+    queryKey: ['results', 'students', currentAcademicSession?.id, selectedClass, selectedExamId],
+    queryFn: () => resultApi.getClassStudents(selectedClass, {
+      academicSessionId: currentAcademicSession?.id,
+      examId: selectedExamId || undefined,
+    }),
+    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id && selectedClass),
+    placeholderData: keepPreviousData,
+  });
+
+  const classExamsQuery = useQuery({
+    queryKey: ['results', 'exams', currentAcademicSession?.id, selectedClass],
+    queryFn: () => resultApi.getClassExams(selectedClass, { academicSessionId: currentAcademicSession?.id }),
+    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id && selectedClass),
+    placeholderData: keepPreviousData,
+  });
+
+  const studentResultQuery = useQuery({
+    queryKey: ['results', 'student', currentAcademicSession?.id, selectedClass, selectedStudentId, selectedExamId],
+    queryFn: () => resultApi.getStudentResult(selectedClass, selectedStudentId, {
+      academicSessionId: currentAcademicSession?.id,
+      examId: selectedExamId || undefined,
+    }),
+    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id && selectedClass && selectedStudentId),
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: () => resultApi.publish({
+      className: selectedClass,
+      academicSessionId: currentAcademicSession?.id,
+      examId: selectedExamId,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['results'] }),
+  });
+
+  const reopenMutation = useMutation({
+    mutationFn: (reason) => resultApi.reopen({
+      className: selectedClass,
+      academicSessionId: currentAcademicSession?.id,
+      examId: selectedExamId,
+      reason,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['results'] }),
+  });
+
+  const classes = classesQuery.data || [];
+  const classStudents = classStudentsQuery.data || [];
+  const classExams = classExamsQuery.data || [];
+  const studentResult = studentResultQuery.data || null;
+  const loadError = [
+    sessionsQuery.error,
+    classesQuery.error,
+    classStudentsQuery.error,
+    classExamsQuery.error,
+    studentResultQuery.error,
+    publishMutation.error,
+    reopenMutation.error,
+  ].find(Boolean);
 
   const visibleStudents = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -52,34 +114,20 @@ const ResultManagement = () => {
     return {
       exams: studentResult.exams || [],
       subjects: studentResult.subjects || [],
-      recordMap: new Map((studentResult.cells || []).map((cell) => [buildResultCellKey(cell.subjectName, cell.examKey), cell])),
+      recordMap: new Map((studentResult.cells || []).map((cell) => [buildResultCellKey(cell.subjectId, cell.subjectName, cell.examId, cell.examKey), cell])),
       examSummaries: new Map((studentResult.summaries || []).map((summary) => [summary.examKey, summary])),
     };
   }, [studentResult]);
 
-  const openClass = async (className) => {
+  const openClass = (className) => {
     setSelectedClass(className);
     setSelectedStudentId('');
-    setStudentResult(null);
+    setSelectedExamId('');
     setSearchTerm('');
-    try {
-      setClassStudents(await resultApi.getClassStudents(className));
-      setLoadError('');
-    } catch (error) {
-      setClassStudents([]);
-      setLoadError(error.message || 'Unable to fetch class students from database.');
-    }
   };
 
-  const openStudent = async (studentId) => {
+  const openStudent = (studentId) => {
     setSelectedStudentId(String(studentId));
-    try {
-      setStudentResult(await resultApi.getStudentResult(selectedClass, studentId));
-      setLoadError('');
-    } catch (error) {
-      setStudentResult(null);
-      setLoadError(error.message || 'Unable to fetch student result from database.');
-    }
   };
 
   if (!session || !['admin', 'feature'].includes(session.role)) return null;
@@ -90,15 +138,14 @@ const ResultManagement = () => {
         <div className="mx-auto flex max-w-screen-2xl items-center gap-3 px-6 py-4 md:px-10">
           <button
             type="button"
-            onClick={() => {
+          onClick={() => {
               if (selectedStudentId) {
                 setSelectedStudentId('');
-                setStudentResult(null);
                 return;
               }
               if (selectedClass) {
                 setSelectedClass('');
-                setClassStudents([]);
+                setSelectedExamId('');
                 setSearchTerm('');
                 return;
               }
@@ -119,7 +166,7 @@ const ResultManagement = () => {
       <main className="mx-auto max-w-screen-2xl px-6 py-8 md:px-10">
         {loadError ? (
           <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-            {loadError}
+            {loadError.message || 'Unable to load result data from database.'}
           </div>
         ) : null}
 
@@ -151,8 +198,41 @@ const ResultManagement = () => {
 
         {selectedClass && !selectedStudentId ? (
           <Panel title={`${selectedClass} Students`} description="Students aur unka result status database se fetch hota hai.">
-            <div className="mb-5 max-w-md">
+            <div className="mb-5 grid gap-3 md:grid-cols-[minmax(220px,1fr)_260px_auto_auto]">
               <SearchBox value={searchTerm} onChange={setSearchTerm} />
+              <select
+                value={selectedExamId}
+                onChange={(event) => setSelectedExamId(event.target.value)}
+                className="h-11 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-800 outline-none transition focus:border-fuchsia-500 focus:bg-white"
+              >
+                <option value="">All exams</option>
+                {classExams.map((exam) => (
+                  <option key={exam.examId || exam.key} value={exam.examId || ''}>
+                    {exam.title}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => publishMutation.mutate()}
+                disabled={!selectedExamId || publishMutation.isPending}
+                className="h-11 rounded-xl bg-slate-950 px-4 text-[11px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-fuchsia-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                Publish
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const reason = window.prompt('Reopen reason');
+                  if (reason?.trim()) {
+                    reopenMutation.mutate(reason.trim());
+                  }
+                }}
+                disabled={!selectedExamId || reopenMutation.isPending}
+                className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-[11px] font-black uppercase tracking-[0.14em] text-slate-600 transition hover:border-fuchsia-300 hover:text-fuchsia-700 disabled:cursor-not-allowed disabled:text-slate-300"
+              >
+                Reopen
+              </button>
             </div>
             <div className="overflow-hidden rounded-xl border border-slate-200">
               {visibleStudents.length ? (
@@ -219,14 +299,14 @@ const ResultManagement = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {resultTable.subjects.map((subjectName) => (
-                        <tr key={subjectName} className="hover:bg-fuchsia-50/50">
+                        <tr key={subjectName.subjectId || subjectName.name} className="hover:bg-fuchsia-50/50">
                           <td className="sticky left-0 z-10 bg-white px-4 py-4 font-black text-slate-950">
-                            {subjectName}
+                            {subjectName.name || subjectName}
                           </td>
                           {resultTable.exams.map((exam) => {
-                            const record = resultTable.recordMap.get(buildResultCellKey(subjectName, exam.key));
+                            const record = resultTable.recordMap.get(buildResultCellKey(subjectName.subjectId, subjectName.name || subjectName, exam.examId, exam.key));
                             return (
-                              <td key={`${subjectName}-${exam.key}`} className="px-4 py-4">
+                              <td key={`${subjectName.subjectId || subjectName.name || subjectName}-${exam.key}`} className="px-4 py-4">
                                 {record ? <MarksCell record={record} /> : <span className="text-xs font-bold text-slate-400">Pending</span>}
                               </td>
                             );
@@ -317,6 +397,6 @@ const EmptyState = ({ text }) => (
   </div>
 );
 
-const buildResultCellKey = (subjectName, examKey) => `${subjectName}__${examKey}`;
+const buildResultCellKey = (subjectId, subjectName, examId, examKey) => `${subjectId || subjectName}__${examId || examKey}`;
 
 export default ResultManagement;

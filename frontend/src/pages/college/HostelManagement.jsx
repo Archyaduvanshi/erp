@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -6,6 +7,7 @@ import {
   Building2,
   Hotel,
   HousePlus,
+  Pencil,
   Plus,
   Save,
   Search,
@@ -14,7 +16,7 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
-import { hostelApi, studentApi } from '../../utils/api';
+import { hostelApi } from '../../utils/api';
 
 const today = new Date().toISOString().split('T')[0];
 
@@ -36,10 +38,24 @@ const initialBulkRoomForm = {
   acType: 'non-ac',
 };
 
+const initialRoomEditForm = {
+  hostelId: '',
+  roomNumber: '',
+  floorLabel: '',
+  capacity: '1',
+  acType: 'non-ac',
+  monthlyCharge: '',
+  amenities: '',
+  status: 'available',
+};
+
 const initialResidentForm = {
+  enrollmentNo: '',
   className: '',
   section: '',
   studentId: '',
+  studentName: '',
+  fatherName: '',
   roomId: '',
   bedNumber: '',
   checkInDate: today,
@@ -52,6 +68,7 @@ const initialResidentForm = {
 
 const MESS_FOOD_OPTIONS = ['select', 'vegetarian', 'non-vegetarian'];
 const MESS_MENU_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const PAGE_SIZE = 25;
 const MESS_MENU_TYPES = [
   { key: 'vegetarian', title: 'Vegetarian Menu', tone: 'emerald' },
   { key: 'nonVegetarian', title: 'Non-Vegetarian Menu', tone: 'rose' },
@@ -59,47 +76,114 @@ const MESS_MENU_TYPES = [
 
 const HostelManagement = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState(null);
-  const [hostels, setHostels] = useState([]);
-  const [rooms, setRooms] = useState([]);
-  const [residents, setResidents] = useState([]);
-  const [students, setStudents] = useState([]);
   const [hostelForm, setHostelForm] = useState(initialHostelForm);
   const [bulkRoomForm, setBulkRoomForm] = useState(initialBulkRoomForm);
+  const [roomEditForm, setRoomEditForm] = useState(initialRoomEditForm);
   const [bulkRoomPreview, setBulkRoomPreview] = useState([]);
   const [residentForm, setResidentForm] = useState(initialResidentForm);
-  const [messMenuRows, setMessMenuRows] = useState(() => loadMessMenuRows());
+  const [messMenuRows, setMessMenuRows] = useState(() => defaultMessMenuRows());
   const [selectedRoomHostelId, setSelectedRoomHostelId] = useState('');
+  const [selectedMessHostelId, setSelectedMessHostelId] = useState('');
   const [selectedRoomFloor, setSelectedRoomFloor] = useState('');
   const [selectedAllotmentRoomId, setSelectedAllotmentRoomId] = useState('');
+  const [editingRoomId, setEditingRoomId] = useState('');
   const [showAllotmentForm, setShowAllotmentForm] = useState(false);
   const [hostelSearch, setHostelSearch] = useState('');
   const [formErrors, setFormErrors] = useState({});
   const [loadError, setLoadError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const debouncedEnrollmentNo = useDebouncedValue(residentForm.enrollmentNo, 350);
+
+  const overviewQuery = useQuery({
+    queryKey: ['hostel', 'overview'],
+    queryFn: hostelApi.getOverview,
+    staleTime: 45_000,
+  });
+
+  const hostelsQuery = useQuery({
+    queryKey: ['hostel', 'list'],
+    queryFn: hostelApi.getHostels,
+    staleTime: 45_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const roomsQuery = useQuery({
+    queryKey: ['hostel', 'rooms', selectedRoomHostelId, selectedRoomFloor],
+    queryFn: () => hostelApi.getRooms({ hostelId: selectedRoomHostelId, floor: selectedRoomFloor }),
+    enabled: Boolean(selectedRoomHostelId),
+    staleTime: 45_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const roomResidentsQuery = useInfiniteQuery({
+    queryKey: ['hostel', 'room-residents', selectedAllotmentRoomId],
+    queryFn: ({ pageParam = 0 }) => hostelApi.getRoomResidents(selectedAllotmentRoomId, { status: '', page: pageParam, size: PAGE_SIZE }),
+    enabled: Boolean(selectedAllotmentRoomId),
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const studentSearchFilters = {
+    search: debouncedEnrollmentNo,
+    className: residentForm.className,
+    section: residentForm.section,
+  };
+
+  const studentSearchQuery = useInfiniteQuery({
+    queryKey: ['hostel', 'student-search', studentSearchFilters],
+    queryFn: ({ pageParam = 0 }) => hostelApi.searchStudents({ ...studentSearchFilters, page: pageParam, size: PAGE_SIZE }),
+    enabled: showAllotmentForm && Boolean(
+      debouncedEnrollmentNo.trim() || residentForm.className || residentForm.section,
+    ),
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+    staleTime: 10_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const messMenuQuery = useQuery({
+    queryKey: ['hostel', 'mess-menu', selectedMessHostelId],
+    queryFn: () => hostelApi.getMessMenu(selectedMessHostelId),
+    enabled: activeSection === 'mess-food' && Boolean(selectedMessHostelId),
+    staleTime: 300_000,
+  });
+
+  const messSummaryQuery = useQuery({
+    queryKey: ['hostel', 'mess-summary', selectedMessHostelId],
+    queryFn: () => hostelApi.getMessSummary(selectedMessHostelId),
+    enabled: activeSection === 'mess-food' && Boolean(selectedMessHostelId),
+    staleTime: 30_000,
+  });
+
+  const hostels = hostelsQuery.data || [];
+  const rooms = roomsQuery.data || [];
+  const selectedRoomResidents = useMemo(() => pagesContent(roomResidentsQuery.data)
+    .sort((a, b) => String(b.checkInDate || '').localeCompare(String(a.checkInDate || ''))),
+  [roomResidentsQuery.data]);
+  const studentSearchResults = pagesContent(studentSearchQuery.data);
 
   useEffect(() => {
-    refreshData();
-  }, []);
+    const error = overviewQuery.error || hostelsQuery.error || roomsQuery.error || roomResidentsQuery.error || studentSearchQuery.error || messMenuQuery.error || messSummaryQuery.error;
+    setLoadError(error?.message || '');
+  }, [overviewQuery.error, hostelsQuery.error, roomsQuery.error, roomResidentsQuery.error, studentSearchQuery.error, messMenuQuery.error, messSummaryQuery.error]);
 
-  const refreshData = async () => {
-    try {
-      const [hostelsResponse, roomsResponse, residentsResponse, studentsResponse] = await Promise.all([
-        hostelApi.getHostels(),
-        hostelApi.getRooms(),
-        hostelApi.getResidents(),
-        studentApi.getAll(),
-      ]);
-
-      setHostels(hostelsResponse || []);
-      setRooms(roomsResponse || []);
-      setResidents(residentsResponse || []);
-      setStudents(studentsResponse || []);
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to load hostel records from the server.');
+  useEffect(() => {
+    if (!selectedMessHostelId && hostels.length) {
+      setSelectedMessHostelId(String(hostels[0].id));
     }
-  };
+  }, [hostels, selectedMessHostelId]);
+
+  useEffect(() => {
+    if (messMenuQuery.data?.rows) {
+      setMessMenuRows(normalizeMessMenuRows(messMenuQuery.data.rows));
+    } else if (activeSection === 'mess-food' && selectedMessHostelId && !messMenuQuery.isLoading) {
+      setMessMenuRows(defaultMessMenuRows());
+    }
+  }, [activeSection, messMenuQuery.data, messMenuQuery.isLoading, selectedMessHostelId]);
 
   const workspaceCards = [
     { key: 'hostels', icon: Hotel, title: 'Hostel Management', text: 'Create hostel buildings and maintain warden details.' },
@@ -109,6 +193,7 @@ const HostelManagement = () => {
 
   const filteredHostels = useMemo(() => filterRecords(hostels, hostelSearch, ['hostelName', 'hostelType', 'wardenName', 'contactNumber']), [hostelSearch, hostels]);
   const selectedRoomHostel = hostels.find((hostel) => String(hostel.id) === String(selectedRoomHostelId)) || null;
+  const selectedMessHostel = hostels.find((hostel) => String(hostel.id) === String(selectedMessHostelId)) || null;
   const selectedHostelFloorOptions = floorOptions(selectedRoomHostelId, hostels);
   const selectedFloorRooms = useMemo(() => rooms
     .filter((room) => String(room.hostelId) === String(selectedRoomHostelId))
@@ -116,41 +201,37 @@ const HostelManagement = () => {
     .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })),
   [rooms, selectedRoomFloor, selectedRoomHostelId]);
   const selectedAllotmentRoom = rooms.find((room) => String(room.id) === String(selectedAllotmentRoomId)) || null;
-  const selectedRoomResidents = useMemo(() => residents
-    .filter((resident) => String(resident.roomId) === String(selectedAllotmentRoomId))
-    .sort((a, b) => String(b.checkInDate || '').localeCompare(String(a.checkInDate || ''))),
-  [residents, selectedAllotmentRoomId]);
   const activeSelectedRoomResidents = selectedRoomResidents.filter(isActiveResident);
-  const activeMessResidents = useMemo(() => residents.filter(isActiveResident), [residents]);
-  const messFoodStats = useMemo(() => ({
-    total: activeMessResidents.length,
-    vegetarian: activeMessResidents.filter((resident) => normalizeMessFood(resident.messFood) === 'vegetarian').length,
-    nonVegetarian: activeMessResidents.filter((resident) => normalizeMessFood(resident.messFood) === 'non-vegetarian').length,
-    pending: activeMessResidents.filter((resident) => normalizeMessFood(resident.messFood) === 'select').length,
-  }), [activeMessResidents]);
+  const selectedRoomActiveCount = selectedAllotmentRoom?.occupiedBeds ?? activeSelectedRoomResidents.length;
+  const messFoodStats = {
+    total: messSummaryQuery.data?.totalResidents || 0,
+    vegetarian: messSummaryQuery.data?.vegetarian || 0,
+    nonVegetarian: messSummaryQuery.data?.nonVegetarian || 0,
+    pending: messSummaryQuery.data?.unspecified || 0,
+  };
 
   const classOptions = useMemo(() => (
-    [...new Set(students.map(getStudentClass).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-  ), [students]);
+    [...new Set([residentForm.className, ...studentSearchResults.map(getStudentClass)].filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  ), [residentForm.className, studentSearchResults]);
 
   const sectionOptions = useMemo(() => (
     [...new Set(
-      students
+      studentSearchResults
         .filter((student) => !residentForm.className || getStudentClass(student) === residentForm.className)
-        .map((student) => student.section)
+        .map(getStudentSection)
         .filter(Boolean),
     )].sort((a, b) => a.localeCompare(b))
-  ), [residentForm.className, students]);
+  ), [residentForm.className, studentSearchResults]);
 
-  const filteredStudentOptions = useMemo(() => students.filter((student) => {
+  const filteredStudentOptions = useMemo(() => studentSearchResults.filter((student) => {
     if (!residentForm.className || !residentForm.section) return false;
-    if (getStudentClass(student) !== residentForm.className || student.section !== residentForm.section) return false;
-    const alreadyAllotted = residents.some((resident) => isActiveResident(resident) && String(resident.studentId) === String(student.id));
+    if (getStudentClass(student) !== residentForm.className || getStudentSection(student) !== residentForm.section) return false;
+    const alreadyAllotted = Boolean(student.currentlyAllotted);
     return !alreadyAllotted || String(student.id) === String(residentForm.studentId);
-  }), [residentForm.className, residentForm.section, residentForm.studentId, residents, students]);
+  }), [residentForm.className, residentForm.section, residentForm.studentId, studentSearchResults]);
 
-  const selectedStudent = students.find((student) => String(student.id) === String(residentForm.studentId)) || null;
-  const selectedStudentContact = selectedStudent ? studentContact(selectedStudent.id, students) : '';
+  const selectedStudent = studentSearchResults.find((student) => String(student.studentId || student.id) === String(residentForm.studentId)) || null;
+  const selectedStudentContact = selectedStudent ? studentContact(selectedStudent.studentId || selectedStudent.id, studentSearchResults) : '';
 
   const handleBack = () => {
     if (activeSection === 'room-generator') {
@@ -184,14 +265,150 @@ const HostelManagement = () => {
     clearFieldError(field);
   };
 
+  const updateRoomEditForm = (field, value) => {
+    setRoomEditForm((current) => ({ ...current, [field]: shouldUppercase(field) ? value.toUpperCase() : value }));
+    clearFieldError(field);
+  };
+
   const updateResidentForm = (patch) => {
     setResidentForm((current) => ({ ...current, ...patch }));
     Object.keys(patch).forEach(clearFieldError);
   };
 
+  const saveHostelMutation = useMutation({
+    mutationFn: hostelApi.saveHostel,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'list'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+    },
+  });
+
+  const saveRoomsMutation = useMutation({
+    mutationFn: hostelApi.saveRooms,
+    onSuccess: (_data, roomsPayload) => {
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'list'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+      [...new Set((roomsPayload || []).map((room) => String(room.hostelId)).filter(Boolean))].forEach((hostelId) => {
+        queryClient.invalidateQueries({ queryKey: ['hostel', 'rooms', hostelId] });
+      });
+    },
+  });
+
+  const updateRoomMutation = useMutation({
+    mutationFn: ({ roomId, payload }) => hostelApi.updateRoom(roomId, payload),
+    onSuccess: (_data, variables) => {
+      const hostelId = String(variables.payload.hostelId || selectedRoomHostelId);
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'rooms', hostelId] });
+      if (selectedRoomHostelId && selectedRoomHostelId !== hostelId) {
+        queryClient.invalidateQueries({ queryKey: ['hostel', 'rooms', selectedRoomHostelId] });
+      }
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'list'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+    },
+  });
+
+  const saveResidentMutation = useMutation({
+    mutationFn: hostelApi.saveResident,
+    onSuccess: (_data, payload) => {
+      const roomId = String(payload.roomId || selectedAllotmentRoomId);
+      const hostelId = String(selectedRoomHostelId || selectedAllotmentRoom?.hostelId || '');
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'room-residents', roomId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'rooms', hostelId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'mess-summary', hostelId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'student-search'] });
+    },
+  });
+
+  const deleteHostelMutation = useMutation({
+    mutationFn: hostelApi.deleteHostel,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'list'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+    },
+  });
+
+  const deleteRoomMutation = useMutation({
+    mutationFn: hostelApi.deleteRoom,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'rooms', selectedRoomHostelId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'list'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+    },
+  });
+
+  const vacateResidentMutation = useMutation({
+    mutationFn: hostelApi.vacateResident,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'room-residents', selectedAllotmentRoomId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'rooms', selectedRoomHostelId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'overview'] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'mess-summary', selectedRoomHostelId] });
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'student-search'] });
+    },
+  });
+
+  const saveMessMenuMutation = useMutation({
+    mutationFn: ({ hostelId, rows }) => hostelApi.saveMessMenu(hostelId, { rows }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['hostel', 'mess-menu', variables.hostelId] });
+    },
+  });
+
+  const applyResidentStudent = (student, extraFormValues = {}) => {
+    setResidentForm((current) => ({
+      ...current,
+      ...extraFormValues,
+      enrollmentNo: student?.enrollmentNo || current.enrollmentNo,
+      studentId: student?.studentId ? String(student.studentId) : student?.id ? String(student.id) : '',
+      studentName: student?.studentName || studentName(student),
+      fatherName: student?.fatherName || student?.guardianName || '',
+      className: student?.className || getStudentClass(student),
+      section: student?.section || getStudentSection(student),
+      guardianContact: student?.guardianPhone ? digitsOnly(student.guardianPhone, 10) : current.guardianContact,
+    }));
+    ['enrollmentNo', 'studentId', 'studentName', 'fatherName', 'className', 'section'].forEach(clearFieldError);
+  };
+
+  const handleResidentEnrollmentChange = async (value, shouldLookup = false, extraFormValues = {}) => {
+    const enrollmentNo = value.trim().toUpperCase();
+    const foundStudent = studentSearchResults.find((student) => String(student.enrollmentNo || '').toLowerCase() === enrollmentNo.toLowerCase());
+    if (foundStudent) {
+      applyResidentStudent(foundStudent, extraFormValues);
+      setLoadError('');
+      return;
+    }
+
+    setResidentForm((current) => ({
+      ...current,
+      ...extraFormValues,
+      enrollmentNo,
+      studentId: '',
+      studentName: '',
+      fatherName: '',
+      className: '',
+      section: '',
+      guardianContact: '',
+    }));
+    clearFieldError('enrollmentNo');
+
+    if (!shouldLookup || !enrollmentNo) {
+      return;
+    }
+
+    try {
+      const student = await hostelApi.lookupStudent(enrollmentNo);
+      applyResidentStudent(student, extraFormValues);
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Student enrollment ID nahi mila.');
+    }
+  };
+
   const openAllotmentFormForRoom = (room) => {
     setActiveSection('rooms');
     setSelectedAllotmentRoomId(String(room.id));
+    setEditingRoomId('');
     setShowAllotmentForm(true);
     setResidentForm({
       ...initialResidentForm,
@@ -199,6 +416,55 @@ const HostelManagement = () => {
       monthlyCharge: roomCharge(room),
     });
     setFormErrors({});
+  };
+
+  const openRoomEditForm = (room) => {
+    setActiveSection('rooms');
+    setEditingRoomId(String(room.id));
+    setSelectedAllotmentRoomId('');
+    setShowAllotmentForm(false);
+    setRoomEditForm({
+      hostelId: String(room.hostelId || selectedRoomHostelId || ''),
+      roomNumber: room.roomNumber || '',
+      floorLabel: room.floorLabel || selectedRoomFloor || '',
+      capacity: String(room.capacity || 1),
+      acType: room.acType || 'non-ac',
+      monthlyCharge: room.monthlyCharge ? String(room.monthlyCharge) : '',
+      amenities: room.amenities || '',
+      status: room.status || 'available',
+    });
+    setFormErrors({});
+  };
+
+  const handleRoomUpdate = async (event) => {
+    event.preventDefault();
+    const errors = validateRoomEditForm(roomEditForm, selectedFloorRooms, editingRoomId);
+    if (Object.keys(errors).length) {
+      setFormErrors(errors);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateRoomMutation.mutateAsync({
+        roomId: editingRoomId,
+        payload: {
+          ...roomEditForm,
+          hostelId: Number(roomEditForm.hostelId),
+          capacity: Math.max(Number(roomEditForm.capacity) || 1, 1),
+          monthlyCharge: roomEditForm.monthlyCharge ? String(Number(roomEditForm.monthlyCharge) || 0) : '',
+        },
+      });
+      setEditingRoomId('');
+      setRoomEditForm(initialRoomEditForm);
+      setFormErrors({});
+      setLoadError('');
+    } catch (error) {
+      setFormErrors(error.fieldErrors || {});
+      setLoadError(error.message || 'Unable to update room.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleHostelSave = async (event) => {
@@ -211,13 +477,12 @@ const HostelManagement = () => {
 
     setIsSaving(true);
     try {
-      await hostelApi.saveHostel({
+      await saveHostelMutation.mutateAsync({
         ...hostelForm,
         totalFloors: Math.max(Number(hostelForm.totalFloors) || 1, 1),
       });
       setHostelForm(initialHostelForm);
       setFormErrors({});
-      await refreshData();
     } catch (error) {
       setFormErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save hostel.');
@@ -244,11 +509,10 @@ const HostelManagement = () => {
     }
     setIsSaving(true);
     try {
-      await hostelApi.saveRooms(bulkRoomPreview.map(({ previewId, hostelName, ...room }) => room));
+      await saveRoomsMutation.mutateAsync(bulkRoomPreview.map(({ previewId, hostelName, ...room }) => room));
       setBulkRoomForm(initialBulkRoomForm);
       setBulkRoomPreview([]);
       setFormErrors({});
-      await refreshData();
     } catch (error) {
       setFormErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save generated rooms.');
@@ -267,7 +531,7 @@ const HostelManagement = () => {
 
     setIsSaving(true);
     try {
-      await hostelApi.saveResident({
+      await saveResidentMutation.mutateAsync({
         studentId: Number(residentForm.studentId),
         roomId: Number(residentForm.roomId),
         bedNumber: residentForm.bedNumber,
@@ -282,7 +546,6 @@ const HostelManagement = () => {
       setResidentForm(initialResidentForm);
       setShowAllotmentForm(false);
       setFormErrors({});
-      await refreshData();
     } catch (error) {
       setFormErrors(error.fieldErrors || {});
       setLoadError(error.message || 'Unable to save hostel allotment.');
@@ -294,8 +557,7 @@ const HostelManagement = () => {
   const handleDeleteHostel = async (hostelId) => {
     if (!window.confirm('Delete this hostel?')) return;
     try {
-      await hostelApi.deleteHostel(hostelId);
-      await refreshData();
+      await deleteHostelMutation.mutateAsync(hostelId);
     } catch (error) {
       setLoadError(error.message || 'Unable to delete hostel.');
     }
@@ -304,8 +566,7 @@ const HostelManagement = () => {
   const handleDeleteRoom = async (roomId) => {
     if (!window.confirm('Delete this room?')) return;
     try {
-      await hostelApi.deleteRoom(roomId);
-      await refreshData();
+      await deleteRoomMutation.mutateAsync(roomId);
     } catch (error) {
       setLoadError(error.message || 'Unable to delete room.');
     }
@@ -314,8 +575,7 @@ const HostelManagement = () => {
   const handleDeleteResident = async (residentId) => {
     if (!window.confirm('Vacate this student from hostel room?')) return;
     try {
-      await hostelApi.vacateResident(residentId);
-      await refreshData();
+      await vacateResidentMutation.mutateAsync(residentId);
     } catch (error) {
       setLoadError(error.message || 'Unable to vacate hostel allotment.');
     }
@@ -343,9 +603,17 @@ const HostelManagement = () => {
     setMessMenuRows((current) => current.length > 1 ? current.filter((row) => row.id !== rowId) : current);
   };
 
-  const saveMessMenu = () => {
-    saveMessMenuRows(messMenuRows);
-    setLoadError('');
+  const saveMessMenu = async () => {
+    if (!selectedMessHostelId) {
+      setLoadError('Select hostel before saving mess menu.');
+      return;
+    }
+    try {
+      await saveMessMenuMutation.mutateAsync({ hostelId: selectedMessHostelId, rows: messMenuRows.map(normalizeMessMenuRow) });
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Unable to save mess menu.');
+    }
   };
 
   return (
@@ -479,6 +747,7 @@ const HostelManagement = () => {
                         setSelectedRoomHostelId(String(hostel.id));
                         setSelectedRoomFloor('');
                         setSelectedAllotmentRoomId('');
+                        setEditingRoomId('');
                         setShowAllotmentForm(false);
                         setBulkRoomForm((current) => ({ ...current, hostelId: String(hostel.id), floorNumber: '' }));
                       }}
@@ -528,6 +797,7 @@ const HostelManagement = () => {
                       onClick={() => {
                         setSelectedRoomFloor(floor);
                         setSelectedAllotmentRoomId('');
+                        setEditingRoomId('');
                         setShowAllotmentForm(false);
                         setBulkRoomForm((current) => ({ ...current, hostelId: String(selectedRoomHostel.id), floorNumber: floor }));
                       }}
@@ -556,6 +826,7 @@ const HostelManagement = () => {
                             <Th>AC</Th>
                             <Th>Status</Th>
                             <Th>Add Student</Th>
+                            <Th>Edit Room</Th>
                             <Th noBorder>Action</Th>
                           </tr>
                         </thead>
@@ -583,6 +854,16 @@ const HostelManagement = () => {
                                     Add
                                   </button>
                                 </Td>
+                                <Td>
+                                  <button
+                                    type="button"
+                                    onClick={() => openRoomEditForm(room)}
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                                  >
+                                    <Pencil size={14} />
+                                    Edit
+                                  </button>
+                                </Td>
                                 <Td noBorder><IconButton icon={Trash2} onClick={() => handleDeleteRoom(room.id)} /></Td>
                               </tr>
                             );
@@ -605,31 +886,14 @@ const HostelManagement = () => {
                           <h4 className="text-xl font-black tracking-tight text-slate-950">
                             {selectedAllotmentRoom.hostelName} - Room {selectedAllotmentRoom.roomNumber}
                           </h4>
-                          <p className="mt-1 text-sm text-slate-500">Student add form and current room resident list.</p>
+                          <p className="mt-1 text-sm text-slate-500">Current room resident list.</p>
                         </div>
                         <div className="grid grid-cols-3 gap-2 text-center">
                           <MiniMetric label="Capacity" value={selectedAllotmentRoom.capacity || 0} />
-                          <MiniMetric label="Filled" value={activeSelectedRoomResidents.length} />
+                          <MiniMetric label="Filled" value={selectedRoomActiveCount} />
                           <MiniMetric label="Vacant" value={getVacantBeds(selectedAllotmentRoom)} />
                         </div>
                       </div>
-
-                      {showAllotmentForm ? (
-                        <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleResidentSave}>
-                          <SelectField label="Class" value={residentForm.className} onChange={(e) => updateResidentForm({ className: e.target.value, section: '', studentId: '', guardianContact: '' })} options={['', ...classOptions]} renderOptionLabel={(value) => value || 'Select class'} error={formErrors.className} />
-                          <SelectField label="Section" value={residentForm.section} onChange={(e) => updateResidentForm({ section: e.target.value, studentId: '', guardianContact: '' })} options={['', ...sectionOptions]} renderOptionLabel={(value) => value || 'Select section'} error={formErrors.section} />
-                          <SelectField label="Student" value={residentForm.studentId} onChange={(e) => updateResidentForm({ studentId: e.target.value, guardianContact: studentContact(e.target.value, students) })} options={['', ...filteredStudentOptions.map((student) => String(student.id))]} renderOptionLabel={(value) => studentLabel(value, filteredStudentOptions)} error={formErrors.studentId} />
-                          <InputField label="Bed Number" value={residentForm.bedNumber} onChange={(e) => updateResidentForm({ bedNumber: e.target.value.toUpperCase() })} placeholder="Leave blank for auto" error={formErrors.bedNumber} />
-                          <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => updateResidentForm({ checkInDate: e.target.value })} error={formErrors.checkInDate} />
-                          <InputField label="Father Contact" value={residentForm.guardianContact || selectedStudentContact} onChange={(e) => updateResidentForm({ guardianContact: digitsOnly(e.target.value, 10) })} placeholder="Auto fetched from admission" error={formErrors.guardianContact} />
-                          <SelectField label="Mess Food" value={residentForm.messFood} onChange={(e) => updateResidentForm({ messFood: e.target.value })} options={MESS_FOOD_OPTIONS} renderOptionLabel={messFoodLabel} error={formErrors.messFood} />
-                          <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => updateResidentForm({ emergencyContact: digitsOnly(e.target.value, 10) })} placeholder="Enter emergency contact" error={formErrors.emergencyContact} />
-                          <InputField label="Notes" value={residentForm.notes} onChange={(e) => updateResidentForm({ notes: e.target.value.toUpperCase() })} placeholder="Enter notes or special instruction" error={formErrors.notes} wide />
-                          <div className="md:col-span-2 xl:col-span-3">
-                            <PrimaryButton type="submit" icon={UserPlus} label={isSaving ? 'Saving Allotment...' : 'Save Allotment'} />
-                          </div>
-                        </form>
-                      ) : null}
                     </div>
 
                     {selectedRoomResidents.length ? (
@@ -672,8 +936,16 @@ const HostelManagement = () => {
                     ) : (
                       <EmptyState icon={Users} title="No Student In This Room" description="Use Add Student to allot a student to this room." />
                     )}
+                    {roomResidentsQuery.hasNextPage ? (
+                      <LoadMoreButton
+                        label={`Load More Residents (${selectedRoomResidents.length}/${roomResidentsQuery.data?.pages?.at(-1)?.totalElements || selectedRoomResidents.length})`}
+                        loading={roomResidentsQuery.isFetchingNextPage}
+                        onClick={() => roomResidentsQuery.fetchNextPage()}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
+
               </div>
             ) : null}
           </Panel>
@@ -789,6 +1061,16 @@ const HostelManagement = () => {
               </div>
             )}
           >
+            <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+              <SelectField
+                label="Hostel"
+                value={selectedMessHostelId}
+                onChange={(e) => setSelectedMessHostelId(e.target.value)}
+                options={['', ...hostels.map((hostel) => String(hostel.id))]}
+                renderOptionLabel={(value) => hostelLabel(value, hostels)}
+              />
+              <InputField label="Selected Hostel" value={selectedMessHostel?.hostelName || ''} readOnly placeholder="Select hostel" />
+            </div>
             <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SummaryCard label="Total Students" value={messFoodStats.total} tone="slate" />
               <SummaryCard label="Vegetarian" value={messFoodStats.vegetarian} tone="emerald" />
@@ -809,6 +1091,118 @@ const HostelManagement = () => {
               ))}
             </div>
           </Panel>
+        ) : null}
+
+        {showAllotmentForm && selectedAllotmentRoom ? (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-md">
+            <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-emerald-200 bg-white p-5 shadow-[0_28px_90px_-30px_rgba(15,23,42,0.75)] sm:p-6">
+              <div className="flex flex-col gap-4 border-b border-emerald-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h4 className="text-2xl font-black tracking-tight text-slate-950">Add Student</h4>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selectedAllotmentRoom.hostelName} - Room {selectedAllotmentRoom.roomNumber}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <MiniMetric label="Capacity" value={selectedAllotmentRoom.capacity || 0} />
+                    <MiniMetric label="Filled" value={selectedRoomActiveCount} />
+                    <MiniMetric label="Vacant" value={getVacantBeds(selectedAllotmentRoom)} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAllotmentForm(false);
+                      setResidentForm(initialResidentForm);
+                      setFormErrors({});
+                    }}
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleResidentSave}>
+                <InputField
+                  label="Student Enrollment ID"
+                  list="hostel-student-enrollment-options"
+                  value={residentForm.enrollmentNo}
+                  onChange={(e) => handleResidentEnrollmentChange(e.target.value)}
+                  onBlur={(e) => handleResidentEnrollmentChange(e.target.value, true)}
+                  placeholder="Enter or choose enrollment ID"
+                  error={formErrors.enrollmentNo || formErrors.studentId}
+                />
+                <datalist id="hostel-student-enrollment-options">
+                  {studentSearchResults
+                    .filter((student) => student.enrollmentNo)
+                    .map((student) => (
+                      <option key={student.studentId || student.id} value={student.enrollmentNo}>
+                        {`${student.enrollmentNo} | ${studentName(student)}`}
+                      </option>
+                    ))}
+                </datalist>
+                {studentSearchQuery.hasNextPage ? (
+                  <div className="md:col-span-2 xl:col-span-3">
+                    <LoadMoreButton
+                      label={`Load More Students (${studentSearchResults.length}/${studentSearchQuery.data?.pages?.at(-1)?.totalElements || studentSearchResults.length})`}
+                      loading={studentSearchQuery.isFetchingNextPage}
+                      onClick={() => studentSearchQuery.fetchNextPage()}
+                    />
+                  </div>
+                ) : null}
+                <InputField label="Student Name" value={residentForm.studentName || (selectedStudent ? studentName(selectedStudent) : '')} readOnly placeholder="Auto filled from enrollment ID" error={formErrors.studentName} />
+                <InputField label="Father Name" value={residentForm.fatherName || selectedStudent?.guardianName || ''} readOnly placeholder="Auto filled from student record" error={formErrors.fatherName} />
+                <InputField label="Class" value={residentForm.className} readOnly placeholder="Auto filled from student record" error={formErrors.className} />
+                <InputField label="Section" value={residentForm.section} readOnly placeholder="Auto filled from student record" error={formErrors.section} />
+                <InputField label="Bed Number" value={residentForm.bedNumber} onChange={(e) => updateResidentForm({ bedNumber: e.target.value.toUpperCase() })} placeholder="Leave blank for auto" error={formErrors.bedNumber} />
+                <InputField label="Joining Date" type="date" value={residentForm.checkInDate} onChange={(e) => updateResidentForm({ checkInDate: e.target.value })} error={formErrors.checkInDate} />
+                <InputField label="Father Contact" value={residentForm.guardianContact || selectedStudentContact} onChange={(e) => updateResidentForm({ guardianContact: digitsOnly(e.target.value, 10) })} placeholder="Auto fetched from admission" error={formErrors.guardianContact} />
+                <SelectField label="Mess Food" value={residentForm.messFood} onChange={(e) => updateResidentForm({ messFood: e.target.value })} options={MESS_FOOD_OPTIONS} renderOptionLabel={messFoodLabel} error={formErrors.messFood} />
+                <InputField label="Emergency Contact" value={residentForm.emergencyContact} onChange={(e) => updateResidentForm({ emergencyContact: digitsOnly(e.target.value, 10) })} placeholder="Enter emergency contact" error={formErrors.emergencyContact} />
+                <InputField label="Notes" value={residentForm.notes} onChange={(e) => updateResidentForm({ notes: e.target.value.toUpperCase() })} placeholder="Enter notes or special instruction" error={formErrors.notes} wide />
+                <div className="md:col-span-2 xl:col-span-3">
+                  <PrimaryButton type="submit" icon={UserPlus} label={isSaving ? 'Saving Allotment...' : 'Save Allotment'} />
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+
+        {editingRoomId ? (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-blue-950/65 px-4 py-6 backdrop-blur-sm">
+            <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-blue-200 bg-white p-5 shadow-[0_28px_90px_-30px_rgba(15,23,42,0.75)] sm:p-6">
+              <div className="flex flex-col gap-3 border-b border-blue-100 pb-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h4 className="text-2xl font-black tracking-tight text-slate-950">Edit Room</h4>
+                  <p className="mt-1 text-sm text-slate-500">Update room number, floor, capacity, charges, and status.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingRoomId('');
+                    setRoomEditForm(initialRoomEditForm);
+                    setFormErrors({});
+                  }}
+                  className="inline-flex items-center justify-center rounded-xl border border-blue-100 bg-blue-50 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-blue-700 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                >
+                  Cancel
+                </button>
+              </div>
+              <form className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={handleRoomUpdate}>
+                <SelectField label="Hostel" value={roomEditForm.hostelId} onChange={(e) => updateRoomEditForm('hostelId', e.target.value)} options={hostels.map((hostel) => String(hostel.id))} renderOptionLabel={(value) => hostelLabel(value, hostels)} error={formErrors.hostelId} />
+                <InputField label="Room Number" value={roomEditForm.roomNumber} onChange={(e) => updateRoomEditForm('roomNumber', e.target.value)} placeholder="Enter room number" error={formErrors.roomNumber} />
+                <InputField label="Floor" value={roomEditForm.floorLabel} onChange={(e) => updateRoomEditForm('floorLabel', e.target.value)} placeholder="Enter floor" error={formErrors.floorLabel} />
+                <InputField label="Students Per Room" type="number" min="1" value={roomEditForm.capacity} onChange={(e) => updateRoomEditForm('capacity', e.target.value)} error={formErrors.capacity} />
+                <SelectField label="AC Type" value={roomEditForm.acType} onChange={(e) => updateRoomEditForm('acType', e.target.value)} options={['ac', 'non-ac']} error={formErrors.acType} />
+                <InputField label="Monthly Charge" type="number" min="0" value={roomEditForm.monthlyCharge} onChange={(e) => updateRoomEditForm('monthlyCharge', e.target.value)} placeholder="Enter charge" error={formErrors.monthlyCharge} />
+                <SelectField label="Status" value={roomEditForm.status === 'full' ? 'available' : roomEditForm.status} onChange={(e) => updateRoomEditForm('status', e.target.value)} options={['available', 'maintenance']} error={formErrors.status} />
+                <InputField label="Amenities" value={roomEditForm.amenities} onChange={(e) => updateRoomEditForm('amenities', e.target.value.toUpperCase())} placeholder="Enter amenities" error={formErrors.amenities} wide />
+                <div className="md:col-span-2 xl:col-span-3">
+                  <PrimaryButton type="submit" icon={Save} label={isSaving ? 'Updating Room...' : 'Update Room'} />
+                </div>
+              </form>
+            </div>
+          </div>
         ) : null}
 
       </main>
@@ -970,6 +1364,17 @@ const PrimaryButton = ({ type, icon: Icon, label }) => (
   </button>
 );
 
+const LoadMoreButton = ({ label, loading, onClick }) => (
+  <button
+    type="button"
+    disabled={loading}
+    onClick={onClick}
+    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {loading ? 'Loading...' : label}
+  </button>
+);
+
 const ExcelTable = ({ children }) => (
   <div className="mt-6 min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200">
     <div className="max-w-full overflow-x-auto">{children}</div>
@@ -1122,11 +1527,28 @@ function validateBulkRoomForm(form) {
   return errors;
 }
 
+function validateRoomEditForm(form, rooms, editingRoomId) {
+  const errors = {};
+  const capacity = Number(form.capacity);
+  const monthlyCharge = Number(form.monthlyCharge || 0);
+  if (!form.hostelId) errors.hostelId = 'Select hostel.';
+  if (!String(form.roomNumber || '').trim()) errors.roomNumber = 'Room number is required.';
+  if (!String(form.floorLabel || '').trim()) errors.floorLabel = 'Floor is required.';
+  if (!Number.isInteger(capacity) || capacity < 1) errors.capacity = 'Students per room must be at least 1.';
+  if (form.monthlyCharge && (!Number.isFinite(monthlyCharge) || monthlyCharge < 0)) errors.monthlyCharge = 'Monthly charge must be zero or more.';
+  const duplicateRoom = rooms.some((room) => (
+    String(room.id) !== String(editingRoomId)
+    && String(room.hostelId) === String(form.hostelId)
+    && String(room.roomNumber || '').trim().toLowerCase() === String(form.roomNumber || '').trim().toLowerCase()
+  ));
+  if (duplicateRoom) errors.roomNumber = 'Room number already exists in this hostel.';
+  return errors;
+}
+
 function validateResidentForm(form) {
   const errors = {};
-  if (!form.className) errors.className = 'Select class.';
-  if (!form.section) errors.section = 'Select section.';
-  if (!form.studentId) errors.studentId = 'Select student.';
+  if (!form.enrollmentNo) errors.enrollmentNo = 'Enter student enrollment ID.';
+  if (!form.studentId) errors.studentId = 'Student enrollment ID se student select karo.';
   if (!form.roomId) errors.roomId = 'Select room.';
   if (!form.checkInDate) errors.checkInDate = 'Joining date is required.';
   if (form.guardianContact && !/^\d{10}$/.test(form.guardianContact)) errors.guardianContact = 'Guardian contact must contain 10 digits.';
@@ -1178,27 +1600,9 @@ function defaultMessMenuRows() {
   ];
 }
 
-function loadMessMenuRows() {
-  if (typeof window === 'undefined') return defaultMessMenuRows();
-
-  try {
-    const savedRows = JSON.parse(window.localStorage.getItem(messMenuStorageKey()) || 'null');
-    return Array.isArray(savedRows) && savedRows.length
-      ? savedRows.map(normalizeMessMenuRow)
-      : defaultMessMenuRows();
-  } catch {
-    return defaultMessMenuRows();
-  }
-}
-
-function saveMessMenuRows(rows) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(messMenuStorageKey(), JSON.stringify(rows.map(normalizeMessMenuRow)));
-}
-
-function messMenuStorageKey() {
-  const collegeId = typeof window === 'undefined' ? '' : window.localStorage.getItem('current_college_id');
-  return `hostel_mess_menu_${collegeId || 'default'}`;
+function normalizeMessMenuRows(rows = []) {
+  const normalizedRows = rows.map(normalizeMessMenuRow).filter((row) => row.mealName);
+  return normalizedRows.length ? normalizedRows : defaultMessMenuRows();
 }
 
 function normalizeMessMenuRow(row) {
@@ -1257,16 +1661,16 @@ function hostelLabel(value, hostels) {
 
 function studentLabel(value, students) {
   if (!value) return 'Select student';
-  const student = students.find((entry) => String(entry.id) === String(value));
-  return student ? `${studentName(student)} | ${getStudentClass(student) || '-'} | ${student.section || '-'}` : 'Select student';
+  const student = students.find((entry) => String(entry.studentId || entry.id) === String(value));
+  return student ? `${studentName(student)} | ${getStudentClass(student) || '-'} | ${getStudentSection(student) || '-'}` : 'Select student';
 }
 
 function studentName(student) {
-  return `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || student?.enrollmentNo || 'Student';
+  return student?.studentName || `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || student?.enrollmentNo || 'Student';
 }
 
 function studentContact(studentId, students) {
-  const student = students.find((entry) => String(entry.id) === String(studentId));
+  const student = students.find((entry) => String(entry.studentId || entry.id) === String(studentId));
   return digitsOnly(student?.guardianPhone || student?.fatherMobile || student?.mobileNumber || '', 10);
 }
 
@@ -1284,7 +1688,41 @@ function messFoodLabel(value) {
 }
 
 function getStudentClass(student) {
-  return student?.className || student?.assignedClass || '';
+  const assignedClass = String(student?.assignedClass || '').trim();
+  if (assignedClass.includes('/')) return assignedClass.split('/', 2)[0].trim();
+  return student?.className || assignedClass || '';
+}
+
+function getStudentSection(student) {
+  const assignedClass = String(student?.assignedClass || '').trim();
+  if (assignedClass.includes('/')) return assignedClass.split('/').slice(1).join('/').trim();
+  return student?.section || '';
+}
+
+function pageContent(page) {
+  return Array.isArray(page) ? page : page?.content || [];
+}
+
+function pagesContent(data) {
+  if (!data?.pages) return pageContent(data);
+  return data.pages.flatMap(pageContent);
+}
+
+function nextPageParam(lastPage) {
+  if (!lastPage || Array.isArray(lastPage) || lastPage.last) return undefined;
+  const nextPage = Number(lastPage.number || 0) + 1;
+  return nextPage < Number(lastPage.totalPages || 0) ? nextPage : undefined;
+}
+
+function useDebouncedValue(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delay);
+    return () => window.clearTimeout(timeoutId);
+  }, [delay, value]);
+
+  return debouncedValue;
 }
 
 export default HostelManagement;

@@ -10,6 +10,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
 public record StudentMarksExamPayload(
+        Long examId,
         @NotBlank String examTitle,
         String examDate,
         @NotNull @DecimalMin(value = "0.01") BigDecimal maxMarks,

@@ -10,6 +10,8 @@ import com.erp.backend.report.dto.ReportSnapshotPayload;
 import com.erp.backend.report.dto.ReportSnapshotResponse;
 import com.erp.backend.report.entity.ReportSnapshot;
 import com.erp.backend.report.repository.ReportSnapshotRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -34,6 +36,11 @@ public class ReportSnapshotService {
                 .toList();
     }
 
+    public Page<ReportSnapshotResponse> getSnapshots(Long instituteId, Pageable pageable) {
+        return reportSnapshotRepository.findAllByInstituteIdOrderByGeneratedAtDesc(instituteId, pageable)
+                .map(this::toResponse);
+    }
+
     public ReportSnapshotResponse saveSnapshot(Long instituteId, ReportSnapshotPayload request) {
         Institute institute = validateInstitute(instituteId);
         ReportSnapshot snapshot = new ReportSnapshot();
@@ -44,8 +51,9 @@ public class ReportSnapshotService {
         snapshot.setFiltersJson(request.filtersJson());
         snapshot.setKpisJson(request.kpisJson());
         snapshot.setChartsJson(request.chartsJson());
-        snapshot.setRowsJson(request.rowsJson());
-        snapshot.setRowCount(request.rowCount() == null ? 0 : request.rowCount());
+        String rowsJson = request.rowsJson() == null ? "[]" : request.rowsJson();
+        snapshot.setRowsJson(rowsJson.length() > 100_000 ? rowsJson.substring(0, 100_000) : rowsJson);
+        snapshot.setRowCount(request.rowCount() == null ? 0 : Math.min(request.rowCount(), 1000));
         snapshot.setGeneratedAt(parseGeneratedAt(request.generatedAt()));
         return toResponse(reportSnapshotRepository.save(snapshot));
     }

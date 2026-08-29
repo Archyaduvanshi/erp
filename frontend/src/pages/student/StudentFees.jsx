@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -8,11 +9,9 @@ import {
   Landmark,
   Search,
 } from 'lucide-react';
-import { feeApi, studentApi } from '../../utils/api';
-import { getFeeFacilityKey, isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
+import { feeApi } from '../../utils/api';
+import { getFeeFacilityKey } from '../../utils/facilityUtils';
 import {
-  allocateOverallAmount,
-  buildFeeRow,
   calculateTaxBreakdown,
   formatBillingType,
   formatCoveredMonths,
@@ -20,8 +19,10 @@ import {
   getTodayKey,
   resolveCoverageLabel,
 } from '../../utils/feeUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const today = getTodayKey();
+const PAGE_SIZE = 25;
 
 const createPaymentForm = () => ({
   transactionId: '',
@@ -63,92 +64,76 @@ const paymentMethodDetails = {
 
 const StudentFees = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [students, setStudents] = useState([]);
-  const [structures, setStructures] = useState([]);
-  const [payments, setPayments] = useState([]);
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [receiptSearch, setReceiptSearch] = useState('');
   const [paymentForm, setPaymentForm] = useState(createPaymentForm);
   const [loadError, setLoadError] = useState('');
   const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
+  const debouncedReceiptSearch = useDebouncedValue(receiptSearch, 350);
 
-  const student = useMemo(() => {
-    if (!session || session.role !== 'student') return null;
-    return students.find((entry) => {
-      const matchesId = session.studentId && String(entry.id) === String(session.studentId);
-      const matchesSystemId = session.studentSystemId && String(entry.systemId) === String(session.studentSystemId);
-      const matchesEnrollment = session.enrollmentNo && String(entry.enrollmentNo) === String(session.enrollmentNo);
-      return matchesId || matchesSystemId || matchesEnrollment;
-    }) || null;
-  }, [session, students]);
+  const summaryQuery = useQuery({
+    queryKey: ['fees', 'student-me-summary'],
+    queryFn: () => feeApi.getMySummary(),
+    enabled: session?.role === 'student',
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const paymentsQuery = useInfiniteQuery({
+    queryKey: ['fees', 'student-me-payments', debouncedReceiptSearch],
+    queryFn: ({ pageParam = 0 }) => feeApi.getMyPayments({ search: debouncedReceiptSearch, page: pageParam, size: PAGE_SIZE }),
+    enabled: session?.role === 'student',
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const savePaymentMutation = useMutation({
+    mutationFn: feeApi.saveMyPayment,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-payments'] });
+    },
+  });
+
+  const student = summaryQuery.data?.student || null;
+  const payments = pagesContent(paymentsQuery.data);
 
   const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
+    ? student.name || student.enrollmentNo || 'Student'
     : 'Student';
-  const studentSection = getStudentSectionName(student);
+  const studentSection = student?.section || 'Section pending';
 
-  const refreshData = async () => {
-    try {
-      const studentRequest = session?.studentId ? studentApi.getById(session.studentId) : studentApi.getAll();
-      const [studentResponse, structureResponse, paymentResponse] = await Promise.all([
-        studentRequest,
-        feeApi.getStructures(),
-        feeApi.getPayments(session?.studentId),
-      ]);
-      setStudents(Array.isArray(studentResponse) ? studentResponse : [studentResponse]);
-      setStructures(structureResponse);
-      setPayments(paymentResponse);
-      setLoadError('');
-    } catch (error) {
-      setStudents([]);
-      setStructures([]);
-      setPayments([]);
-      setLoadError(error.message || 'Unable to load fee data from database.');
-    }
-  };
-
-  const studentStructures = useMemo(() => {
-    const studentClassName = normalizeClassName(student?.assignedClass || student?.className || '');
-    if (!studentClassName) return [];
-    return structures
-      .filter((structure) => normalizeClassName(structure.courseId) === studentClassName)
-      .sort((a, b) => String(a.feeComponent || '').localeCompare(String(b.feeComponent || '')));
-  }, [student, structures]);
-
-  const successfulPayments = useMemo(() => {
-    if (!student) return [];
-    return payments.filter(
-      (payment) => String(payment.studentId) === String(student.id) && payment.paymentStatus === 'Success',
-    );
-  }, [payments, student]);
-
-  const feeRows = useMemo(() => {
-    if (!student) return [];
-    return studentStructures.map((structure) => ({
-      structure,
-      ...buildFeeRow(structure, student.id, successfulPayments),
-    }));
-  }, [student, studentStructures, successfulPayments]);
-
-  const visibleFeeRows = useMemo(() => {
-    return feeRows.filter((row) => {
-      if (!isFeeStructureApplicableToStudent(row.structure, student)) return false;
-      return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
-    });
-  }, [feeRows, student]);
+  const visibleFeeRows = useMemo(() => (summaryQuery.data?.components || []).map((component) => ({
+    structure: {
+      id: component.feeStructureId,
+      feeComponent: component.feeComponent,
+      billingType: 'cycle_based',
+      feeType: 'college_fee',
+    },
+    billingType: 'cycle_based',
+    currentCycleLabel: component.dueDate || 'Current session',
+    currentCycleMonths: [],
+    serviceMonthsCount: 0,
+    totalOutstanding: Number(component.outstandingAmount) || 0,
+    currentCycleDueAmount: Number(component.outstandingAmount) || 0,
+    previousPendingAmount: 0,
+    lateFeeFine: 0,
+  })), [summaryQuery.data]);
 
   const receiptRows = useMemo(() => {
     if (!student) return [];
     return payments
       .filter((payment) => String(payment.studentId) === String(student.id))
       .map((payment) => {
-        const structure = structures.find((entry) => String(entry.id) === String(payment.structureId));
         const overallLabel = Array.isArray(payment.allocations) && payment.allocations.length > 0
           ? `Overall Fee Payment (${payment.allocations.length} allocations)`
           : 'Overall Fee Payment';
         return {
           ...payment,
-          structure: structure || {
+          structure: {
             feeComponent: overallLabel,
             billingType: payment.billingType,
           },
@@ -157,28 +142,13 @@ const StudentFees = () => {
           downloadLink: payment.downloadLink || `receipt-${payment.id}.txt`,
         };
       })
-      .filter((receipt) => {
-        const query = receiptSearch.trim().toLowerCase();
-        if (!query) return true;
-        return (
-          String(receipt.receiptNumber || '').toLowerCase().includes(query) ||
-          String(receipt.transactionId || '').toLowerCase().includes(query) ||
-          String(receipt.structure?.feeComponent || '').toLowerCase().includes(query)
-        );
-      })
       .sort((a, b) => new Date(b.paymentDate || b.createdAt || 0).getTime() - new Date(a.paymentDate || a.createdAt || 0).getTime());
-  }, [payments, receiptSearch, structures, student]);
+  }, [payments, student]);
 
-  const totalCurrentDue = visibleFeeRows.reduce((sum, row) => sum + row.totalOutstanding, 0);
-  const totalPreviousPending = visibleFeeRows.reduce((sum, row) => sum + (Number(row.previousPendingAmount) || 0), 0);
-  const totalFacilityCharge = visibleFeeRows.reduce((sum, row) => {
-    if (!isFacilityFeeStructure(row.structure)) return sum;
-    return sum + (Number(row.currentCycleDueAmount) || 0);
-  }, 0);
-  const totalCollegeCharge = visibleFeeRows.reduce((sum, row) => {
-    if (isFacilityFeeStructure(row.structure)) return sum;
-    return sum + (Number(row.currentCycleDueAmount) || 0);
-  }, 0);
+  const totalCurrentDue = Number(summaryQuery.data?.totalOutstanding) || 0;
+  const totalPreviousPending = Number(summaryQuery.data?.previousPending) || 0;
+  const totalFacilityCharge = 0;
+  const totalCollegeCharge = Number(summaryQuery.data?.currentDue) || 0;
   const customPaymentAmount = Number(paymentForm.paidAmount) || 0;
   const selectedPaymentMethod = paymentMethodDetails[paymentForm.mode] || paymentMethodDetails.Other;
   const activeFacilityRows = visibleFeeRows.filter((row) => (
@@ -206,9 +176,10 @@ const StudentFees = () => {
 
   useEffect(() => {
     if (session?.role === 'student') {
-      refreshData();
+      const error = summaryQuery.error || paymentsQuery.error;
+      setLoadError(error?.message || '');
     }
-  }, [session]);
+  }, [paymentsQuery.error, session, summaryQuery.error]);
 
   useEffect(() => {
     if (totalCurrentDue > 0 && !paymentForm.paidAmount) {
@@ -226,37 +197,21 @@ const StudentFees = () => {
     const paidAmount = Number(paymentForm.paidAmount) || 0;
     if (!paymentForm.transactionId.trim() || paidAmount <= 0) return;
 
-    const allocations = allocateOverallAmount(paidAmount, visibleFeeRows, 'due_auto');
-    if (allocations.length === 0) return;
-    const currentDuePaid = allocations
-      .filter((allocation) => allocation.kind === 'Current Due')
-      .reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0);
-
-    const balanceRemaining = Math.max(totalCurrentDue - currentDuePaid, 0);
-    const receiptNumber = `FEE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
-
+    if (visibleFeeRows.length === 0) return;
     try {
-      await feeApi.savePayment({
+      await savePaymentMutation.mutateAsync({
         ...paymentForm,
-        studentId: student.id,
         structureId: 'overall_total',
         paidAmount,
-        allocations,
-        coveredMonths: [],
-        resolvedMonths: [],
+        idempotencyKey: crypto.randomUUID(),
         paymentTarget: 'due_auto',
         coverageLabel: 'Online payment auto-adjusted',
         activeFromMonth: '',
-        billedMonthsCount: allocations.reduce((sum, allocation) => sum + (allocation.coveredMonths?.length || 0), 0),
+        billedMonthsCount: 0,
         billingType: 'overall_payment',
-        receiptNumber,
-        taxBreakdown: calculateTaxBreakdown(paidAmount),
-        balanceRemaining,
-        downloadLink: `receipt-${receiptNumber}.txt`,
       });
 
       setPaymentForm(createPaymentForm());
-      await refreshData();
     } catch (error) {
       setLoadError(error.message || 'Unable to save payment in database.');
     }
@@ -423,6 +378,15 @@ const StudentFees = () => {
                 <SearchInput value={receiptSearch} onChange={setReceiptSearch} placeholder="Search receipt or transaction..." />
               </div>
               <PaymentHistoryTable rows={receiptRows} onDownload={handleDownloadReceipt} />
+              {paymentsQuery.hasNextPage ? (
+                <div className="mt-4">
+                  <LoadMoreButton
+                    label={`Load More Payments (${receiptRows.length}/${paymentsQuery.data?.pages?.at(-1)?.totalElements || receiptRows.length})`}
+                    loading={paymentsQuery.isFetchingNextPage}
+                    onClick={() => paymentsQuery.fetchNextPage()}
+                  />
+                </div>
+              ) : null}
             </Panel>
           </section>
         </div>
@@ -505,11 +469,22 @@ const PrimaryButton = ({ type, icon: Icon, label, disabled = false }) => (
   </button>
 );
 
+const LoadMoreButton = ({ label, loading, onClick }) => (
+  <button
+    type="button"
+    disabled={loading}
+    onClick={onClick}
+    className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {loading ? 'Loading...' : label}
+  </button>
+);
+
 const LoggedInStudentStrip = ({ student, studentName, studentSection }) => (
   <div className="rounded-[1.8rem] border border-slate-200 bg-white p-4">
     <div className="grid gap-4 md:grid-cols-3">
-      <ReadOnlyContext label="Student Name" value={`${studentName} | ${student?.enrollmentNo || student?.systemId || 'Enrollment pending'}`} />
-      <ReadOnlyContext label="Class" value={student?.assignedClass || student?.className || 'Class pending'} />
+      <ReadOnlyContext label="Student Name" value={`${studentName} | ${student?.enrollmentNo || 'Enrollment pending'}`} />
+      <ReadOnlyContext label="Class" value={student?.className || 'Class pending'} />
       <ReadOnlyContext label="Section" value={studentSection} />
     </div>
   </div>
@@ -605,5 +580,31 @@ const PaymentHistoryTable = ({ rows, onDownload }) => (
     )}
   </div>
 );
+
+function pageContent(page) {
+  return Array.isArray(page) ? page : page?.content || [];
+}
+
+function pagesContent(data) {
+  if (!data?.pages) return pageContent(data);
+  return data.pages.flatMap(pageContent);
+}
+
+function nextPageParam(lastPage) {
+  if (!lastPage || Array.isArray(lastPage) || lastPage.last) return undefined;
+  const nextPage = Number(lastPage.number || 0) + 1;
+  return nextPage < Number(lastPage.totalPages || 0) ? nextPage : undefined;
+}
+
+function useDebouncedValue(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delay);
+    return () => window.clearTimeout(timeoutId);
+  }, [delay, value]);
+
+  return debouncedValue;
+}
 
 export default StudentFees;

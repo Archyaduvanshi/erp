@@ -15,7 +15,8 @@ import {
   Save,
   ShieldCheck,
 } from 'lucide-react';
-import { instituteApi, settingsApi } from '../../utils/api';
+import { instituteApi, settingsApi, teacherApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const profileFields = [
   'instituteName',
@@ -97,14 +98,16 @@ const initialProfile = {
 
 const SettingsManagement = () => {
   const navigate = useNavigate();
-  const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session, acceptLogin } = useAuth();
+  const collegeId = session?.id || '';
   const [institute, setInstitute] = useState(null);
   const [profileForm, setProfileForm] = useState(initialProfile);
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [notifications, setNotifications] = useState(defaultNotifications);
   const [featureAccess, setFeatureAccess] = useState(defaultFeatureAccess);
-  const [featureAccessForm, setFeatureAccessForm] = useState({ feature: '', password: '', enabled: true });
+  const [featureAccessRecords, setFeatureAccessRecords] = useState([]);
+  const [teacherOptions, setTeacherOptions] = useState([]);
+  const [featureAccessForm, setFeatureAccessForm] = useState({ feature: '', teacherId: '', operation: 'read', enabled: true });
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [visiblePassword, setVisiblePassword] = useState('');
   const [activeTab, setActiveTab] = useState('profile');
@@ -123,24 +126,52 @@ const SettingsManagement = () => {
   }, [collegeId, navigate, session]);
 
   const loadSettings = async () => {
-    const localInstitute = getLocalInstitute(collegeId);
-
     try {
       const [serverInstitute, serverSettings] = await Promise.all([
         instituteApi.getById(collegeId),
         settingsApi.get(),
       ]);
-      hydrateInstitute(serverInstitute || localInstitute);
+      setTeacherOptions(await loadTeacherOptions());
+      hydrateInstitute(serverInstitute || session);
       hydrateSettings(serverSettings);
     } catch {
-      hydrateInstitute(localInstitute || session);
+      hydrateInstitute(session);
+      setTeacherOptions(await loadTeacherOptions());
+    }
+  };
+
+  const loadTeacherOptions = async () => {
+    try {
+      const teachers = await teacherApi.getAll();
+      if (Array.isArray(teachers) && teachers.length) {
+        return teachers
+          .filter((teacher) => String(teacher.status || 'Active').toLowerCase() === 'active')
+          .map((teacher) => ({
+            id: teacher.id,
+            employeeId: teacher.employeeId,
+            name: teacher.name || `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim(),
+            mobileNumber: teacher.mobileNumber,
+            dob: teacher.dob,
+          }));
+      }
+    } catch {
+      // Fall back to compact teacher options below.
+    }
+
+    try {
+      const options = await teacherApi.getOptions('Active');
+      return Array.isArray(options) ? options : [];
+    } catch {
+      return [];
     }
   };
 
   const hydrateSettings = (settings) => {
     setPreferences({ ...defaultPreferences, ...(settings?.preferences || {}) });
     setNotifications({ ...defaultNotifications, ...(settings?.notifications || {}) });
-    setFeatureAccess(toFeatureAccessMap(settings?.featureAccess || []));
+    const records = settings?.featureAccess || [];
+    setFeatureAccessRecords(records);
+    setFeatureAccess(toFeatureAccessMap(records));
   };
 
   const hydrateInstitute = (record) => {
@@ -174,7 +205,14 @@ const SettingsManagement = () => {
 
     try {
       const updatedInstitute = await instituteApi.update(collegeId, profileForm);
-      persistSessionInstitute(updatedInstitute);
+      acceptLogin({
+        ...session,
+        username: updatedInstitute.username,
+        instituteName: updatedInstitute.instituteName,
+        type: updatedInstitute.type,
+        logo: updatedInstitute.logo,
+        role: 'admin',
+      });
       setInstitute(updatedInstitute);
       setFieldErrors({});
       setError('');
@@ -218,30 +256,28 @@ const SettingsManagement = () => {
       setMessage('');
       return;
     }
-    if (!featureAccessForm.password.trim()) {
-      setFeatureAccessErrors({ password: 'Please enter a password for selected feature.' });
-      setError('Please enter a password for selected feature.');
+    if (!featureAccessForm.teacherId) {
+      setFeatureAccessErrors({ teacherId: 'Please select teacher.' });
+      setError('Please select teacher.');
       setMessage('');
       return;
     }
-    if (!passwordPattern.test(featureAccessForm.password)) {
-      setFeatureAccessErrors({ password: passwordMessage });
-      setError(passwordMessage);
+    if (!featureAccessForm.operation) {
+      setFeatureAccessErrors({ operation: 'Please select operation.' });
+      setError('Please select operation.');
       setMessage('');
       return;
     }
-
     try {
       await settingsApi.saveFeatureAccess(featureAccessForm);
       const settings = await settingsApi.get();
       hydrateSettings(settings);
-      setFeatureAccessForm({ ...featureAccessForm, password: '' });
       setFeatureAccessErrors({});
       setError('');
-      setMessage('Feature login password saved successfully.');
+      setMessage('Feature permission saved successfully.');
     } catch (apiError) {
       setFeatureAccessErrors(apiError.fieldErrors || {});
-      setError(apiError.message || 'Unable to save feature password.');
+      setError(apiError.message || 'Unable to save feature permission.');
       setMessage('');
     }
   };
@@ -282,6 +318,7 @@ const SettingsManagement = () => {
       await settingsApi.reset();
       setPreferences(defaultPreferences);
       setNotifications(defaultNotifications);
+      setFeatureAccessRecords([]);
       setFeatureAccess(defaultFeatureAccess);
       setMessage('Settings reset to default values.');
       setError('');
@@ -445,7 +482,7 @@ const SettingsManagement = () => {
 
             {activeTab === 'featureAccess' ? (
               <div>
-                <PanelTitle icon={KeyRound} title="Feature Access" description="Select a feature and set the password used for limited feature login." />
+                <PanelTitle icon={KeyRound} title="Feature Access" description="Select feature, teacher, and operation permission for teacher dashboard management cards." />
                 <form className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3" onSubmit={saveFeatureAccess}>
                   <SelectInput
                     label="Select Feature"
@@ -455,8 +492,9 @@ const SettingsManagement = () => {
                       setFeatureAccessErrors((current) => ({ ...current, feature: '' }));
                       clearStatus();
                       setFeatureAccessForm({
+                        ...featureAccessForm,
                         feature: selectedFeature,
-                        password: '',
+                        operation: featureAccess[selectedFeature]?.operation || 'read',
                         enabled: featureAccess[selectedFeature]?.enabled ?? true,
                       });
                     }}
@@ -464,16 +502,33 @@ const SettingsManagement = () => {
                     renderOptionLabel={(value) => featureAccessOptions.find((feature) => feature.value === value)?.label || 'Select'}
                     error={featureAccessErrors.feature}
                   />
-                  <TextInput
-                    label="Feature Password"
-                    type="text"
-                    value={featureAccessForm.password}
+                  <SelectInput
+                    label="Select Teacher"
+                    value={featureAccessForm.teacherId}
                     onChange={(event) => {
-                      setFeatureAccessForm({ ...featureAccessForm, password: event.target.value });
-                      setFeatureAccessErrors((current) => ({ ...current, password: '' }));
+                      setFeatureAccessForm({ ...featureAccessForm, teacherId: event.target.value });
+                      setFeatureAccessErrors((current) => ({ ...current, teacherId: '' }));
                       clearStatus();
                     }}
-                    error={featureAccessErrors.password}
+                    options={['', ...teacherOptions.map((teacher) => String(teacher.id))]}
+                    renderOptionLabel={(value) => {
+                      if (!value) return teacherOptions.length ? 'Select teacher' : 'No active teachers';
+                      const teacher = teacherOptions.find((entry) => String(entry.id) === String(value));
+                      return teacher ? `${teacher.name || teacher.teacherName || 'Teacher'} | ${teacher.employeeId || '-'}` : 'Select teacher';
+                    }}
+                    error={featureAccessErrors.teacherId}
+                  />
+                  <SelectInput
+                    label="Operation"
+                    value={featureAccessForm.operation}
+                    onChange={(event) => {
+                      setFeatureAccessForm({ ...featureAccessForm, operation: event.target.value });
+                      setFeatureAccessErrors((current) => ({ ...current, operation: '' }));
+                      clearStatus();
+                    }}
+                    options={['read', 'read_write']}
+                    renderOptionLabel={(value) => value === 'read_write' ? 'Read + Write' : 'Read Only'}
+                    error={featureAccessErrors.operation}
                   />
                   <Toggle
                     label={featureAccessForm.enabled ? 'Access Enabled' : 'Access Disabled'}
@@ -481,7 +536,7 @@ const SettingsManagement = () => {
                     onChange={() => setFeatureAccessForm({ ...featureAccessForm, enabled: !featureAccessForm.enabled })}
                   />
                   <div className="md:col-span-2 xl:col-span-3">
-                    <ActionButton type="submit" icon={Save} label="Save Feature Password" />
+                    <ActionButton type="submit" icon={Save} label="Save Feature Permission" />
                   </div>
                 </form>
 
@@ -489,22 +544,27 @@ const SettingsManagement = () => {
                   <table className="min-w-[620px] w-full divide-y divide-slate-200 text-left">
                     <thead className="bg-slate-50">
                       <tr>
-                        {['Feature', 'Status', 'Password'].map((heading) => (
+                        {['Feature', 'Teacher', 'Operation', 'Status'].map((heading) => (
                           <th key={heading} className="px-4 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{heading}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
-                      {featureAccessOptions.map((feature) => {
-                        const access = featureAccess[feature.value] || {};
+                      {featureAccessRecords.length ? featureAccessRecords.map((access) => {
+                        const feature = featureAccessOptions.find((option) => option.value === access.feature);
                         return (
-                          <tr key={feature.value}>
-                            <td className="px-4 py-4 text-sm font-black uppercase text-slate-950">{feature.label}</td>
+                          <tr key={`${access.feature}-${access.teacherId || 'legacy'}`}>
+                            <td className="px-4 py-4 text-sm font-black uppercase text-slate-950">{feature?.label || access.feature}</td>
+                            <td className="px-4 py-4 text-sm font-semibold text-slate-700">{access.teacherName ? `${access.teacherName} | ${access.employeeId || '-'}` : 'Legacy password access'}</td>
+                            <td className="px-4 py-4 text-sm font-semibold text-slate-700">{access.operation === 'read_write' ? 'Read + Write' : 'Read Only'}</td>
                             <td className="px-4 py-4 text-sm font-semibold text-slate-700">{access.enabled ? 'Enabled' : 'Disabled'}</td>
-                            <td className="px-4 py-4 text-sm font-semibold text-slate-700">{access.passwordSet ? 'Saved' : 'Not Set'}</td>
                           </tr>
                         );
-                      })}
+                      }) : (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-8 text-center text-sm font-semibold text-slate-500">No feature permission assigned yet.</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -538,29 +598,14 @@ const validateProfile = (form) => {
   return errors;
 };
 
-const getLocalInstitute = (collegeId) => {
-  const colleges = JSON.parse(localStorage.getItem('registered_colleges') || '[]');
-  return colleges.find((college) => String(college.id) === String(collegeId)) || null;
-};
-
-const persistSessionInstitute = (updatedInstitute) => {
-  const currentSession = JSON.parse(localStorage.getItem('active_session') || '{}');
-  localStorage.setItem('active_session', JSON.stringify({
-    ...currentSession,
-    username: updatedInstitute.username,
-    instituteName: updatedInstitute.instituteName,
-    type: updatedInstitute.type,
-    logo: updatedInstitute.logo,
-    role: 'admin',
-  }));
-};
-
 const toFeatureAccessMap = (records) => {
   const accessMap = { ...defaultFeatureAccess };
   records.forEach((record) => {
     accessMap[record.feature] = {
       enabled: record.enabled,
       passwordSet: record.passwordSet,
+      teacherId: record.teacherId,
+      operation: record.operation || 'read',
       updatedAt: record.updatedAt,
     };
   });

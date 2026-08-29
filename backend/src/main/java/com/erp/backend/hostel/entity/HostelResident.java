@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.AcademicSession;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.student.entity.Student;
 import jakarta.persistence.Column;
@@ -43,6 +44,10 @@ public class HostelResident {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "room_id", nullable = false)
     private HostelRoom room;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "academic_session_id")
+    private AcademicSession academicSession;
 
     private String bedNumber;
 

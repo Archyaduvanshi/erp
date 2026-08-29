@@ -22,7 +22,6 @@ public record TeacherPayload(
         String salary,
         String dob,
         String joiningDate,
-        String teacherPortalPassword,
         String documentType,
         String otherDocumentName,
         String fileUploadPath,
@@ -31,7 +30,6 @@ public record TeacherPayload(
         String qrCodeData,
         String cardExpiryDate,
         String photoUrl,
-        String teacherSystemId,
         String status,
         String attendanceStatus
 ) {

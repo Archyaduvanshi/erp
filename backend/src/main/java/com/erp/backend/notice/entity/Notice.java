@@ -15,12 +15,23 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Index;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "notices")
+@Table(
+        name = "notices",
+        indexes = {
+                @Index(name = "idx_notices_institute_status_publish", columnList = "institute_id,status,publish_date"),
+                @Index(name = "idx_notices_institute_audience_status_publish", columnList = "institute_id,audience,status,publish_date"),
+                @Index(name = "idx_notices_institute_target_student_status", columnList = "institute_id,target_student_id,status"),
+                @Index(name = "idx_notices_institute_target_teacher_status", columnList = "institute_id,target_teacher_id,status"),
+                @Index(name = "idx_notices_institute_expire", columnList = "institute_id,expire_date"),
+                @Index(name = "idx_notices_institute_created", columnList = "institute_id,created_at")
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -73,10 +84,17 @@ public class Notice {
     private String sourceType;
     private Long sourceId;
 
+    private Long createdByAccountId;
+    private Long updatedByAccountId;
+    private Long publishedByAccountId;
+    private Long archivedByAccountId;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
+    private LocalDateTime publishedAt;
+    private LocalDateTime archivedAt;
 
     @PrePersist
     public void prePersist() {

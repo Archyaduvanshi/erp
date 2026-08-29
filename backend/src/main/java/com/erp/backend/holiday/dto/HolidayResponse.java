@@ -10,6 +10,8 @@ public record HolidayResponse(
         LocalDate holidayDate,
         String holidayType,
         String audience,
+        List<Long> targetClassIds,
+        List<HolidayTargetClassResponse> targetClassTargets,
         List<String> targetClasses,
         String notes,
         LocalDateTime createdAt,

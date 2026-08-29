@@ -15,6 +15,7 @@ public record HolidayPayload(
         String holidayType,
         @NotBlank(message = "Audience is required.")
         String audience,
+        List<Long> targetClassIds,
         List<String> targetClasses,
         String notes
 ) {

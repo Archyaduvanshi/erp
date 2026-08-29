@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -11,65 +12,64 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { noticeApi, studentApi } from '../../utils/api';
-import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
+import { noticeApi } from '../../utils/api';
+import { formatNoticeDate } from '../../utils/noticeUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const PortalNotices = ({ role }) => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [notices, setNotices] = useState([]);
-  const [student, setStudent] = useState(null);
+  const { session } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [selectedNotice, setSelectedNotice] = useState(null);
-  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (!session || session.role !== role) {
       navigate('/login');
-      return;
     }
-
-    const loadNotices = async () => {
-      try {
-        const [noticeResponse, studentResponse] = await Promise.all([
-          noticeApi.getPortalAll(),
-          role === 'student' && session.studentId ? studentApi.getById(session.studentId) : Promise.resolve(null),
-        ]);
-        setNotices(noticeResponse);
-        setStudent(studentResponse);
-        setLoadError('');
-      } catch (error) {
-        setNotices([]);
-        setStudent(null);
-        setLoadError(error.message || 'Unable to load notices.');
-      }
-    };
-
-    loadNotices();
   }, [navigate, role, session]);
 
-  const portalNotices = useMemo(
-    () => getPortalNotices(notices, role, student?.assignedClass || student?.className, [], student?.id, session?.teacherId),
-    [notices, role, session?.teacherId, student],
-  );
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm]);
 
-  const filteredNotices = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+  const portalQuery = useInfiniteQuery({
+    queryKey: ['notices', 'portal', role, { search: debouncedSearchTerm, priority: priorityFilter }],
+    queryFn: ({ pageParam = 0 }) => noticeApi.getPortalAll({
+      page: pageParam,
+      size: 20,
+      search: debouncedSearchTerm,
+      priority: priorityFilter === 'All' ? '' : priorityFilter,
+    }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => (lastPage?.last ? undefined : Number(lastPage?.number || 0) + 1),
+    enabled: Boolean(session && session.role === role),
+  });
 
-    return portalNotices.filter((notice) => {
-      const matchesPriority = priorityFilter === 'All' || notice.priority === priorityFilter;
-      if (!matchesPriority) return false;
-      if (!query) return true;
+  const portalOverviewQuery = useQuery({
+    queryKey: ['notices', 'portal-overview', role, { search: debouncedSearchTerm, priority: priorityFilter }],
+    queryFn: () => noticeApi.getPortalOverview({
+      search: debouncedSearchTerm,
+      priority: priorityFilter === 'All' ? '' : priorityFilter,
+    }),
+    enabled: Boolean(session && session.role === role),
+  });
 
-      return (
-        notice.title?.toLowerCase().includes(query) ||
-        notice.category?.toLowerCase().includes(query) ||
-        notice.summary?.toLowerCase().includes(query) ||
-        notice.details?.toLowerCase().includes(query)
-      );
-    });
-  }, [portalNotices, priorityFilter, searchTerm]);
+  const detailQuery = useQuery({
+    queryKey: ['notices', 'portal-detail', selectedNotice?.id],
+    queryFn: () => noticeApi.getPortalDetail(selectedNotice.id),
+    enabled: Boolean(selectedNotice?.id),
+  });
+
+  const portalNotices = useMemo(() => (
+    (portalQuery.data?.pages || []).flatMap((page) => Array.isArray(page?.content) ? page.content : [])
+  ), [portalQuery.data]);
+  const selectedNoticeDetail = detailQuery.data || selectedNotice;
+  const totalNoticeCount = portalOverviewQuery.data?.total ?? portalQuery.data?.pages?.[0]?.totalElements ?? 0;
+  const pinnedNoticeCount = portalOverviewQuery.data?.pinned ?? 0;
+  const urgentNoticeCount = portalOverviewQuery.data?.urgent ?? 0;
 
   if (!session || session.role !== role) return null;
 
@@ -115,9 +115,14 @@ const PortalNotices = ({ role }) => {
       </header>
 
       <main className="mx-auto max-w-screen-2xl px-6 pt-12 md:px-12 lg:px-20">
-        {loadError ? (
+        {portalQuery.error ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {portalQuery.error.message || 'Unable to load notices.'}
+          </div>
+        ) : null}
+        {portalOverviewQuery.error ? (
+          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {portalOverviewQuery.error.message || 'Unable to load notice overview.'}
           </div>
         ) : null}
         <section className={`overflow-hidden rounded-[2.5rem] bg-[linear-gradient(145deg,#0f172a_0%,#4c1d95_55%,#0e7490_100%)] px-8 py-8 text-white shadow-[0_30px_80px_-40px_rgba(15,23,42,0.85)] md:px-12 md:py-10`}>
@@ -132,9 +137,9 @@ const PortalNotices = ({ role }) => {
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Visible Notices" value={portalNotices.length} icon={Megaphone} />
-              <MetricCard label="Pinned" value={portalNotices.filter((notice) => notice.isPinned).length} icon={Pin} />
-              <MetricCard label="Urgent" value={portalNotices.filter((notice) => notice.priority === 'Urgent').length} icon={AlertTriangle} />
+              <MetricCard label="Visible Notices" value={totalNoticeCount} icon={Megaphone} />
+              <MetricCard label="Pinned" value={pinnedNoticeCount} icon={Pin} />
+              <MetricCard label="Urgent" value={urgentNoticeCount} icon={AlertTriangle} />
               <MetricCard label="Audience" value={role === 'teacher' ? 'Teachers' : 'Students'} icon={Users} />
             </div>
           </div>
@@ -144,7 +149,7 @@ const PortalNotices = ({ role }) => {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h2 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Notice Register</h2>
-              <p className="mt-2 text-sm leading-7 text-slate-500">{filteredNotices.length} notice(s) available for your portal.</p>
+              <p className="mt-2 text-sm leading-7 text-slate-500">{totalNoticeCount} notice(s) available for your portal.</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
               <div className="relative min-w-0">
@@ -167,8 +172,8 @@ const PortalNotices = ({ role }) => {
           </div>
 
           <div className="mt-8 grid gap-5">
-            {filteredNotices.length ? (
-              filteredNotices.map((notice) => (
+            {portalNotices.length ? (
+              portalNotices.map((notice) => (
                 <NoticeRow
                   key={notice.id}
                   notice={notice}
@@ -181,9 +186,21 @@ const PortalNotices = ({ role }) => {
               </div>
             )}
           </div>
+          {portalQuery.hasNextPage ? (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => portalQuery.fetchNextPage()}
+                disabled={portalQuery.isFetchingNextPage}
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-violet-300 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {portalQuery.isFetchingNextPage ? 'Loading...' : 'Load More'}
+              </button>
+            </div>
+          ) : null}
         </section>
       </main>
-      <NoticeModal notice={selectedNotice} onClose={() => setSelectedNotice(null)} />
+      <NoticeModal notice={selectedNoticeDetail} onClose={() => setSelectedNotice(null)} />
     </div>
   );
 };

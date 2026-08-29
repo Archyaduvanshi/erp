@@ -19,6 +19,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { studentApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 function createQrImageUrl(value) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'student')}`;
@@ -44,7 +45,7 @@ async function downloadQrCode(qrCodeData, studentName) {
 
 const StudentProfile = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session } = useAuth();
   const [student, setStudent] = useState(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState(null);
 
@@ -68,7 +69,7 @@ const StudentProfile = () => {
   }, [session]);
 
   const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
+    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Student'
     : 'Student';
   const qrImage = student?.qrCodeData ? createQrImageUrl(student.qrCodeData) : '';
   const selectedDocument = (student?.documents || []).find((document) => document.id === selectedDocumentId) || null;
@@ -119,7 +120,7 @@ const StudentProfile = () => {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <StatCard label="Student ID" value={student?.systemId || 'Pending'} icon={IdCard} />
+              <StatCard label="Enrollment No" value={student?.enrollmentNo || 'Pending'} icon={IdCard} />
               <StatCard label="Enrollment No" value={student?.enrollmentNo || 'Pending'} icon={FileBadge2} />
               <StatCard label="Assigned Class" value={student?.assignedClass || 'Not assigned'} icon={CalendarDays} />
               <StatCard label="Status" value={student?.status || 'Pending'} icon={Shield} />
@@ -246,7 +247,6 @@ const StudentProfile = () => {
                 </div>
               </div>
             ) : null}
-            <InfoRow icon={IdCard} label="Student ID" value={student?.systemId || 'Pending'} />
             <InfoRow icon={Shield} label="Profile Status" value={student?.status || 'Pending'} />
             <InfoRow icon={CalendarDays} label="Card Expiry Date" value={student?.cardExpiryDate || 'Not added'} />
           </InfoPanel>

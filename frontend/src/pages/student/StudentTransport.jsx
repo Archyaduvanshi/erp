@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -8,100 +9,93 @@ import {
   MapPin,
   Route,
 } from 'lucide-react';
-import { holidayApi, studentApi, transportApi } from '../../utils/api';
+import { academicSessionApi, holidayApi, studentApi, transportApi } from '../../utils/api';
 import { getFacilityAccessState } from '../../utils/facilityUtils';
 import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const StudentTransport = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [student, setStudent] = useState(null);
-  const [transportRecords, setTransportRecords] = useState([]);
-  const [transportAttendanceRecords, setTransportAttendanceRecords] = useState([]);
-  const [drivers, setDrivers] = useState([]);
-  const [holidays, setHolidays] = useState([]);
+  const { session } = useAuth();
+  const instituteId = session?.id || '';
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (!session || session.role !== 'student') {
       navigate('/login');
-      return;
     }
-
-    const loadTransportWorkspace = async () => {
-      try {
-        const [studentResponse, assignmentResponse, driverResponse, attendanceResponse, holidayResponse] = await Promise.all([
-          studentApi.getById(session.studentId),
-          transportApi.getAssignments(),
-          transportApi.getDrivers(),
-          transportApi.getAttendance(),
-          holidayApi.getAll(),
-        ]);
-        setStudent(studentResponse);
-        setTransportRecords(assignmentResponse);
-        setDrivers(driverResponse);
-        setTransportAttendanceRecords(attendanceResponse);
-        setHolidays(holidayResponse.filter((holiday) => holidayAppliesToStudentClass(
-          holiday,
-          studentResponse.assignedClass || studentResponse.className,
-        )));
-        setLoadError('');
-      } catch (error) {
-        setHolidays([]);
-        setLoadError(error.message || 'Unable to load student transport details.');
-      }
-    };
-
-    loadTransportWorkspace();
   }, [navigate, session]);
 
+  const sessionsQuery = useQuery({
+    queryKey: ['student-transport-academic-sessions', instituteId],
+    queryFn: academicSessionApi.getAll,
+    enabled: Boolean(session?.studentId && instituteId),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const academicSession = useMemo(() => {
+    const sessions = sessionsQuery.data || [];
+    return sessions.find((item) => item.current) || sessions[0] || null;
+  }, [sessionsQuery.data]);
+  const academicSessionId = academicSession?.id || null;
+
+  const studentQuery = useQuery({
+    queryKey: ['student-profile', instituteId, session?.studentId || null],
+    queryFn: () => studentApi.getById(session.studentId),
+    enabled: Boolean(session?.studentId && instituteId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const assignmentQuery = useQuery({
+    queryKey: ['student-transport-assignment', instituteId, session?.studentId || null, academicSessionId],
+    queryFn: () => transportApi.getMyAssignment(academicSessionId),
+    enabled: Boolean(session?.studentId && instituteId && academicSessionId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const attendanceQuery = useQuery({
+    queryKey: ['student-transport-attendance', instituteId, session?.studentId || null, selectedMonth],
+    queryFn: () => transportApi.getMyAttendance(selectedMonth),
+    enabled: Boolean(session?.studentId && instituteId && selectedMonth),
+  });
+
+  const holidayRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth]);
+  const holidaysQuery = useQuery({
+    queryKey: ['student-transport-holidays', instituteId, session?.studentId || null, holidayRange.from, holidayRange.to],
+    queryFn: () => holidayApi.getAll(holidayRange),
+    enabled: Boolean(session?.studentId && instituteId && holidayRange.from && holidayRange.to),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const student = studentQuery.data || null;
+  const transportAssignment = assignmentQuery.data || null;
+  const transportAttendanceRecords = attendanceQuery.data || [];
+  const holidays = useMemo(() => (
+    (holidaysQuery.data || []).filter((holiday) => holidayAppliesToStudentClass(
+      holiday,
+      student?.assignedClass || student?.className,
+    ))
+  ), [holidaysQuery.data, student?.assignedClass, student?.className]);
+  const loadError = [
+    studentQuery.error,
+    sessionsQuery.error,
+    assignmentQuery.error,
+    attendanceQuery.error,
+    holidaysQuery.error,
+  ].find(Boolean)?.message || '';
+
   const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
+    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Student'
     : 'Student';
 
-  const transportAssignment = useMemo(() => {
-    if (!student) return null;
-    const studentKeys = [String(student.id), String(student.systemId || ''), String(student.enrollmentNo || '')];
-    return transportRecords.find((record) =>
-      studentKeys.includes(String(record.studentId || '')) ||
-      String(record.studentName || '').trim().toLowerCase() === studentName.toLowerCase(),
-    ) || null;
-  }, [student, studentName, transportRecords]);
-
-  const assignedDriver = useMemo(() => {
-    if (!transportAssignment?.assignedDriverId) return null;
-    return drivers.find((driver) => String(driver.id) === String(transportAssignment.assignedDriverId)) || null;
-  }, [drivers, transportAssignment]);
-
-  const driverPhone = transportAssignment?.driverPhone || assignedDriver?.driverPhone || 'Not added';
-  const pickupPoints = assignedDriver?.pickupPoints || 'Not added';
-  const vehicleType = assignedDriver?.vehicleType || 'Not added';
+  const driverPhone = transportAssignment?.driverPhone || 'Not added';
+  const pickupPoints = transportAssignment?.pickupPoints || 'Not added';
+  const vehicleType = transportAssignment?.vehicleType || 'Not added';
   const transportAccess = getFacilityAccessState(student, 'transport');
   const studentTransportAttendance = useMemo(() => {
-    if (!student) return [];
-
-    const studentKeys = [
-      String(student.id || ''),
-      String(student.systemId || ''),
-      String(student.enrollmentNo || ''),
-    ].filter(Boolean);
-    const normalizedStudentName = studentName.trim().toLowerCase();
-
     return transportAttendanceRecords
-      .filter((record) => {
-        const recordStudentId = String(record.studentId || '');
-        const recordRollNo = String(record.rollNo || '');
-        const recordName = String(record.studentName || '').trim().toLowerCase();
-
-        return (
-          studentKeys.includes(recordStudentId) ||
-          studentKeys.includes(recordRollNo) ||
-          recordName === normalizedStudentName
-        );
-      })
       .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
-  }, [student, studentName, transportAttendanceRecords]);
+  }, [transportAttendanceRecords]);
 
   const transportMonthOptions = useMemo(() => {
     const monthSet = new Set(studentTransportAttendance
@@ -160,21 +154,21 @@ const StudentTransport = () => {
     recordsForMonth.forEach((record) => {
       const recordDate = new Date(`${record.date || ''}T00:00:00`);
       const dayNumber = recordDate.getDate();
-      if (dayNumber > visibleDayCount || holidayColumnMap.has(dayNumber)) return;
+      if (dayNumber > visibleDayCount) return;
       dailyStatusMap.set(dayNumber, record.status === 'Present' ? 'P' : 'A');
     });
 
     return {
       studentName,
       className: transportAssignment?.className || student?.assignedClass || '-',
-      routeName: transportAssignment?.routeName || assignedDriver?.routeName || '-',
-      busNumber: transportAssignment?.busNumber || assignedDriver?.busNumber || '-',
+      routeName: transportAssignment?.routeName || '-',
+      busNumber: transportAssignment?.busNumber || '-',
       monthLabel: new Date(selectedYear, selectedMonthIndex, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
       dayColumns,
       holidayColumnMap,
       days: dayColumns.map((dayNumber) => dailyStatusMap.get(dayNumber) || ''),
     };
-  }, [assignedDriver?.busNumber, assignedDriver?.routeName, holidays, selectedMonth, student, student?.assignedClass, studentName, studentTransportAttendance, transportAssignment?.busNumber, transportAssignment?.className, transportAssignment?.routeName, transportMonthOptions]);
+  }, [holidays, selectedMonth, student, student?.assignedClass, studentName, studentTransportAttendance, transportAssignment?.busNumber, transportAssignment?.className, transportAssignment?.routeName, transportMonthOptions]);
 
   if (!session || session.role !== 'student') return null;
 
@@ -232,7 +226,7 @@ const StudentTransport = () => {
               <div className="mt-8 grid gap-4">
                 <InfoRow label="Student" value={transportAssignment.studentName || studentName} />
                 <InfoRow label="Class" value={transportAssignment.className || student?.assignedClass || 'Not assigned'} />
-                <InfoRow label="Driver Name" value={transportAssignment.driverName || assignedDriver?.driverName || 'Not assigned'} />
+                <InfoRow label="Driver Name" value={transportAssignment.driverName || 'Not assigned'} />
                 <InfoRow label="Driver Mobile" value={driverPhone} />
                 <InfoRow label="Pickup Points" value={pickupPoints} />
               </div>
@@ -294,7 +288,7 @@ const StudentTransport = () => {
                             const dayNumber = monthlyTransportRegister.dayColumns[index];
                             const holidayLabel = monthlyTransportRegister.holidayColumnMap.get(dayNumber);
 
-                            if (holidayLabel) {
+                            if (holidayLabel && !value) {
                               return (
                                 <td
                                   key={`holiday-${dayNumber}`}
@@ -362,6 +356,16 @@ const formatMonthDateKey = (year, month, day) => {
   const monthValue = String(month).padStart(2, '0');
   const dayValue = String(day).padStart(2, '0');
   return `${year}-${monthValue}-${dayValue}`;
+};
+
+const getMonthRange = (monthValue) => {
+  const [year, month] = String(monthValue || '').split('-').map(Number);
+  if (!year || !month) return { from: '', to: '' };
+  const lastDay = new Date(year, month, 0).getDate();
+  return {
+    from: `${year}-${String(month).padStart(2, '0')}-01`,
+    to: `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+  };
 };
 
 const FeatureCard = ({ icon: Icon, label, value }) => (

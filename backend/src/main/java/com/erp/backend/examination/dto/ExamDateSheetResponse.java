@@ -5,6 +5,10 @@ import java.util.List;
 
 public record ExamDateSheetResponse(
         Long id,
+        Long academicSessionId,
+        Long examId,
+        Long classId,
+        Long sectionId,
         String className,
         String classFrom,
         String classTo,
@@ -19,6 +23,7 @@ public record ExamDateSheetResponse(
         String fileName,
         String fileData,
         String fileType,
+        String status,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

@@ -1,8 +1,12 @@
+import { authApi } from './api';
+
+const memoryStore = new Map();
+
 export const db = {
   // Get currently logged-in college from session
   getTenantId: () => {
-    const session = JSON.parse(localStorage.getItem('active_session'));
-    return session ? session.username : null;
+    const session = authApi.getCachedSession();
+    return session?.username || session?.id || null;
   },
 
   // Save data isolated by College (e.g., "mit_students")
@@ -11,13 +15,13 @@ export const db = {
     if (!tenantId) return null;
 
     const key = `${tenantId}_${module}`;
-    const existing = JSON.parse(localStorage.getItem(key)) || [];
+    const existing = memoryStore.get(key) || [];
     const updated = sanitizeForStorage(module, [
       ...existing,
       { ...data, id: Date.now(), createdAt: new Date().toISOString() },
     ]);
     
-    localStorage.setItem(key, JSON.stringify(updated));
+    memoryStore.set(key, updated);
     return updated;
   },
 
@@ -26,7 +30,7 @@ export const db = {
     if (!tenantId) return null;
 
     const key = `${tenantId}_${module}`;
-    const existing = JSON.parse(localStorage.getItem(key)) || [];
+    const existing = memoryStore.get(key) || [];
     const updated = sanitizeForStorage(module, existing.map((entry) => {
       if (String(entry.id) !== String(id)) return entry;
       const nextValue = typeof updater === 'function' ? updater(entry) : { ...entry, ...updater };
@@ -37,7 +41,7 @@ export const db = {
       };
     }));
 
-    localStorage.setItem(key, JSON.stringify(updated));
+    memoryStore.set(key, updated);
     return updated;
   },
 
@@ -45,21 +49,22 @@ export const db = {
   getAll: (module) => {
     const tenantId = db.getTenantId();
     if (!tenantId) return [];
-    return JSON.parse(localStorage.getItem(`${tenantId}_${module}`)) || [];
+    return memoryStore.get(`${tenantId}_${module}`) || [];
   },
 
   replaceAll: (module, data) => {
     const tenantId = db.getTenantId();
     if (!tenantId) return [];
     const sanitizedData = sanitizeForStorage(module, data || []);
-    localStorage.setItem(`${tenantId}_${module}`, JSON.stringify(sanitizedData));
+    memoryStore.set(`${tenantId}_${module}`, sanitizedData);
     return sanitizedData;
   },
 
   // Logout / Clear Session
   logout: () => {
-    localStorage.removeItem('active_session');
-    window.location.href = '/login';
+    authApi.logout().finally(() => {
+      window.location.href = '/login';
+    });
   }
 };
 

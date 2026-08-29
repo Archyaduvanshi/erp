@@ -36,6 +36,9 @@ public class LibraryBook {
     @Column(nullable = false)
     private String isbn;
 
+    @Column(name = "normalized_isbn", nullable = false)
+    private String normalizedIsbn;
+
     @Column(nullable = false)
     private String title;
 
@@ -50,6 +53,15 @@ public class LibraryBook {
 
     @Column(nullable = false)
     private Integer availableQuantity;
+
+    @Column(name = "total_copies", nullable = false)
+    private Integer totalCopies;
+
+    @Column(name = "available_copies", nullable = false)
+    private Integer availableCopies;
+
+    @Column(nullable = false)
+    private String status;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

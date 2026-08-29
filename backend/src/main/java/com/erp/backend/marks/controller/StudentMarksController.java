@@ -1,7 +1,10 @@
 package com.erp.backend.marks.controller;
 
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+
 import java.util.List;
 
+import com.erp.backend.auth.AuthPrincipal;
 import com.erp.backend.marks.dto.StudentMarkResponse;
 import com.erp.backend.marks.dto.StudentMarksExamRenamePayload;
 import com.erp.backend.marks.dto.StudentMarksExamRenameResponse;
@@ -12,7 +15,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -30,7 +32,7 @@ public class StudentMarksController {
 
     @GetMapping
     public List<StudentMarkResponse> getMarks(
-            @RequestHeader("X-Institute-Id") Long instituteId,
+            @AuthenticationPrincipal(expression = "instituteId") Long instituteId,
             @RequestParam(required = false) String className,
             @RequestParam(required = false) String subjectName
     ) {
@@ -40,21 +42,21 @@ public class StudentMarksController {
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public List<StudentMarkResponse> saveRegister(
-            @RequestHeader("X-Institute-Id") Long instituteId,
+            @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody StudentMarksRegisterPayload request
     ) {
-        return studentMarksService.saveRegister(instituteId, request);
+        return studentMarksService.saveRegister(principal.instituteId(), principal, request);
     }
 
     @GetMapping("/exam-renames")
-    public List<StudentMarksExamRenameResponse> getRenames(@RequestHeader("X-Institute-Id") Long instituteId) {
+    public List<StudentMarksExamRenameResponse> getRenames(@AuthenticationPrincipal(expression = "instituteId") Long instituteId) {
         return studentMarksService.getRenames(instituteId);
     }
 
     @PostMapping("/exam-renames")
     @ResponseStatus(HttpStatus.CREATED)
     public List<StudentMarksExamRenameResponse> renameExam(
-            @RequestHeader("X-Institute-Id") Long instituteId,
+            @AuthenticationPrincipal(expression = "instituteId") Long instituteId,
             @Valid @RequestBody StudentMarksExamRenamePayload request
     ) {
         return studentMarksService.renameExam(instituteId, request);

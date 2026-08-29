@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Banknote,
@@ -11,17 +12,13 @@ import {
   Search,
   Wallet,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { noticeApi, salaryApi, teacherApi } from '../../utils/api';
+import { salaryApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import {
-  buildSalaryTimeline,
   formatCurrencyAmount,
   formatSalary,
   getMonthKey,
   getMonthLabel,
-  getPreviousPendingSalaryEntries,
-  markSalaryPaid,
-  normalizeTeacherSalary,
 } from '../../utils/salaryUtils';
 
 const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
@@ -30,97 +27,110 @@ const inputClass = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-4 p
 const SalaryManagement = () => {
   const navigate = useNavigate();
   const { teacherId } = useParams();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [collegeId] = useState(() => localStorage.getItem('current_college_id'));
-  const [teachers, setTeachers] = useState(() => db.getAll('teachers').map(normalizeTeacherSalary));
-  const [salaryPayments, setSalaryPayments] = useState([]);
-  const [teacherAttendanceRecords, setTeacherAttendanceRecords] = useState(() => db.getAll('teacher_attendance_records'));
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
+  const collegeId = session?.id || '';
   const [loadError, setLoadError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [payrollPage, setPayrollPage] = useState(0);
+  const currentMonthKey = getMonthKey(new Date());
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 350);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!isCollegeModuleSession(session) || !collegeId) {
       navigate('/login');
-      return;
     }
-
-    const loadTeachers = async () => {
-      try {
-        const [apiTeachers, apiSalaryPayments] = await Promise.all([
-          teacherApi.getAll(),
-          salaryApi.getPayments(),
-        ]);
-        if (apiTeachers.length === 0) {
-          const localTeachers = db.getAll('teachers');
-          if (localTeachers.length > 0) {
-            const importedTeachers = await teacherApi.import(localTeachers);
-            db.replaceAll('teachers', importedTeachers);
-            setTeachers(importedTeachers.map(normalizeTeacherSalary));
-            setSalaryPayments(apiSalaryPayments);
-            setLoadError('');
-            return;
-          }
-        }
-
-        db.replaceAll('teachers', apiTeachers);
-        setTeachers(apiTeachers.map(normalizeTeacherSalary));
-        setSalaryPayments(apiSalaryPayments);
-        setTeacherAttendanceRecords(db.getAll('teacher_attendance_records'));
-        setLoadError('');
-      } catch (error) {
-        setTeachers(db.getAll('teachers').map(normalizeTeacherSalary));
-        setSalaryPayments([]);
-        setTeacherAttendanceRecords(db.getAll('teacher_attendance_records'));
-        setLoadError(error.message || 'Unable to load teachers from the server.');
-      }
-    };
-
-    loadTeachers();
   }, [collegeId, navigate, session]);
+
+  const overviewQuery = useQuery({
+    queryKey: ['salary', 'overview', currentMonthKey],
+    queryFn: () => salaryApi.getOverview({ monthKey: currentMonthKey }),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+  });
+
+  const payrollQuery = useQuery({
+    queryKey: ['salary', 'payroll-periods', currentMonthKey, debouncedSearchTerm, statusFilter, payrollPage],
+    queryFn: () => salaryApi.getPayrollPeriods({
+      monthKey: currentMonthKey,
+      search: debouncedSearchTerm,
+      status: statusFilter === 'Paid' ? 'PAID' : statusFilter === 'Pending' ? 'UNPAID' : '',
+      page: payrollPage,
+      size: 25,
+    }),
+    enabled: isCollegeModuleSession(session) && Boolean(collegeId),
+  });
+
+  const generatePayrollMutation = useMutation({
+    mutationFn: () => salaryApi.generatePayrollPeriodsForMonth({ monthKey: currentMonthKey }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['salary'] });
+    },
+  });
+
+  React.useEffect(() => {
+    const error = overviewQuery.error || payrollQuery.error || generatePayrollMutation.error;
+    setLoadError(error?.message || '');
+  }, [generatePayrollMutation.error, overviewQuery.error, payrollQuery.error]);
+
+  React.useEffect(() => {
+    setPayrollPage(0);
+  }, [debouncedSearchTerm, statusFilter]);
 
   if (!isCollegeModuleSession(session) || !collegeId) return null;
 
   return teacherId ? (
     <TeacherPayrollDesk
       teacherId={teacherId}
-      teachers={teachers}
-      salaryPayments={salaryPayments}
-      teacherAttendanceRecords={teacherAttendanceRecords}
-      setSalaryPayments={setSalaryPayments}
       loadError={loadError}
       setLoadError={setLoadError}
       navigate={navigate}
+      queryClient={queryClient}
     />
   ) : (
-    <PayrollRegister teachers={teachers} salaryPayments={salaryPayments} loadError={loadError} navigate={navigate} />
+      <PayrollRegister
+        payrollPeriods={pageContent(payrollQuery.data)}
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+        payrollPage={payrollPage}
+        setPayrollPage={setPayrollPage}
+        payrollPageData={payrollQuery.data}
+        overview={overviewQuery.data}
+        loadError={loadError}
+        loading={payrollQuery.isLoading || overviewQuery.isLoading || generatePayrollMutation.isPending}
+        navigate={navigate}
+        onGenerateMonth={() => generatePayrollMutation.mutate()}
+      />
   );
 };
 
-const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+const PayrollRegister = ({ payrollPeriods, searchTerm, setSearchTerm, statusFilter, setStatusFilter, payrollPage, setPayrollPage, payrollPageData, overview, loadError, loading, navigate, onGenerateMonth }) => {
   const currentMonthKey = getMonthKey(new Date());
 
   const rows = useMemo(() => (
-    teachers.map((teacher) => {
-      const teacherWithPayments = attachSalaryPayments(teacher, salaryPayments);
-      const timeline = buildSalaryTimeline(teacherWithPayments);
-      const currentEntry = timeline.find((entry) => entry.monthKey === currentMonthKey) || null;
-      const pendingEntries = timeline.filter((entry) => !entry.isPaid);
-      const paidEntries = timeline.filter((entry) => entry.isPaid);
-      const teacherName = getTeacherName(teacher);
-      const pendingAmount = pendingEntries.reduce((sum, entry) => sum + (Number(entry.baseSalary || entry.amount) || 0), 0);
+    payrollPeriods.map((currentEntry) => {
+      const teacherName = currentEntry.teacherName || 'Teacher';
+      const teacher = {
+        id: currentEntry.teacherId,
+        employeeId: currentEntry.employeeId,
+        firstName: currentEntry.teacherName,
+        specialization: currentEntry.specialization,
+        salary: currentEntry.baseSalary,
+      };
+      const status = currentEntry?.status === 'PAID' ? 'Paid' : 'Pending';
 
       return {
         teacher,
         teacherName,
         currentEntry,
-        status: currentEntry?.isPaid ? 'Paid' : 'Pending',
-        paidCount: paidEntries.length,
-        pendingCount: pendingEntries.length,
-        pendingAmount,
+        status,
+        pendingCount: currentEntry ? (Number(currentEntry.outstandingAmount) > 0 ? 1 : 0) : 1,
+        pendingAmount: Number(currentEntry?.outstandingAmount ?? teacher.salary ?? 0),
       };
     })
-  ), [currentMonthKey, salaryPayments, teachers]);
+  ), [payrollPeriods]);
 
   const filteredRows = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -129,17 +139,17 @@ const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
       if (!query) return true;
       return (
         row.teacherName.toLowerCase().includes(query) ||
-        String(row.teacher.teacherSystemId || '').toLowerCase().includes(query) ||
+        String(row.teacher.employeeId || '').toLowerCase().includes(query) ||
         String(row.teacher.employeeId || '').toLowerCase().includes(query) ||
         String(row.teacher.assignedClass || '').toLowerCase().includes(query)
       );
     });
   }, [rows, searchTerm, statusFilter]);
 
-  const monthlyPayroll = rows.reduce((sum, row) => sum + (Number(row.teacher.salary) || 0), 0);
-  const paidThisMonth = rows.filter((row) => row.status === 'Paid').length;
-  const pendingThisMonth = rows.filter((row) => row.status === 'Pending').length;
-  const missingSalary = rows.filter((row) => !row.teacher.salary).length;
+  const monthlyPayroll = Number(overview?.currentMonthObligation ?? overview?.totalObligation ?? 0);
+  const paidThisMonth = Number(overview?.paidTeachers ?? rows.filter((row) => row.status === 'Paid').length);
+  const pendingThisMonth = Number(overview?.pendingTeachers ?? rows.filter((row) => row.status === 'Pending').length);
+  const missingSalary = Number(overview?.teachersMissingSalaryProfile ?? rows.filter((row) => !row.teacher.salary).length);
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-12 text-slate-900">
@@ -162,7 +172,7 @@ const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
               <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">Payroll Register</h2>
               <p className="mt-2 text-sm leading-6 text-slate-500">Teacher select karke salary update, adjustment add, aur monthly payment mark kar sakte ho.</p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-[minmax(220px,1fr)_170px]">
+            <div className="grid gap-3 sm:grid-cols-[minmax(220px,1fr)_170px_auto]">
               <SearchBox value={searchTerm} onChange={setSearchTerm} placeholder="Search teacher, ID, class..." />
               <select
                 value={statusFilter}
@@ -171,12 +181,13 @@ const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
               >
                 {['All', 'Paid', 'Pending'].map((option) => <option key={option}>{option}</option>)}
               </select>
+              <ActionButton icon={PlusCircle} label="Generate Month" onClick={onGenerateMonth} disabled={loading} />
             </div>
           </div>
 
           <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
             <div className="hidden grid-cols-[1fr_1.2fr_0.9fr_0.9fr_0.8fr_0.8fr] gap-4 bg-slate-100 px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 lg:grid">
-              <div>Teacher ID</div>
+              <div>Employee ID</div>
               <div>Name</div>
               <div>Class</div>
               <div>Monthly Salary</div>
@@ -184,7 +195,9 @@ const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
               <div>Pending</div>
             </div>
 
-            {filteredRows.length ? (
+            {loading ? (
+              <EmptyState text="Loading salary register..." />
+            ) : filteredRows.length ? (
               <div className="divide-y divide-slate-200">
                 {filteredRows.map((row) => (
                   <button
@@ -194,10 +207,10 @@ const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
                     className="block w-full bg-white px-4 py-4 text-left transition hover:bg-emerald-50/70"
                   >
                     <div className="grid gap-3 lg:grid-cols-[1fr_1.2fr_0.9fr_0.9fr_0.8fr_0.8fr] lg:items-center lg:gap-4">
-                      <TableCell label="Teacher ID" value={row.teacher.teacherSystemId || row.teacher.employeeId || 'Pending'} strong />
+                      <TableCell label="Employee ID" value={row.teacher.employeeId || 'Pending'} strong />
                       <TableCell label="Name" value={row.teacherName} strong />
-                      <TableCell label="Class" value={row.teacher.assignedClass || 'Not assigned'} />
-                      <TableCell label="Monthly Salary" value={formatSalary(row.teacher.salary)} />
+                      <TableCell label="Class" value={row.teacher.specialization || 'Not assigned'} />
+                      <TableCell label="Monthly Salary" value={formatSalary(row.currentEntry?.baseSalary ?? row.teacher.salary)} />
                       <div>
                         <MobileLabel>Status</MobileLabel>
                         <StatusPill status={row.status} />
@@ -211,92 +224,99 @@ const PayrollRegister = ({ teachers, salaryPayments, loadError, navigate }) => {
               <EmptyState text="No teacher record matched your filters." />
             )}
           </div>
+          <Pager
+            page={payrollPage}
+            totalPages={payrollPageData?.totalPages || 1}
+            onPrev={() => setPayrollPage((page) => Math.max(0, page - 1))}
+            onNext={() => setPayrollPage((page) => page + 1)}
+          />
         </section>
       </main>
     </div>
   );
 };
 
-const TeacherPayrollDesk = ({ teacherId, teachers, salaryPayments, teacherAttendanceRecords, setSalaryPayments, loadError, setLoadError, navigate }) => {
+const TeacherPayrollDesk = ({ teacherId, loadError, setLoadError, navigate, queryClient }) => {
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(new Date()));
   const [draft, setDraft] = useState({});
+  const [paymentsPage, setPaymentsPage] = useState(0);
 
-  const teacher = useMemo(
-    () => teachers.find((entry) => String(entry.id) === String(teacherId)) || null,
-    [teacherId, teachers],
-  );
+  const summaryQuery = useQuery({
+    queryKey: ['salary', 'teacher-summary', teacherId, selectedMonth],
+    queryFn: () => salaryApi.getTeacherSummary(teacherId, { monthKey: selectedMonth }),
+    enabled: Boolean(teacherId && selectedMonth),
+  });
 
-  const teacherWithPayments = useMemo(
-    () => (teacher ? attachSalaryPayments(teacher, salaryPayments) : null),
-    [salaryPayments, teacher],
-  );
-  const timeline = useMemo(() => (teacherWithPayments ? buildSalaryTimeline(teacherWithPayments) : []), [teacherWithPayments]);
-  const selectedEntry = useMemo(
-    () => timeline.find((entry) => entry.monthKey === selectedMonth) || null,
-    [selectedMonth, timeline],
-  );
-  const previousPendingEntries = useMemo(
-    () => (teacherWithPayments ? getPreviousPendingSalaryEntries(teacherWithPayments, selectedMonth) : []),
-    [selectedMonth, teacherWithPayments],
-  );
-  const paidHistory = useMemo(() => timeline.filter((entry) => entry.isPaid), [timeline]);
-  const previousPendingAmount = previousPendingEntries.reduce((sum, entry) => sum + (Number(entry.baseSalary) || 0), 0);
-  const draftSalary = Number(draft.salary ?? teacher?.salary) || 0;
+  const paymentsQuery = useQuery({
+    queryKey: ['salary', 'payments', teacherId, paymentsPage],
+    queryFn: () => salaryApi.getTeacherPayments(teacherId, { page: paymentsPage, size: 25 }),
+    enabled: Boolean(teacherId),
+  });
+
+  const savePaymentMutation = useMutation({
+    mutationFn: salaryApi.savePayment,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['salary'] });
+    },
+  });
+
+  const generatePayrollMutation = useMutation({
+    mutationFn: () => salaryApi.generatePayrollPeriod({ teacherId, monthKey: selectedMonth }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['salary'] });
+    },
+  });
+
+  React.useEffect(() => {
+    const error = summaryQuery.error || paymentsQuery.error || savePaymentMutation.error || generatePayrollMutation.error;
+    setLoadError(error?.message || '');
+  }, [generatePayrollMutation.error, paymentsQuery.error, savePaymentMutation.error, setLoadError, summaryQuery.error]);
+
+  const summary = summaryQuery.data || null;
+  const teacher = summary ? {
+    id: summary.teacherId,
+    firstName: summary.teacherName,
+    employeeId: summary.employeeId,
+    specialization: summary.specialization,
+    contractType: summary.contractType,
+    salary: summary.salaryProfile?.baseSalary,
+  } : null;
+  const selectedEntry = summary?.payrollPeriod || null;
+  const paidHistory = pageContent(paymentsQuery.data).map((payment) => ({
+    ...payment,
+    label: getMonthLabel(payment.monthKey),
+    isPaid: payment.status === 'COMPLETED',
+  }));
+  const previousPendingAmount = Number(summary?.previousOutstanding || 0);
+  const draftSalary = Number(selectedEntry?.baseSalary ?? teacher?.salary) || 0;
   const bonusAmount = Math.max(0, Number(draft.bonusAmount) || 0);
-  const attendanceDeduction = useMemo(
-    () => calculateTeacherAttendanceDeduction(teacher, selectedMonth, teacherAttendanceRecords),
-    [selectedMonth, teacher, teacherAttendanceRecords],
-  );
-  const payableAmount = Math.max(0, draftSalary + previousPendingAmount + bonusAmount - attendanceDeduction.leaveDeductionAmount);
-
-  const updateSalaryPaymentsState = (savedPayments) => {
-    const savedList = Array.isArray(savedPayments) ? savedPayments : [savedPayments];
-    setSalaryPayments((current) => {
-      const savedKeys = new Set(savedList.map((entry) => `${entry.teacherId}-${entry.monthKey}`));
-      return [
-        ...current.filter((entry) => !savedKeys.has(`${entry.teacherId}-${entry.monthKey}`)),
-        ...savedList,
-      ];
-    });
-  };
+  const attendanceDeduction = selectedEntry || {};
+  const payableAmount = Math.max(0, Number(summary?.totalPayable ?? selectedEntry?.outstandingAmount ?? 0) + bonusAmount);
 
   const handleMarkPaid = async () => {
-    if (!teacher || !teacherWithPayments || !teacher.salary || selectedEntry?.isPaid) return;
-    const paymentOptions = {
-      bonusAmount: draft.bonusAmount,
-      ...attendanceDeduction,
-      note: draft.note,
-    };
-    const updatedTeacherPayload = markSalaryPaid(teacherWithPayments, selectedMonth, {
-      ...paymentOptions,
-    });
-    const monthsToSave = new Set([selectedMonth, ...previousPendingEntries.map((entry) => entry.monthKey)]);
-    const paymentPayloads = updatedTeacherPayload.paymentHistory
-      .filter((entry) => monthsToSave.has(entry.monthKey))
-      .map((entry) => toSalaryPaymentPayload(teacher.id, entry));
-
+    if (!teacher || !selectedEntry || selectedEntry.status === 'PAID') return;
     try {
-      const savedPayments = await Promise.all(paymentPayloads.map((payload) => salaryApi.savePayment(payload)));
-      let noticeCreateError = '';
-      try {
-        await noticeApi.create(buildSalaryPaidNoticePayload({
-          teacher,
-          monthKey: selectedMonth,
-          payableAmount,
-          previousPendingAmount,
-          bonusAmount,
-          attendanceDeduction,
-          note: draft.note,
-        }));
-      } catch (noticeError) {
-        noticeCreateError = noticeError.message || 'Salary paid, but teacher notice could not be created.';
-      }
-      updateSalaryPaymentsState(savedPayments);
+      await savePaymentMutation.mutateAsync({
+        teacherId: teacher.id,
+        monthKey: selectedMonth,
+        payrollMonth: selectedMonth,
+        totalAmount: payableAmount,
+        bonusAmount,
+        settlePreviousOutstanding: true,
+        paidOn: new Date().toISOString().slice(0, 10),
+        idempotencyKey: crypto.randomUUID?.() || `${teacher.id}-${selectedMonth}-${Date.now()}`,
+        note: draft.note || '',
+      });
       setDraft({});
-      setLoadError(noticeCreateError);
+      setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to mark teacher salary as paid.');
     }
+  };
+
+  const handleGeneratePayroll = () => {
+    if (!teacherId || !selectedMonth) return;
+    generatePayrollMutation.mutate();
   };
 
   if (!teacher) {
@@ -375,11 +395,22 @@ const TeacherPayrollDesk = ({ teacherId, teachers, salaryPayments, teacherAttend
               <div className="lg:col-span-2">
                 <ActionButton
                   icon={CheckCircle2}
-                  label={selectedEntry?.isPaid ? 'Already Paid' : 'Tap To Paid'}
+                  label={selectedEntry?.status === 'PAID' ? 'Already Paid' : 'Tap To Paid'}
                   onClick={handleMarkPaid}
-                  disabled={!teacher.salary || selectedEntry?.isPaid}
+                  disabled={draftSalary <= 0 || selectedEntry?.status === 'PAID' || selectedEntry?.status === 'DRAFT' || savePaymentMutation.isPending}
                   full
                 />
+                {!selectedEntry ? (
+                  <div className="mt-3">
+                    <ActionButton
+                      icon={PlusCircle}
+                      label="Generate Payroll"
+                      onClick={handleGeneratePayroll}
+                      disabled={generatePayrollMutation.isPending}
+                      full
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
           </Panel>
@@ -421,6 +452,12 @@ const TeacherPayrollDesk = ({ teacherId, teachers, salaryPayments, teacherAttend
           ) : (
             <EmptyState text="No paid salary history available yet." />
           )}
+          <Pager
+            page={paymentsPage}
+            totalPages={paymentsQuery.data?.totalPages || 1}
+            onPrev={() => setPaymentsPage((page) => Math.max(0, page - 1))}
+            onNext={() => setPaymentsPage((page) => page + 1)}
+          />
         </Panel>
       </main>
     </div>
@@ -563,6 +600,39 @@ const EmptyState = ({ text, compact = false }) => (
   </div>
 );
 
+const Pager = ({ page, totalPages, onPrev, onNext }) => (
+  <div className="mt-4 flex items-center justify-end gap-2">
+    <button
+      type="button"
+      onClick={onPrev}
+      disabled={page <= 0}
+      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-600 disabled:cursor-not-allowed disabled:text-slate-300"
+    >
+      Previous
+    </button>
+    <span className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+      Page {page + 1} / {Math.max(totalPages, 1)}
+    </span>
+    <button
+      type="button"
+      onClick={onNext}
+      disabled={page + 1 >= Math.max(totalPages, 1)}
+      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-600 disabled:cursor-not-allowed disabled:text-slate-300"
+    >
+      Next
+    </button>
+  </div>
+);
+
+function useDebouncedValue(value, delayMs) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+  return debouncedValue;
+}
+
 const getTeacherName = (teacher) => `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim() || 'Unnamed teacher';
 
 const calculateTeacherAttendanceDeduction = (teacher, monthKey, records = []) => {
@@ -696,7 +766,7 @@ const buildSalaryPaidNoticePayload = ({
     summary: `${teacherName}, your ${monthLabel} salary of ${formatCurrencyAmount(payableAmount)} has been marked paid.`,
     details: [
       `Teacher: ${teacherName}`,
-      `Teacher ID: ${teacher.teacherSystemId || teacher.employeeId || '-'}`,
+      `Employee ID: ${teacher.employeeId || '-'}`,
       `Salary Month: ${monthLabel}`,
       `Paid Date: ${today}`,
       '',
@@ -716,5 +786,11 @@ const buildSalaryPaidNoticePayload = ({
     ].join('\n'),
   };
 };
+
+function pageContent(page) {
+  if (Array.isArray(page)) return page;
+  if (Array.isArray(page?.content)) return page.content;
+  return [];
+}
 
 export default SalaryManagement;

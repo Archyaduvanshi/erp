@@ -1,709 +1,487 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
-  BookCopy,
-  BookOpen,
+  ChevronDown,
   ChevronRight,
-  Pencil,
+  Copy,
   Library,
   Plus,
   Save,
-  ScrollText,
   Search,
-  Tag,
   Trash2,
   X,
 } from 'lucide-react';
-import { courseBookApi, studentApi } from '../../utils/api';
+import { academicSessionApi, classSubjectApi, curriculumApi, subjectApi } from '../../utils/api';
+
+const subjectTypes = ['CORE', 'ELECTIVE', 'OPTIONAL', 'ACTIVITY'];
+const statuses = ['ACTIVE', 'INACTIVE', 'ARCHIVED'];
+const languages = ['English', 'Hindi', 'Bilingual'];
 
 const initialSubjectForm = {
-  className: '',
-  academicYear: '2026-27',
+  subjectId: '',
+  subjectName: '',
+  subjectCode: '',
+  subjectType: 'CORE',
+  displayOrder: 0,
+  status: 'ACTIVE',
   notes: '',
 };
 
-const initialBookEntry = {
-  subjectName: '',
+const initialBookForm = {
+  bookTitle: '',
   publisher: '',
-  language: '',
+  language: 'English',
+  isbn: '',
+  edition: '',
+  primaryBook: true,
+  status: 'ACTIVE',
+  notes: '',
 };
-
-const languageOptions = ['', 'ENGLISH', 'HINDI', 'BILINGUAL'];
-
-const normalizeClassLabel = (value) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) return '';
-  const [baseClass] = normalized.split('/');
-  return baseClass.trim();
-};
-
-const toUpperValue = (value) => String(value || '').trim().toUpperCase();
 
 const CourseSubjectManagement = () => {
   const navigate = useNavigate();
-  const [students, setStudents] = useState([]);
-  const [bookMappings, setBookMappings] = useState([]);
-  const [selectedClass, setSelectedClass] = useState('');
-  const [subjectForm, setSubjectForm] = useState(initialSubjectForm);
-  const [bookEntry, setBookEntry] = useState(initialBookEntry);
-  const [pendingBooks, setPendingBooks] = useState([]);
-  const [editingBookId, setEditingBookId] = useState(null);
-  const [editBookForm, setEditBookForm] = useState(initialBookEntry);
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const queryClient = useQueryClient();
+  const [selectedSessionId, setSelectedSessionId] = useState('');
+  const [selectedClass, setSelectedClass] = useState(null);
   const [classSearch, setClassSearch] = useState('');
   const [subjectSearch, setSubjectSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ACTIVE');
+  const [expandedSubjectId, setExpandedSubjectId] = useState(null);
+  const [subjectFormOpen, setSubjectFormOpen] = useState(false);
+  const [subjectForm, setSubjectForm] = useState(initialSubjectForm);
+  const [bookFormSubjectId, setBookFormSubjectId] = useState(null);
+  const [bookForm, setBookForm] = useState(initialBookForm);
   const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
-    refreshData();
-  }, []);
+  const sessionsQuery = useQuery({
+    queryKey: ['academic-sessions'],
+    queryFn: academicSessionApi.getAll,
+    staleTime: 15 * 60 * 1000,
+  });
 
-  const refreshData = async () => {
-    try {
-      const [studentResponse, courseBookResponse] = await Promise.all([
-        studentApi.getAll(),
-        courseBookApi.getAll(),
-      ]);
-      setStudents(studentResponse);
-      setBookMappings(courseBookResponse);
-      setLoadError('');
-    } catch (error) {
-      setStudents([]);
-      setBookMappings([]);
-      setLoadError(error.message || 'Unable to load course and subject data.');
-    }
-  };
+  const sessions = sessionsQuery.data || [];
+  const activeSession = sessions.find((session) => String(session.id) === String(selectedSessionId))
+    || sessions.find((session) => session.current)
+    || sessions[0];
+  const academicSessionId = activeSession?.id || '';
 
-  const availableClasses = useMemo(() => {
-    const classes = [
-      ...new Set(
-        students
-          .map((student) => normalizeClassLabel(student.assignedClass || student.className))
-          .filter(Boolean),
-      ),
-    ];
+  const classSummaryQuery = useQuery({
+    queryKey: ['curriculum-classes', academicSessionId],
+    queryFn: () => curriculumApi.getClassSummaries(academicSessionId),
+    enabled: Boolean(academicSessionId),
+    staleTime: 10 * 60 * 1000,
+  });
 
-    return classes.sort((a, b) => a.localeCompare(b));
-  }, [students]);
+  const subjectMasterQuery = useQuery({
+    queryKey: ['subject-master'],
+    queryFn: subjectApi.getAll,
+    staleTime: 15 * 60 * 1000,
+  });
 
-  const filteredClasses = useMemo(() => {
+  const classSubjectsQuery = useQuery({
+    queryKey: ['class-subjects', selectedClass?.classId, academicSessionId],
+    queryFn: () => classSubjectApi.getByClass(selectedClass.classId, academicSessionId),
+    enabled: Boolean(selectedClass?.classId && academicSessionId),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const booksQuery = useQuery({
+    queryKey: ['class-subject-books', expandedSubjectId],
+    queryFn: () => classSubjectApi.getBooks(expandedSubjectId),
+    enabled: Boolean(expandedSubjectId),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const visibleClasses = useMemo(() => {
     const query = classSearch.trim().toLowerCase();
-    return availableClasses.filter((className) => (
-      !query || className.toLowerCase().includes(query)
-    ));
-  }, [availableClasses, classSearch]);
+    return (classSummaryQuery.data || []).filter((row) => !query || String(row.className || '').toLowerCase().includes(query));
+  }, [classSummaryQuery.data, classSearch]);
 
-  const classMappings = useMemo(() => (
-    bookMappings.filter((record) => normalizeClassLabel(record.className) === selectedClass)
-  ), [bookMappings, selectedClass]);
-
-  const filteredClassMappings = useMemo(() => {
+  const visibleSubjects = useMemo(() => {
     const query = subjectSearch.trim().toLowerCase();
-    return classMappings.filter((record) => {
-      if (!query) return true;
-      return (
-        String(record.subjectName || '').toLowerCase().includes(query) ||
-        String(record.publisher || '').toLowerCase().includes(query) ||
-        String(record.language || '').toLowerCase().includes(query)
-      );
+    return (classSubjectsQuery.data || []).filter((row) => {
+      const matchesSearch = !query
+        || String(row.subjectName || '').toLowerCase().includes(query)
+        || String(row.subjectCode || '').toLowerCase().includes(query);
+      return matchesSearch
+        && (!typeFilter || row.subjectType === typeFilter)
+        && (!statusFilter || row.status === statusFilter);
     });
-  }, [classMappings, subjectSearch]);
+  }, [classSubjectsQuery.data, statusFilter, subjectSearch, typeFilter]);
 
-  const openClassDesk = (className) => {
-    setSelectedClass(className);
-    setSubjectForm((current) => ({
-      ...initialSubjectForm,
-      academicYear: current.academicYear || '2026-27',
-      className,
-    }));
-    setBookEntry(initialBookEntry);
-    setPendingBooks([]);
-    setEditingBookId(null);
-    setEditBookForm(initialBookEntry);
-    setDeleteTarget(null);
-    setSubjectSearch('');
+  const addSubjectMutation = useMutation({
+    mutationFn: (payload) => classSubjectApi.create(payload),
+    onSuccess: async () => {
+      setSubjectForm(initialSubjectForm);
+      setSubjectFormOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['class-subjects', selectedClass?.classId, academicSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['subject-master'] }),
+      ]);
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save subject.'),
+  });
+
+  const archiveSubjectMutation = useMutation({
+    mutationFn: (classSubjectId) => classSubjectApi.archive(classSubjectId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['class-subjects', selectedClass?.classId, academicSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] }),
+      ]);
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to archive subject.'),
+  });
+
+  const saveBookMutation = useMutation({
+    mutationFn: ({ classSubjectId, payload }) => classSubjectApi.createBook(classSubjectId, payload),
+    onSuccess: async (_, variables) => {
+      setBookForm(initialBookForm);
+      setBookFormSubjectId(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['class-subject-books', variables.classSubjectId] }),
+        queryClient.invalidateQueries({ queryKey: ['class-subjects', selectedClass?.classId, academicSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] }),
+      ]);
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save book.'),
+  });
+
+  const deleteBookMutation = useMutation({
+    mutationFn: ({ classSubjectId, bookId }) => classSubjectApi.deleteBook(classSubjectId, bookId),
+    onSuccess: async (_, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['class-subject-books', variables.classSubjectId] }),
+        queryClient.invalidateQueries({ queryKey: ['class-subjects', selectedClass?.classId, academicSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] }),
+      ]);
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to delete book.'),
+  });
+
+  const copyMutation = useMutation({
+    mutationFn: (payload) => curriculumApi.copy(payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['class-subjects', selectedClass?.classId, academicSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] }),
+      ]);
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to copy curriculum.'),
+  });
+
+  const handleSessionChange = (sessionId) => {
+    setSelectedSessionId(sessionId);
+    setSelectedClass(null);
+    setExpandedSubjectId(null);
   };
 
-  const handleAddBook = () => {
-    const nextBook = {
-      id: Date.now() + pendingBooks.length,
-      subjectName: toUpperValue(bookEntry.subjectName),
-      publisher: toUpperValue(bookEntry.publisher),
-      language: toUpperValue(bookEntry.language),
-    };
-
-    if (!nextBook.subjectName || !nextBook.publisher || !nextBook.language) return;
-
-    setPendingBooks((current) => [...current, nextBook]);
-    setBookEntry(initialBookEntry);
-  };
-
-  const handleRemovePendingBook = (bookId) => {
-    setPendingBooks((current) => current.filter((book) => book.id !== bookId));
-  };
-
-  const handleSaveSubjectBooks = (e) => {
-    e.preventDefault();
-    if (!selectedClass || pendingBooks.length === 0) return;
-    Promise.all(
-      pendingBooks.map((book) => courseBookApi.create({
-        className: selectedClass,
-        subjectName: book.subjectName,
-        academicYear: subjectForm.academicYear.trim() || '2026-27',
-        notes: subjectForm.notes.trim(),
-        publisher: book.publisher,
-        language: book.language,
-      })),
-    )
-      .then(async () => {
-        setSubjectForm({
-          ...initialSubjectForm,
-          className: selectedClass,
-        });
-        setBookEntry(initialBookEntry);
-        setPendingBooks([]);
-        await refreshData();
-      })
-      .catch((error) => {
-        setLoadError(error.message || 'Unable to save class subject entries.');
-      });
-  };
-
-  const handleEdit = (record) => {
-    setEditingBookId(record.id);
-    setEditBookForm({
-      subjectName: toUpperValue(record.subjectName),
-      publisher: toUpperValue(record.publisher),
-      language: toUpperValue(record.language),
-      academicYear: toUpperValue(record.academicYear || subjectForm.academicYear || '2026-27'),
-      notes: toUpperValue(record.notes),
+  const handleSubjectSubmit = (event) => {
+    event.preventDefault();
+    if (!selectedClass || !academicSessionId) return;
+    addSubjectMutation.mutate({
+      academicSessionId,
+      classId: selectedClass.classId,
+      subjectId: subjectForm.subjectId ? Number(subjectForm.subjectId) : null,
+      subjectName: subjectForm.subjectId ? null : subjectForm.subjectName,
+      subjectCode: subjectForm.subjectCode,
+      subjectType: subjectForm.subjectType,
+      displayOrder: Number(subjectForm.displayOrder) || 0,
+      status: subjectForm.status,
+      notes: subjectForm.notes,
     });
   };
 
-  const handleCancelEdit = () => {
-    setEditingBookId(null);
-    setEditBookForm(initialBookEntry);
+  const handleBookSubmit = (event, classSubjectId) => {
+    event.preventDefault();
+    saveBookMutation.mutate({ classSubjectId, payload: bookForm });
   };
 
-  const handleUpdate = async (record) => {
-    const payload = {
-      className: selectedClass,
-      subjectName: toUpperValue(editBookForm.subjectName),
-      publisher: toUpperValue(editBookForm.publisher),
-      language: toUpperValue(editBookForm.language),
-      academicYear: toUpperValue(editBookForm.academicYear) || '2026-27',
-      notes: toUpperValue(editBookForm.notes),
-    };
-
-    if (!payload.subjectName || !payload.publisher || !payload.language) {
-      setLoadError('Subject name, publisher, and language are required before updating.');
-      return;
-    }
-
-    try {
-      await courseBookApi.update(record.id, payload);
-      setEditingBookId(null);
-      setEditBookForm(initialBookEntry);
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to update this subject book entry.');
-    }
+  const copyFromPreviousSession = () => {
+    if (!selectedClass || sessions.length < 2) return;
+    const source = sessions.find((session) => String(session.id) !== String(academicSessionId));
+    if (!source) return;
+    copyMutation.mutate({
+      sourceAcademicSessionId: source.id,
+      targetAcademicSessionId: academicSessionId,
+      classId: selectedClass.classId,
+      copySubjects: true,
+      copyBooks: true,
+    });
   };
 
-  const handleDeleteRequest = (record) => {
-    setDeleteTarget(record);
-  };
-
-  const handleCancelDelete = () => {
-    if (isDeleting) return;
-    setDeleteTarget(null);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
-    try {
-      await courseBookApi.delete(deleteTarget.id);
-      if (editingBookId === deleteTarget.id) {
-        setEditingBookId(null);
-        setEditBookForm(initialBookEntry);
-      }
-      setDeleteTarget(null);
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to delete this subject entry.');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  const selectedSubjectBooks = booksQuery.data || [];
+  const subjectMaster = subjectMasterQuery.data || [];
+  const error = loadError || sessionsQuery.error?.message || classSummaryQuery.error?.message || classSubjectsQuery.error?.message || booksQuery.error?.message || '';
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#fffdf7_0%,#fff7ed_45%,#f8fafc_100%)] text-slate-900">
-      <div className="border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f4f7fb_0%,#eef4ff_55%,#f9fbff_100%)] text-slate-900 selection:bg-cyan-500 selection:text-slate-950">
+      <header className="border-b border-slate-200/70 bg-white/70 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => selectedClass ? setSelectedClass('') : navigate('/college')}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-amber-300 hover:text-amber-700"
-            >
-              <ArrowLeft size={14} />
-              {selectedClass ? 'Back To Classes' : 'Back'}
+            <button type="button" onClick={() => selectedClass ? setSelectedClass(null) : navigate('/college')} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-cyan-300 hover:text-cyan-700">
+              <ArrowLeft size={15} />
+              {selectedClass ? 'Classes' : 'Back'}
             </button>
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-amber-600">Course And Subject</p>
-              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Class Subject Register</h1>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-600">Course & Subject Management</p>
+              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{selectedClass ? selectedClass.className : 'Curriculum Studio'}</h1>
             </div>
           </div>
+          <select value={String(academicSessionId || '')} onChange={(event) => handleSessionChange(event.target.value)} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100">
+            {sessions.map((session) => <option key={session.id} value={session.id}>{session.name}</option>)}
+          </select>
         </div>
-      </div>
+      </header>
 
-      <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
-          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
-          </div>
-        ) : null}
+      <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
+        {error ? <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">{error}</div> : null}
 
         {!selectedClass ? (
-          <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <section className="rounded-4xl border border-slate-200/80 bg-white p-5 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-6">
+            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Choose Class</h3>
-                <p className="mt-2 text-sm leading-7 text-slate-500">
-                  Sirf class number ya course name dikh raha hai, section nahi. Ek class ke sabhi sections same subjects share karenge.
+                <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Class Directory</h3>
+                <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                  {visibleClasses.length} classes | curriculum summary
                 </p>
               </div>
-              <SearchInput value={classSearch} onChange={setClassSearch} placeholder="Search class..." />
+              <div className="w-full max-w-md">
+                <SearchInput value={classSearch} onChange={setClassSearch} placeholder="Search class..." />
+              </div>
             </div>
-
-            {filteredClasses.length ? (
-              <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                {filteredClasses.map((className) => {
-                  const classBookCount = bookMappings.filter((record) => normalizeClassLabel(record.className) === className).length;
-                  const classSubjectCount = new Set(
-                    bookMappings
-                      .filter((record) => normalizeClassLabel(record.className) === className)
-                      .map((record) => record.subjectName || ''),
-                  ).size;
-
-                  return (
-                    <button
-                      key={className}
-                      type="button"
-                      onClick={() => openClassDesk(className)}
-                      className="group rounded-4xl border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-6 text-left shadow-[0_16px_40px_-28px_rgba(15,23,42,0.35)] transition hover:-translate-y-1 hover:border-amber-300"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-amber-100 text-amber-700">
-                          <Tag size={24} />
-                        </div>
-                        <ChevronRight className="text-slate-300 transition group-hover:text-amber-700" size={20} />
+            {classSummaryQuery.isLoading ? (
+              <SkeletonGrid />
+            ) : visibleClasses.length ? (
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {visibleClasses.map((classItem) => (
+                  <button key={classItem.classId} type="button" onClick={() => { setSelectedClass(classItem); setExpandedSubjectId(null); setSubjectSearch(''); }} className="group rounded-[1.9rem] border border-slate-200/80 bg-slate-50 p-6 text-left shadow-[0_16px_40px_-28px_rgba(15,23,42,0.35)] transition hover:-translate-y-1 hover:border-cyan-200 hover:bg-white hover:shadow-[0_24px_50px_-28px_rgba(6,182,212,0.35)]">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{classItem.className}</p>
+                        <p className="mt-2 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">{classItem.subjectCount || 0} Subjects | {classItem.bookCount || 0} Books</p>
                       </div>
-                      <h4 className="mt-7 font-serif text-3xl font-black italic tracking-tight text-slate-950">{className}</h4>
-                      <div className="mt-5 flex flex-wrap gap-2">
-                        <InfoPill icon={ScrollText} text={`${classSubjectCount} subjects`} />
-                        <InfoPill icon={Library} text={`${classBookCount} books`} />
-                      </div>
-                    </button>
-                  );
-                })}
+                      <span className="rounded-2xl bg-white p-3 text-slate-400 shadow-sm transition group-hover:bg-cyan-50 group-hover:text-cyan-700">
+                        <ChevronRight className="h-5 w-5" />
+                      </span>
+                    </div>
+                  </button>
+                ))}
               </div>
             ) : (
-              <EmptyState
-                icon={Tag}
-                title="No classes found"
-                description="Student records me jo unique classes milengi, wahi yahan show hongi."
-              />
+              <EmptyState title="No classes configured" action="Add class data once, then subjects can exist even before students are enrolled." />
             )}
           </section>
         ) : (
-          <div className="space-y-8">
-            <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-              <FormTitle
-                title={`Add Subjects For ${selectedClass}`}
-                description="Is class ke liye multiple entries add karo. Har row me subject name, publisher, aur language rahegi."
-              />
-
-              <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSaveSubjectBooks}>
-                <CreativeInput label="Class" value={selectedClass} readOnly />
-                <CreativeInput
-                  label="Academic Year"
-                  value={subjectForm.academicYear}
-                  onChange={(e) => setSubjectForm({ ...subjectForm, className: selectedClass, academicYear: e.target.value })}
-                  placeholder="2026-27"
-                />
-                <div className="md:col-span-2">
-                  <CreativeTextarea
-                    label="Class Notes"
-                    value={subjectForm.notes}
-                    onChange={(e) => setSubjectForm({ ...subjectForm, className: selectedClass, notes: e.target.value.toUpperCase() })}
-                    placeholder="WRITE OPTIONAL NOTE FOR THIS CLASS BOOK LIST"
-                  />
-                </div>
-
-                <div className="md:col-span-2 rounded-[1.8rem] border border-slate-200 bg-slate-50 p-5">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.24em] text-amber-700">Books Under This Class</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-600">
-                        Ek class ke liye multiple subject entries add kar sakte ho. Har row me subject name, publisher, aur language dalo.
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
-                      {pendingBooks.length} pending
-                    </span>
-                  </div>
-
-                  <div className="mt-5 grid gap-5 md:grid-cols-3">
-                    <CreativeInput
-                      label="Subject Name"
-                      value={bookEntry.subjectName}
-                      onChange={(e) => setBookEntry({ ...bookEntry, subjectName: e.target.value.toUpperCase() })}
-                      placeholder="WRITE SUBJECT NAME"
-                    />
-                    <CreativeInput
-                      label="Publisher Name"
-                      value={bookEntry.publisher}
-                      onChange={(e) => setBookEntry({ ...bookEntry, publisher: e.target.value.toUpperCase() })}
-                      placeholder="WRITE PUBLISHER NAME"
-                    />
-                    <CreativeSelect
-                      label="Language"
-                      value={bookEntry.language}
-                      onChange={(e) => setBookEntry({ ...bookEntry, language: e.target.value })}
-                      options={languageOptions}
-                      renderOptionLabel={(value) => value || 'SELECT'}
-                    />
-                    <div className="md:col-span-3">
-                      <button
-                        type="button"
-                        onClick={handleAddBook}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-amber-800 transition hover:bg-amber-100"
-                      >
-                        <Plus size={15} />
-                        Add Book To Subject
-                      </button>
-                    </div>
-                  </div>
-
-                  {pendingBooks.length ? (
-                    <div className="mt-6 grid gap-4">
-                      {pendingBooks.map((book) => (
-                        <div key={book.id} className="rounded-[1.4rem] border border-slate-200 bg-white p-4 shadow-sm">
-                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="flex flex-wrap gap-2">
-                              <InfoPill icon={ScrollText} text={book.subjectName} />
-                              <InfoPill icon={Library} text={book.publisher} />
-                              <InfoPill icon={BookOpen} text={book.language} />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleRemovePendingBook(book.id)}
-                              className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="mt-6 rounded-[1.4rem] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm font-medium text-slate-500">
-                      No books added yet. Save karne se pehle class ke liye multiple books add karo.
-                    </div>
-                  )}
-                </div>
-
-                <div className="md:col-span-2">
-                  <PrimaryButton type="submit" icon={BookCopy} label="Save Class Books" />
-                </div>
-              </form>
-            </section>
-
-            <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <FormTitle
-                  title={`Saved Books For ${selectedClass}`}
-                  description="Saved subject books yahan table me manage karo. Edit, save, cancel, aur delete actions available hain."
-                />
-                <SearchInput value={subjectSearch} onChange={setSubjectSearch} placeholder="Search subject, book, publisher..." />
+          <section className="rounded-4xl border border-slate-200/80 bg-white p-5 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-6">
+            <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.24em] text-cyan-600">Academic Session: {activeSession?.name || '-'}</p>
+                <h2 className="mt-1 font-serif text-2xl font-black italic tracking-tight text-slate-950">{selectedClass.className} Subjects</h2>
               </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={copyFromPreviousSession} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"><Copy size={15} /> Copy Previous</button>
+                <button type="button" onClick={() => setSubjectFormOpen(true)} className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600"><Plus size={15} /> Add Subject</button>
+              </div>
+            </div>
 
-              {filteredClassMappings.length ? (
-                <div className="mt-8 overflow-x-auto rounded-[1.4rem] border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200 text-left">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <TableHeader>Subject</TableHeader>
-                        <TableHeader>Publisher</TableHeader>
-                        <TableHeader>Language</TableHeader>
-                        <TableHeader>Academic Year</TableHeader>
-                        <TableHeader>Notes</TableHeader>
-                        <TableHeader align="right">Actions</TableHeader>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
-                      {filteredClassMappings.map((record) => {
-                        const isEditing = editingBookId === record.id;
+            <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_180px_180px]">
+              <SearchInput value={subjectSearch} onChange={setSubjectSearch} placeholder="Search subject..." />
+              <SelectBare value={typeFilter} onChange={setTypeFilter}><option value="">All Types</option>{subjectTypes.map((type) => <option key={type} value={type}>{type}</option>)}</SelectBare>
+              <SelectBare value={statusFilter} onChange={setStatusFilter}><option value="">All Status</option>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</SelectBare>
+            </div>
 
-                        return (
-                          <tr key={record.id} className="align-top">
-                            <TableCell>
-                              {isEditing ? (
-                                <InlineInput value={editBookForm.subjectName} onChange={(e) => setEditBookForm({ ...editBookForm, subjectName: e.target.value.toUpperCase() })} />
-                              ) : (
-                                <span className="font-black text-slate-950">{toUpperValue(record.subjectName) || 'SUBJECT NOT ADDED'}</span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {isEditing ? (
-                                <InlineInput value={editBookForm.publisher} onChange={(e) => setEditBookForm({ ...editBookForm, publisher: e.target.value.toUpperCase() })} />
-                              ) : (
-                                toUpperValue(record.publisher) || 'PUBLISHER PENDING'
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {isEditing ? (
-                                <InlineSelect
-                                  value={editBookForm.language}
-                                  onChange={(e) => setEditBookForm({ ...editBookForm, language: e.target.value })}
-                                  options={languageOptions}
-                                  renderOptionLabel={(value) => value || 'SELECT'}
-                                />
-                              ) : (
-                                toUpperValue(record.language) || 'LANGUAGE PENDING'
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {isEditing ? (
-                                <InlineInput value={editBookForm.academicYear} onChange={(e) => setEditBookForm({ ...editBookForm, academicYear: e.target.value.toUpperCase() })} />
-                              ) : (
-                                toUpperValue(record.academicYear) || '2026-27'
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {isEditing ? (
-                                <InlineInput value={editBookForm.notes} onChange={(e) => setEditBookForm({ ...editBookForm, notes: e.target.value.toUpperCase() })} placeholder="WRITE OPTIONAL NOTES" />
-                              ) : (
-                                toUpperValue(record.notes) || '-'
-                              )}
-                            </TableCell>
-                            <TableCell align="right">
-                              <div className="flex justify-end gap-2">
-                                {isEditing ? (
-                                  <>
-                                    <IconButton label="Save" icon={Save} tone="emerald" onClick={() => handleUpdate(record)} />
-                                    <IconButton label="Cancel" icon={X} onClick={handleCancelEdit} />
-                                  </>
-                                ) : (
-                                  <>
-                                    <IconButton label="Edit" icon={Pencil} tone="amber" onClick={() => handleEdit(record)} />
-                                    <IconButton label="Delete" icon={Trash2} tone="rose" onClick={() => handleDeleteRequest(record)} />
-                                  </>
-                                )}
-                              </div>
-                            </TableCell>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <EmptyState
-                  icon={Library}
-                  title="No subject books yet"
-                  description="Is class ke liye pehla subject aur uske books add karo."
-                />
-              )}
-            </section>
-          </div>
+            {subjectFormOpen ? <SubjectForm form={subjectForm} setForm={setSubjectForm} subjectMaster={subjectMaster} onClose={() => setSubjectFormOpen(false)} onSubmit={handleSubjectSubmit} saving={addSubjectMutation.isPending} /> : null}
+
+            {classSubjectsQuery.isLoading ? (
+              <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-20 animate-pulse rounded-[1.5rem] bg-slate-100" />)}</div>
+            ) : visibleSubjects.length ? (
+              <SubjectTable
+                subjects={visibleSubjects}
+                expandedSubjectId={expandedSubjectId}
+                setExpandedSubjectId={setExpandedSubjectId}
+                books={selectedSubjectBooks}
+                booksLoading={booksQuery.isLoading}
+                bookFormSubjectId={bookFormSubjectId}
+                setBookFormSubjectId={setBookFormSubjectId}
+                bookForm={bookForm}
+                setBookForm={setBookForm}
+                onBookSubmit={handleBookSubmit}
+                onBookDelete={(classSubjectId, bookId) => deleteBookMutation.mutate({ classSubjectId, bookId })}
+                onArchive={(classSubjectId) => archiveSubjectMutation.mutate(classSubjectId)}
+                savingBook={saveBookMutation.isPending}
+              />
+            ) : (
+              <EmptyState title={`No subjects configured for ${selectedClass.className}`} action="Add a subject or copy from previous session." />
+            )}
+          </section>
         )}
-      </div>
-      <DeleteBookModal
-        open={Boolean(deleteTarget)}
-        record={deleteTarget}
-        onCancel={handleCancelDelete}
-        onConfirm={handleConfirmDelete}
-        isDeleting={isDeleting}
-      />
+      </main>
     </div>
   );
 };
 
-const TableHeader = ({ children, align = 'left' }) => (
-  <th className={`px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-500 ${align === 'right' ? 'text-right' : 'text-left'}`}>
-    {children}
-  </th>
+const SubjectTable = ({ subjects, expandedSubjectId, setExpandedSubjectId, books, booksLoading, bookFormSubjectId, setBookFormSubjectId, bookForm, setBookForm, onBookSubmit, onBookDelete, onArchive, savingBook }) => (
+  <div className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-[0_16px_45px_-32px_rgba(15,23,42,0.35)]">
+    <table className="w-full min-w-[760px] text-left">
+      <thead className="border-b border-slate-200 bg-slate-50">
+        <tr>{['Subject', 'Code', 'Type', 'Books', 'Status', 'Action'].map((heading) => <th key={heading} className="px-6 py-4 text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">{heading}</th>)}</tr>
+      </thead>
+      <tbody className="divide-y divide-slate-200 bg-white">
+        {subjects.map((subject) => (
+          <React.Fragment key={subject.classSubjectId}>
+            <tr className="transition hover:bg-cyan-50/60">
+              <td className="px-6 py-5">
+                <button type="button" onClick={() => setExpandedSubjectId(expandedSubjectId === subject.classSubjectId ? null : subject.classSubjectId)} className="inline-flex items-center gap-3 text-left">
+                  <span className="rounded-xl bg-slate-100 p-2 text-slate-500">
+                    {expandedSubjectId === subject.classSubjectId ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </span>
+                  <span className="text-sm font-black text-slate-950">{subject.subjectName}</span>
+                </button>
+                {subject.notes ? <p className="mt-1 text-xs font-semibold text-slate-500">{subject.notes}</p> : null}
+              </td>
+              <td className="px-6 py-5 text-sm font-black text-slate-700">{subject.subjectCode}</td>
+              <td className="px-6 py-5"><span className="rounded-full border border-cyan-100 bg-cyan-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-700">{subject.subjectType}</span></td>
+              <td className="px-6 py-5 text-sm font-black text-slate-700">{subject.bookCount || 0}</td>
+              <td className="px-6 py-5"><span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">{subject.status}</span></td>
+              <td className="px-6 py-5"><button type="button" onClick={() => onArchive(subject.classSubjectId)} className="rounded-2xl border border-slate-200 bg-white p-2 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600" title="Archive subject"><Trash2 size={15} /></button></td>
+            </tr>
+            {expandedSubjectId === subject.classSubjectId ? (
+              <tr>
+                <td colSpan={6} className="bg-slate-50/80 px-6 py-5">
+                  <BookPanel
+                    books={books}
+                    loading={booksLoading}
+                    formOpen={bookFormSubjectId === subject.classSubjectId}
+                    form={bookForm}
+                    setForm={setBookForm}
+                    onOpenForm={() => setBookFormSubjectId(subject.classSubjectId)}
+                    onCloseForm={() => setBookFormSubjectId(null)}
+                    onSubmit={(event) => onBookSubmit(event, subject.classSubjectId)}
+                    onDelete={(bookId) => onBookDelete(subject.classSubjectId, bookId)}
+                    saving={savingBook}
+                  />
+                </td>
+              </tr>
+            ) : null}
+          </React.Fragment>
+        ))}
+      </tbody>
+    </table>
+  </div>
 );
 
-const TableCell = ({ children, align = 'left' }) => (
-  <td className={`px-4 py-4 text-sm font-semibold text-slate-700 ${align === 'right' ? 'text-right' : 'text-left'}`}>
-    {children}
-  </td>
-);
-
-const InlineInput = (props) => (
-  <input
-    className="w-full min-w-36 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
-    {...props}
-  />
-);
-
-const InlineSelect = ({ options, renderOptionLabel, ...props }) => (
-  <select
-    className="w-full min-w-32 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
-    {...props}
-  >
-    {options.map((option) => (
-      <option key={option || 'empty-option'} value={option}>
-        {renderOptionLabel ? renderOptionLabel(option) : option}
-      </option>
-    ))}
-  </select>
-);
-
-const IconButton = ({ label, icon: Icon, tone = 'slate', onClick }) => {
-  const toneClass = {
-    amber: 'text-amber-700 hover:bg-amber-50',
-    emerald: 'text-emerald-700 hover:bg-emerald-50',
-    rose: 'text-rose-600 hover:bg-rose-50',
-    slate: 'text-slate-500 hover:bg-slate-100',
-  }[tone];
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className={`inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${toneClass}`}
-    >
-      <Icon size={16} />
-    </button>
-  );
-};
-
-const DeleteBookModal = ({ open, record, onCancel, onConfirm, isDeleting }) => {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 backdrop-blur-md">
-      <div className="w-full max-w-lg rounded-4xl border border-white/30 bg-white/95 p-7 shadow-[0_30px_90px_-30px_rgba(15,23,42,0.5)]">
-        <p className="text-[11px] font-black uppercase tracking-[0.28em] text-rose-600">Delete Confirmation</p>
-        <h3 className="mt-3 font-serif text-3xl font-black italic tracking-tight text-slate-950">Delete this saved book?</h3>
-        <p className="mt-4 text-sm leading-7 text-slate-600">
-          This will remove <span className="font-black text-slate-900">{toUpperValue(record?.subjectName) || 'THIS SUBJECT'}</span>
-          {record?.publisher ? (
-            <> by <span className="font-black text-slate-900">{toUpperValue(record.publisher)}</span></>
-          ) : null}
-          {' '}from the saved books table.
-        </p>
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={isDeleting}
-            className="inline-flex flex-1 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={isDeleting}
-            className="inline-flex flex-1 items-center justify-center rounded-2xl bg-rose-600 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
-          >
-            {isDeleting ? 'Deleting...' : 'Yes, Delete'}
-          </button>
-        </div>
-      </div>
+const SubjectForm = ({ form, setForm, subjectMaster, onClose, onSubmit, saving }) => (
+  <form onSubmit={onSubmit} className="mb-6 rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-[0_16px_45px_-32px_rgba(15,23,42,0.35)]">
+    <div className="mb-4 flex items-center justify-between">
+      <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Add Subject</h3>
+      <button type="button" onClick={onClose} className="rounded-2xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-rose-600"><X size={16} /></button>
     </div>
-  );
-};
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <Select label="Subject Master" value={form.subjectId} onChange={(value) => setForm({ ...form, subjectId: value, subjectName: '', subjectCode: '' })}>
+        <option value="">Create New Subject</option>
+        {subjectMaster.map((subject) => <option key={subject.id} value={subject.id}>{subject.name} ({subject.code})</option>)}
+      </Select>
+      {!form.subjectId ? (
+        <>
+          <Input label="Subject" value={form.subjectName} onChange={(value) => setForm({ ...form, subjectName: value.toUpperCase() })} required />
+          <Input label="Subject Code" value={form.subjectCode} onChange={(value) => setForm({ ...form, subjectCode: value.toUpperCase() })} />
+        </>
+      ) : null}
+      <Select label="Type" value={form.subjectType} onChange={(value) => setForm({ ...form, subjectType: value })}>{subjectTypes.map((type) => <option key={type} value={type}>{type}</option>)}</Select>
+      <Input label="Display Order" type="number" value={form.displayOrder} onChange={(value) => setForm({ ...form, displayOrder: value })} />
+      <Select label="Status" value={form.status} onChange={(value) => setForm({ ...form, status: value })}>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</Select>
+      <div className="md:col-span-2 xl:col-span-4"><Input label="Notes" value={form.notes} onChange={(value) => setForm({ ...form, notes: value })} /></div>
+    </div>
+    <div className="mt-5 flex justify-end"><button disabled={saving} className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600 disabled:opacity-50"><Save size={15} /> Save Subject</button></div>
+  </form>
+);
 
-const FormTitle = ({ title, description }) => (
+const BookPanel = ({ books, loading, formOpen, form, setForm, onOpenForm, onCloseForm, onSubmit, onDelete, saving }) => (
   <div>
-    <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
-    <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
+    <div className="mb-3 flex items-center justify-between">
+      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">Books</p>
+      <button type="button" onClick={onOpenForm} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"><Plus size={14} /> Add Book</button>
+    </div>
+    {loading ? <div className="h-16 animate-pulse rounded-[1.4rem] bg-white" /> : books.length ? (
+      <div className="grid gap-3 md:grid-cols-2">
+        {books.map((book) => (
+          <div key={book.id} className="rounded-[1.4rem] border border-slate-200 bg-white p-5 shadow-[0_14px_35px_-28px_rgba(15,23,42,0.45)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-black text-slate-950">{book.bookTitle || book.subjectName}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-500">{book.publisher} | {book.language} {book.primaryBook ? '| Primary' : ''}</p>
+              </div>
+              <button type="button" onClick={() => onDelete(book.id)} className="rounded-2xl p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : <EmptyState title="No books added" action="Add the primary or reference book for this subject." compact />}
+    {formOpen ? (
+      <form onSubmit={onSubmit} className="mt-4 rounded-[1.6rem] border border-slate-200 bg-white p-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Input label="Book Title" value={form.bookTitle} onChange={(value) => setForm({ ...form, bookTitle: value })} required />
+          <Input label="Publisher" value={form.publisher} onChange={(value) => setForm({ ...form, publisher: value })} required />
+          <Select label="Language" value={form.language} onChange={(value) => setForm({ ...form, language: value })}>{languages.map((language) => <option key={language} value={language}>{language}</option>)}</Select>
+          <Input label="Edition" value={form.edition} onChange={(value) => setForm({ ...form, edition: value })} />
+          <Input label="ISBN" value={form.isbn} onChange={(value) => setForm({ ...form, isbn: value })} />
+          <Select label="Status" value={form.status} onChange={(value) => setForm({ ...form, status: value })}>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</Select>
+          <label className="flex items-center gap-3 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700"><input type="checkbox" checked={form.primaryBook} onChange={(event) => setForm({ ...form, primaryBook: event.target.checked })} />Primary Book</label>
+          <Input label="Notes" value={form.notes} onChange={(value) => setForm({ ...form, notes: value })} />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={onCloseForm} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600">Cancel</button>
+          <button disabled={saving} className="rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600 disabled:opacity-50">Save Book</button>
+        </div>
+      </form>
+    ) : null}
   </div>
 );
 
 const SearchInput = ({ value, onChange, placeholder }) => (
-  <div className="relative min-w-65">
-    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-    <input
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-12 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
-    />
+  <div className="relative">
+    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+    <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 py-3.5 pl-12 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100" />
   </div>
 );
 
-const CreativeInput = ({ label, ...props }) => (
-  <div className="space-y-2.5">
-    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
-    <input
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
-      {...props}
-    />
-  </div>
+const Input = ({ label, value, onChange, type = 'text', required = false }) => (
+  <label className="block">
+    <span className="mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-slate-700">{label}</span>
+    <input type={type} value={value} required={required} onChange={(event) => onChange(event.target.value)} className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100" />
+  </label>
 );
 
-const CreativeSelect = ({ label, options, renderOptionLabel, ...props }) => (
-  <div className="space-y-2.5">
-    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
-    <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
-      {...props}
-    >
-      {options.map((option) => (
-        <option key={option || 'empty-option'} value={option}>
-          {renderOptionLabel ? renderOptionLabel(option) : option || 'Select'}
-        </option>
-      ))}
-    </select>
-  </div>
+const Select = ({ label, value, onChange, children }) => (
+  <label className="block">
+    <span className="mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-slate-700">{label}</span>
+    <SelectBare value={value} onChange={onChange}>{children}</SelectBare>
+  </label>
 );
 
-const CreativeTextarea = ({ label, ...props }) => (
-  <div className="space-y-2.5">
-    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
-    <textarea
-      rows={4}
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:bg-white focus:ring-4 focus:ring-amber-100"
-      {...props}
-    />
-  </div>
+const SelectBare = ({ value, onChange, children }) => (
+  <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-black text-slate-700 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100">{children}</select>
 );
 
-const PrimaryButton = ({ type, icon: Icon, label }) => (
-  <button
-    type={type}
-    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-amber-600"
-  >
-    <Icon size={15} />
-    {label}
-  </button>
-);
-
-const InfoPill = ({ icon: Icon, text }) => (
-  <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-slate-100">
-    <Icon size={15} className="text-amber-700" />
-    <span>{text}</span>
-  </div>
-);
-
-const EmptyState = ({ icon: Icon, title, description }) => (
-  <div className="rounded-4xl border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center">
-    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
-      <Icon size={34} />
+const EmptyState = ({ title, action, compact = false }) => (
+  <div className={`rounded-[1.8rem] border border-dashed border-slate-300 bg-slate-50 text-center ${compact ? 'p-5' : 'px-6 py-14'}`}>
+    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-slate-300 shadow-sm">
+      <Library size={30} />
     </div>
-    <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">{title}</h4>
-    <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">{description}</p>
+    <p className="mt-5 font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</p>
+    <p className="mx-auto mt-2 max-w-md text-sm font-semibold leading-6 text-slate-500">{action}</p>
+  </div>
+);
+
+const SkeletonGrid = () => (
+  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+    {[1, 2, 3, 4, 5, 6].map((item) => <div key={item} className="h-40 animate-pulse rounded-[1.9rem] border border-slate-200 bg-slate-100" />)}
   </div>
 );
 

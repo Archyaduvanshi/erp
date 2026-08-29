@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -7,87 +8,117 @@ import {
   Search,
   Users,
 } from 'lucide-react';
-import { attendanceApi, holidayApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
+import { DAILY_ATTENDANCE_PERIOD_NUMBER, academicSessionApi, attendanceApi, holidayApi } from '../../utils/api';
 import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const createSessionForm = () => ({
   date: new Date().toISOString().split('T')[0],
   lectureNumber: 'Daily',
   subject: 'Daily Attendance',
 });
-
 const TeacherAttendance = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [students, setStudents] = useState([]);
-  const [teachers, setTeachers] = useState([]);
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [classTimetables, setClassTimetables] = useState([]);
-  const [holidays, setHolidays] = useState([]);
-  const [selectedClass, setSelectedClass] = useState('');
+  const queryClient = useQueryClient();
+  const { session } = useAuth();
+  const instituteId = session?.id || '';
+  const [selectedTargetKey, setSelectedTargetKey] = useState('');
   const [sessionForm, setSessionForm] = useState(createSessionForm);
   const [attendanceMap, setAttendanceMap] = useState({});
   const [classSearch, setClassSearch] = useState('');
   const [recordSearch, setRecordSearch] = useState('');
-  const [loadError, setLoadError] = useState('');
+  const [mutationError, setMutationError] = useState('');
   const registerScrollRef = useRef(null);
-
-  async function refreshData() {
-    const [studentResponse, teacherResponse, timetableResponse, attendanceResponse, holidayResponse] = await Promise.all([
-      studentApi.getAll(),
-      teacherApi.getAll(),
-      timetableApi.getClassTimetables(),
-      attendanceApi.getAll(),
-      holidayApi.getAll(),
-    ]);
-    setStudents(studentResponse);
-    setTeachers(teacherResponse);
-    setAttendanceRecords(attendanceResponse);
-    setClassTimetables(timetableResponse);
-    setHolidays(holidayResponse.filter((holiday) => holiday.audience === 'All' || holiday.audience === 'Students'));
-    setLoadError('');
-  }
 
   useEffect(() => {
     if (!session || session.role !== 'teacher') {
       navigate('/login');
-      return;
     }
-    const timer = setTimeout(() => {
-      refreshData().catch((error) => {
-        setStudents([]);
-        setTeachers([]);
-        setClassTimetables([]);
-        setAttendanceRecords([]);
-        setLoadError(error.message || 'Unable to load teacher attendance data.');
-      });
-    }, 0);
-
-    return () => clearTimeout(timer);
   }, [navigate, session]);
 
-  const teacher = useMemo(() => {
-    if (!session || session.role !== 'teacher') return null;
-    return teachers.find((entry) => String(entry.id) === String(session.teacherId)) || null;
-  }, [session, teachers]);
+  const teacherName = session?.teacherName || session?.username || 'Teacher';
+  const selectedMonth = String(sessionForm.date || new Date().toISOString().split('T')[0]).slice(0, 7);
 
-  const teacherName = teacher
-    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
-    : 'Teacher';
+  const sessionsQuery = useQuery({
+    queryKey: ['teacher-attendance-sessions', instituteId],
+    queryFn: () => academicSessionApi.getAll(),
+    enabled: Boolean(session?.role === 'teacher' && instituteId),
+    staleTime: 10 * 60 * 1000,
+  });
 
-  const assignedClasses = useMemo(() => {
-    return deriveTeacherClassesFromTimetables(classTimetables, teacher);
-  }, [classTimetables, teacher]);
+  const academicSession = useMemo(() => {
+    const sessions = sessionsQuery.data || [];
+    return sessions.find((item) => item.current) || sessions[0] || null;
+  }, [sessionsQuery.data]);
+  const academicSessionId = academicSession?.id || null;
+
+  const targetsQuery = useQuery({
+    queryKey: ['teacher-attendance-targets', instituteId, session?.teacherId || null, academicSessionId],
+    queryFn: () => attendanceApi.getMyTeacherTargets(academicSessionId),
+    enabled: Boolean(session?.role === 'teacher' && academicSessionId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const attendanceTargets = targetsQuery.data || [];
+
+  const selectedTarget = useMemo(
+    () => attendanceTargets.find((target) => buildTargetKey(target) === selectedTargetKey) || null,
+    [attendanceTargets, selectedTargetKey],
+  );
 
   const teachingClasses = useMemo(() => {
-    const classesWithStudents = new Set(
-      students
-        .map((student) => student.assignedClass?.trim())
-        .filter(Boolean),
-    );
+    return attendanceTargets.map((target) => target.displayName);
+  }, [attendanceTargets]);
 
-    return assignedClasses.filter((className) => classesWithStudents.has(className));
-  }, [assignedClasses, students]);
+  const selectedClass = selectedTarget?.displayName || '';
+  const selectedAssignedClassLabel = selectedTarget
+    ? selectedTarget.sectionName
+      ? `${selectedTarget.className} / ${selectedTarget.sectionName}`
+      : selectedTarget.className
+    : '';
+
+  const studentsQuery = useQuery({
+    queryKey: ['teacher-attendance-class-students', instituteId, academicSessionId, selectedTarget?.classId || null, selectedTarget?.sectionId ?? null],
+    queryFn: () => attendanceApi.getClassStudents({
+      academicSessionId,
+      classId: selectedTarget.classId,
+      sectionId: selectedTarget.sectionId,
+    }),
+    enabled: Boolean(session?.role === 'teacher' && academicSessionId && selectedTarget),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const classMonthQuery = useQuery({
+    queryKey: ['teacher-attendance-month', instituteId, academicSessionId, selectedTarget?.classId || null, selectedTarget?.sectionId ?? null, selectedMonth, session?.teacherId || null],
+    queryFn: () => attendanceApi.getClassMonthly({
+      academicSessionId,
+      classId: selectedTarget.classId,
+      sectionId: selectedTarget.sectionId,
+      month: selectedMonth,
+      teacherId: session.teacherId,
+    }),
+    enabled: Boolean(session?.role === 'teacher' && academicSessionId && selectedTarget && selectedMonth),
+  });
+
+  const holidayRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth]);
+  const holidaysQuery = useQuery({
+    queryKey: ['teacher-attendance-holidays', instituteId, holidayRange.from, holidayRange.to],
+    queryFn: () => holidayApi.getAll(holidayRange),
+    enabled: Boolean(session?.role === 'teacher' && holidayRange.from && holidayRange.to),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const students = studentsQuery.data || [];
+  const attendanceRecords = useMemo(() => (
+    flattenMonthResponse(classMonthQuery.data, selectedTarget?.displayName || '')
+  ), [classMonthQuery.data, selectedTarget?.displayName]);
+  const holidays = useMemo(() => (
+    (holidaysQuery.data || []).filter((holiday) => holiday.audience === 'All' || holiday.audience === 'Students')
+  ), [holidaysQuery.data]);
+  const loadError = mutationError
+    || [sessionsQuery.error, targetsQuery.error, studentsQuery.error, classMonthQuery.error, holidaysQuery.error]
+      .find(Boolean)?.message
+    || '';
 
   const filteredClasses = useMemo(() => {
     const query = classSearch.trim().toLowerCase();
@@ -95,21 +126,12 @@ const TeacherAttendance = () => {
   }, [classSearch, teachingClasses]);
 
   const selectedClassStudents = useMemo(() => {
-    return students
-      .filter((student) => student.assignedClass === selectedClass)
-      .sort((a, b) => {
-        const left = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
-        const right = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
-        return left.localeCompare(right);
-      });
-  }, [selectedClass, students]);
+    return [...students].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [students]);
 
   const teacherRecords = useMemo(() => {
     const query = recordSearch.trim().toLowerCase();
     return attendanceRecords
-      .filter((record) => teachingClasses.includes(record.className))
-      .filter((record) => normalizeAttendanceText(record.markedBy) === normalizeAttendanceText(teacherName))
-      .filter((record) => selectedClass ? record.className === selectedClass : true)
       .filter((record) => {
         if (!query) return true;
         return (
@@ -123,17 +145,31 @@ const TeacherAttendance = () => {
         );
       })
       .sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
-  }, [attendanceRecords, recordSearch, selectedClass, teacherName, teachingClasses]);
+  }, [attendanceRecords, recordSearch]);
 
   const today = new Date().toISOString().split('T')[0];
   const isSundaySession = getDayNameFromDate(sessionForm.date) === 'Sunday';
   const selectedHoliday = useMemo(() => (
     holidays.find((holiday) => (
       String(holiday.holidayDate || '') === String(sessionForm.date || '') &&
-      holidayAppliesToStudentClass(holiday, selectedClass)
+      holidayAppliesToStudentClass(holiday, selectedAssignedClassLabel)
     )) || null
-  ), [holidays, selectedClass, sessionForm.date]);
+  ), [holidays, selectedAssignedClassLabel, sessionForm.date]);
   const isHolidaySession = Boolean(selectedHoliday);
+
+  const saveAttendanceMutation = useMutation({
+    mutationFn: attendanceApi.saveClassSession,
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['teacher-attendance-month', instituteId, academicSessionId, selectedTarget?.classId || null, selectedTarget?.sectionId ?? null, selectedMonth, session?.teacherId || null],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['attendance-month', instituteId, academicSessionId, selectedTarget?.classId || null, selectedTarget?.sectionId ?? null, selectedMonth],
+      });
+      setMutationError('');
+    },
+    onError: (error) => setMutationError(error.message || 'Unable to save teacher attendance.'),
+  });
 
   const monthlyAttendanceRegister = useMemo(() => {
     if (!selectedClass) return null;
@@ -172,12 +208,18 @@ const TeacherAttendance = () => {
     const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
     const visibleDayCount = isCurrentMonth ? currentDate.getDate() : daysInMonth;
     const dayColumns = Array.from({ length: visibleDayCount }, (_, index) => index + 1);
+    const savedDayNumbers = new Set(recordsForMonth.map((record) => {
+      const recordDate = new Date(`${record.date || ''}T00:00:00`);
+      return Number.isNaN(recordDate.getTime()) ? null : recordDate.getDate();
+    }).filter(Boolean));
     const holidayColumnMap = new Map();
     dayColumns.forEach((dayNumber) => {
+      if (savedDayNumbers.has(dayNumber)) return;
+
       const dayDateValue = formatMonthDateKey(selectedYear, selectedMonth + 1, dayNumber);
       const matchingHoliday = holidays.find((holiday) => (
         String(holiday.holidayDate || '') === dayDateValue &&
-        holidayAppliesToStudentClass(holiday, selectedClass)
+        holidayAppliesToStudentClass(holiday, selectedAssignedClassLabel)
       ));
       if (matchingHoliday?.title) {
         holidayColumnMap.set(dayNumber, matchingHoliday.title);
@@ -195,7 +237,7 @@ const TeacherAttendance = () => {
       const recordDate = new Date(`${record.date}T00:00:00`);
       const dayNumber = recordDate.getDate();
       const studentKey = String(record.studentId || '');
-      if (!studentKey || dayNumber > visibleDayCount || holidayColumnMap.has(dayNumber)) return;
+      if (!studentKey || dayNumber > visibleDayCount) return;
       dailyStatusMap.set(`${studentKey}-${dayNumber}`, record.status === 'Present' ? 'P' : 'A');
     });
 
@@ -211,12 +253,12 @@ const TeacherAttendance = () => {
     });
 
     selectedClassStudents.forEach((student) => {
-      const studentKey = String(student.id);
+      const studentKey = String(student.studentId || student.id);
       if (savedStudentsMap.has(studentKey)) return;
       savedStudentsMap.set(studentKey, {
-        id: student.id,
-        name: `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Unnamed student',
-        rollNo: student.rollNo || student.enrollmentNo || student.systemId || String(student.id),
+        id: student.studentId || student.id,
+        name: student.name || 'Unnamed student',
+        rollNo: student.rollNo || student.admissionNo || String(student.studentId || student.id),
       });
     });
 
@@ -241,8 +283,9 @@ const TeacherAttendance = () => {
       dayColumns,
       holidayColumnMap,
       rows,
+      savedMarkCount: recordsForMonth.length,
     };
-  }, [holidays, recordSearch, selectedClass, selectedClassStudents, session?.instituteName, sessionForm.date, teacherRecords, today]);
+  }, [holidays, recordSearch, selectedAssignedClassLabel, selectedClass, selectedClassStudents, session?.instituteName, sessionForm.date, teacherRecords, today]);
 
   useEffect(() => {
     const scrollContainer = registerScrollRef.current;
@@ -252,7 +295,8 @@ const TeacherAttendance = () => {
   }, [monthlyAttendanceRegister]);
 
   const openClassSheet = (className) => {
-    setSelectedClass(className);
+    const target = attendanceTargets.find((entry) => entry.displayName === className);
+    setSelectedTargetKey(target ? buildTargetKey(target) : '');
     setSessionForm({
       ...createSessionForm(),
       subject: '',
@@ -274,27 +318,23 @@ const TeacherAttendance = () => {
       return;
     }
 
-    const unmarkedStudents = selectedClassStudents.filter((student) => !attendanceMap[String(student.id)]);
-    if (!selectedClass || unmarkedStudents.length > 0) {
+    const unmarkedStudents = selectedClassStudents.filter((student) => !attendanceMap[String(student.studentId || student.id)]);
+    if (!academicSessionId || !selectedTarget || !selectedClass || unmarkedStudents.length > 0) {
       return;
     }
 
-    try {
-      await attendanceApi.saveSession({
-        className: selectedClass,
+    saveAttendanceMutation.mutate({
+      academicSessionId,
+        classId: selectedTarget.classId,
+        sectionId: selectedTarget.sectionId,
         date: sessionForm.date,
-        lectureNumber: 'Daily',
-        subject: 'Daily Attendance',
-        markedBy: teacherName,
+        periodNumber: DAILY_ATTENDANCE_PERIOD_NUMBER,
+        markedByTeacherId: Number(session.teacherId),
         entries: selectedClassStudents.map((student) => ({
-          studentId: Number(student.id),
-          status: attendanceMap[String(student.id)] || 'Present',
+          studentId: Number(student.studentId || student.id),
+          status: attendanceMap[String(student.studentId || student.id)] || 'Present',
         })),
       });
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save teacher attendance.');
-    }
   };
 
   if (!session || session.role !== 'teacher') return null;
@@ -305,7 +345,7 @@ const TeacherAttendance = () => {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => selectedClass ? setSelectedClass('') : navigate('/teacher')}
+              onClick={() => selectedClass ? setSelectedTargetKey('') : navigate('/teacher')}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft size={14} />
@@ -337,7 +377,7 @@ const TeacherAttendance = () => {
             {filteredClasses.length > 0 ? (
               <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                 {filteredClasses.map((className) => {
-                  const classStrength = students.filter((student) => student.assignedClass === className).length;
+                  const classStrength = attendanceTargets.find((target) => target.displayName === className)?.studentCount || 0;
                   return (
                     <button
                       key={className}
@@ -406,13 +446,13 @@ const TeacherAttendance = () => {
                       </thead>
                       <tbody className="divide-y divide-slate-200 bg-white">
                         {selectedClassStudents.map((student) => {
-                          const studentKey = String(student.id);
-                          const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Unnamed student';
-                          const guardianName = student.guardianName || 'Father not added';
-                          const rollNo = student.rollNo || student.enrollmentNo || student.systemId || String(student.id);
+                          const studentKey = String(student.studentId || student.id);
+                          const fullName = student.name || 'Unnamed student';
+                          const guardianName = '-';
+                          const rollNo = student.rollNo || student.admissionNo || String(student.studentId || student.id);
 
                           return (
-                            <tr key={student.id} className="transition hover:bg-emerald-50/50">
+                            <tr key={studentKey} className="transition hover:bg-emerald-50/50">
                               <td className="px-6 py-5 text-sm font-black text-slate-950">{fullName}</td>
                               <td className="px-6 py-5 text-sm font-semibold text-slate-600">{guardianName}</td>
                               <td className="px-6 py-5 text-sm font-semibold text-slate-600">{rollNo}</td>
@@ -453,7 +493,8 @@ const TeacherAttendance = () => {
                   disabled={
                     isSundaySession ||
                     isHolidaySession ||
-                    selectedClassStudents.some((student) => !attendanceMap[String(student.id)])
+                    saveAttendanceMutation.isPending ||
+                    selectedClassStudents.some((student) => !attendanceMap[String(student.studentId || student.id)])
                   }
                 />
               </form>
@@ -471,6 +512,11 @@ const TeacherAttendance = () => {
                     <p className="mt-2 text-center text-sm font-semibold text-slate-600">
                       Class: {monthlyAttendanceRegister.className} | Month: {monthlyAttendanceRegister.monthLabel}
                     </p>
+                    {!monthlyAttendanceRegister.savedMarkCount ? (
+                      <p className="mt-3 text-center text-xs font-bold text-amber-700">
+                        Is month me saved P/A marks nahi mile. Date field me wahi month select karein jisme attendance lagai thi.
+                      </p>
+                    ) : null}
                   </div>
                   <div ref={registerScrollRef} className="mx-auto w-full max-w-[68.5rem] overflow-x-auto">
                     <table className="w-max min-w-full border-collapse text-center">
@@ -557,45 +603,31 @@ const TeacherAttendance = () => {
   );
 };
 
-const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
-  if (!teacher) return [];
+const buildTargetKey = (target) => target ? `${target.classId}:${target.sectionId ?? 'none'}` : '';
 
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
-  const classSet = new Set();
-
-  classTimetables.forEach((record) => {
-    if (attendanceTeacherMatches(record, teacherKeys) && record.className) {
-      classSet.add(record.className);
-    }
-  });
-
-  return [...classSet].sort(compareClassNames);
+const getMonthRange = (monthKey) => {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || '')) return { from: '', to: '' };
+  const [year, month] = monthKey.split('-').map(Number);
+  return {
+    from: formatMonthDateKey(year, month, 1),
+    to: formatMonthDateKey(year, month, new Date(year, month, 0).getDate()),
+  };
 };
 
-const buildTeacherIdentityKeys = (teacher) => {
-  const fullName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
-  return [
-    fullName,
-    teacher?.teacherSystemId,
-    teacher?.employeeId,
-    fullName && teacher?.teacherSystemId ? `${fullName} (${teacher.teacherSystemId})` : '',
-    fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
-  ]
-    .map((value) => String(value || '').trim().toLowerCase())
-    .filter(Boolean);
-};
-
-const resolveTimetableAttendanceTeacher = (record) => {
-  return formatAttendanceText(
-    record?.templateData?.attendanceTeacher
-      || record?.templateMeta?.attendanceTeacher
-      || '',
-  );
-};
-
-const attendanceTeacherMatches = (record, teacherKeys) => {
-  const attendanceTeacher = resolveTimetableAttendanceTeacher(record).toLowerCase();
-  return Boolean(attendanceTeacher) && teacherKeys.some((key) => key === attendanceTeacher);
+const flattenMonthResponse = (monthResponse, className) => {
+  const students = monthResponse?.students || [];
+  return students.flatMap((student) => Object.entries(student.days || {}).map(([date, status]) => ({
+    id: `${student.studentId}-${date}`,
+    date,
+    lectureNumber: 'Daily',
+    subject: 'Daily Attendance',
+    className,
+    studentId: student.studentId,
+    studentName: student.name,
+    rollNo: student.rollNo,
+    status,
+    createdAt: date,
+  })));
 };
 
 const getDayNameFromDate = (dateValue) => {
@@ -605,41 +637,6 @@ const getDayNameFromDate = (dateValue) => {
   if (Number.isNaN(date.getTime())) return '';
 
   return date.toLocaleDateString('en-US', { weekday: 'long' });
-};
-
-const normalizeAttendanceText = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-
-const formatAttendanceText = (value) => {
-  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
-  if (!normalized) return '';
-
-  return normalized
-    .toLowerCase()
-    .split(' ')
-    .map((word) => word ? `${word[0].toUpperCase()}${word.slice(1)}` : '')
-    .join(' ');
-};
-
-const compareClassNames = (a, b) => {
-  const left = getClassSortValue(a);
-  const right = getClassSortValue(b);
-  return left.rank - right.rank || left.section.localeCompare(right.section) || a.localeCompare(b);
-};
-
-const getClassSortValue = (className) => {
-  const normalized = String(className || '').toLowerCase();
-  const section = String(className || '').split('/')[1]?.trim() || '';
-
-  if (normalized.includes('nursery')) return { rank: 0, section };
-  if (normalized.includes('lkg')) return { rank: 1, section };
-  if (normalized.includes('ukg')) return { rank: 2, section };
-
-  const classMatch = normalized.match(/class\s*(\d+)/);
-  if (classMatch) {
-    return { rank: 2 + Number(classMatch[1]), section };
-  }
-
-  return { rank: 1000, section };
 };
 
 const formatMonthDateKey = (year, month, day) => (

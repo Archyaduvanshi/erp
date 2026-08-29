@@ -17,6 +17,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { teacherApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import { formatSalary, normalizeTeacherSalary } from '../../utils/salaryUtils';
 
 function createQrImageUrl(value) {
@@ -43,7 +44,7 @@ async function downloadQrCode(qrCodeData, teacherName) {
 
 const TeacherProfile = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session } = useAuth();
   const [teacher, setTeacher] = useState(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState(null);
 
@@ -67,7 +68,7 @@ const TeacherProfile = () => {
   }, [session]);
 
   const teacherName = teacher
-    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
+    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.employeeId || 'Teacher'
     : 'Teacher';
   const qrImage = teacher?.qrCodeData ? createQrImageUrl(teacher.qrCodeData) : '';
 
@@ -120,7 +121,6 @@ const TeacherProfile = () => {
           </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Teacher ID" value={teacher?.teacherSystemId || 'Pending'} icon={IdCard} />
             <StatCard label="Employee ID" value={teacher?.employeeId || 'Pending'} icon={Briefcase} />
             <StatCard label="Start Date" value={teacher?.joiningDate || 'Not added'} icon={CalendarDays} />
             <StatCard label="Specialization" value={teacher?.specialization || 'Not assigned'} icon={Shield} />
@@ -136,7 +136,6 @@ const TeacherProfile = () => {
             <InfoRow icon={Mail} label="Personal Email" value={teacher?.personalEmail || 'Not added'} />
             <InfoRow icon={Phone} label="Mobile Number" value={teacher?.mobileNumber || 'Not added'} />
             <InfoRow icon={MapPin} label="Address" value={teacher?.address || 'Not added'} />
-            <InfoRow icon={IdCard} label="Teacher ID" value={teacher?.teacherSystemId || 'Pending'} />
             <InfoRow icon={Briefcase} label="Employee ID" value={teacher?.employeeId || 'Pending'} />
           </InfoPanel>
 

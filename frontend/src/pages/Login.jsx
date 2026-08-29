@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { GraduationCap, Lock, User, ArrowRight, ShieldCheck, AlertCircle, Eye, EyeOff } from 'lucide-react';
-import { instituteApi, settingsApi, studentApi, teacherApi } from '../utils/api';
+import { setAccessToken, settingsApi } from '../utils/api';
+import { useAuth } from '../context/AuthContext';
 import { activateDemoSession, demoCredentials, getSchoolDemoSummary, seedDemoData } from '../utils/demoData';
 
 const schoolDemoSummary = getSchoolDemoSummary();
@@ -21,19 +22,11 @@ const FEATURE_ROLES = [
   { value: 'holidays', label: 'Holiday', route: '/college/holidays' },
 ];
 
-const defaultRoleOptions = [
-  { value: '', label: 'Select' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'teacher', label: 'Teacher' },
-  { value: 'student', label: 'Student' },
-  ...FEATURE_ROLES,
-];
-
 const Login = () => {
   const navigate = useNavigate();
+  const { acceptLogin } = useAuth();
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
-  const [loginRole, setLoginRole] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [formData, setFormData] = useState({
@@ -48,6 +41,7 @@ const Login = () => {
     setFieldErrors({});
 
     if (demoInstitution) {
+      acceptLogin(demoInstitution);
       navigate('/college');
     }
   };
@@ -58,125 +52,18 @@ const Login = () => {
     setError('');
     setFieldErrors({});
 
-    if (!loginRole) {
-      setError('Please select a role.');
-      setFieldErrors({ role: 'Please select a role.' });
-      return;
-    }
-
     setIsLoggingIn(true);
 
-    if (loginRole === 'admin') {
-      try {
-        const user = await instituteApi.login({
-          username: formData.username,
-          password: formData.password,
-        });
-
-        localStorage.setItem('active_session', JSON.stringify({
-          username: user.username,
-          instituteName: user.instituteName,
-          type: user.type,
-          role: 'admin',
-          logo: user.logo,
-        }));
-        localStorage.setItem('current_college_id', String(user.id));
-        navigate('/college');
-        return;
-      } catch (apiError) {
-        setIsLoggingIn(false);
-        setError(apiError.message);
-        setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
-          ? apiError.fieldErrors
-          : { username: apiError.message, password: apiError.message });
-        return;
-      }
-    }
-
     const credential = formData.username.trim();
-
-    const featureRole = FEATURE_ROLES.find((role) => role.value === loginRole);
-    if (featureRole) {
-      try {
-        const featureUser = await settingsApi.featureLogin({
-          username: credential,
-          feature: featureRole.accessKey || featureRole.value,
-          password: formData.password,
-        });
-
-        localStorage.setItem('active_session', JSON.stringify({
-          username: featureUser.username,
-          instituteName: featureUser.instituteName,
-          type: featureUser.type,
-          role: 'feature',
-          featureRole: featureUser.featureRole,
-          featureLabel: featureRole.label,
-          allowedPath: featureRole.route,
-          logo: featureUser.logo,
-        }));
-        localStorage.setItem('current_college_id', String(featureUser.id));
-        navigate(featureRole.route);
-        return;
-      } catch (apiError) {
-        setIsLoggingIn(false);
-        setError(apiError.message);
-        setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
-          ? apiError.fieldErrors
-          : { username: apiError.message, password: apiError.message });
-        return;
-      }
-    }
-
-    if (loginRole === 'teacher') {
-      try {
-        const teacher = await teacherApi.login({
-          identifier: credential,
-          password: formData.password,
-        });
-
-        localStorage.setItem('active_session', JSON.stringify({
-          username: teacher.instituteUsername,
-          instituteName: teacher.instituteName,
-          type: teacher.instituteType,
-          role: 'teacher',
-          teacherId: teacher.teacherId,
-          teacherSystemId: teacher.teacherSystemId,
-          teacherName: teacher.teacherName,
-          logo: teacher.instituteLogo,
-        }));
-        localStorage.setItem('current_college_id', String(teacher.instituteId));
-        navigate('/teacher');
-        return;
-      } catch (apiError) {
-        setIsLoggingIn(false);
-        setError(apiError.message);
-        setFieldErrors(apiError.fieldErrors && Object.keys(apiError.fieldErrors).length > 0
-          ? apiError.fieldErrors
-          : { username: apiError.message, password: apiError.message });
-        return;
-      }
-    }
-
     try {
-      const student = await studentApi.login({
-        identifier: credential,
+      const user = await settingsApi.login({
+        username: credential,
         password: formData.password,
       });
-
-      localStorage.setItem('active_session', JSON.stringify({
-        username: student.instituteUsername,
-        instituteName: student.instituteName,
-        type: student.instituteType,
-        role: 'student',
-        studentId: student.studentId,
-        studentSystemId: student.studentSystemId,
-        enrollmentNo: student.enrollmentNo,
-        studentName: student.studentName,
-        logo: student.instituteLogo,
-      }));
-      localStorage.setItem('current_college_id', String(student.instituteId));
-      navigate('/student');
-      return;
+      setAccessToken(user.accessToken || '');
+      const session = buildSession(user);
+      acceptLogin(session);
+      navigate(resolveLoginRoute(user));
     } catch (apiError) {
       setIsLoggingIn(false);
       setError(apiError.message);
@@ -221,16 +108,10 @@ const Login = () => {
         <div className="w-full max-w-md bg-white shadow-2xl shadow-slate-200/50 rounded-4xl border border-slate-100 p-8 md:p-12">
           <div className="mb-10 text-center">
             <h1 className="text-3xl font-black text-slate-950 mb-2 tracking-tighter uppercase italic">
-              {loginRole ? resolveRoleLabel(loginRole) : 'User'} Login
+              User Login
             </h1>
             <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">
-              {loginRole === 'admin'
-                ? 'Enter institution credentials'
-                : loginRole === 'teacher'
-                  ? 'Use teacher ID or phone with the password given by the college'
-                  : loginRole === 'student'
-                    ? 'Use student ID, enrollment number, or phone with the portal password'
-                    : featureRoleDescription(loginRole)}
+              Enter admin username, teacher ID, or student enrollment ID
             </p>
           </div>
 
@@ -243,9 +124,9 @@ const Login = () => {
 
           <form onSubmit={handleLogin} className="space-y-8">
             <InputGroup 
-              label={loginRole === 'admin' || FEATURE_ROLES.some((role) => role.value === loginRole) ? 'Institution Username' : loginRole === 'teacher' ? 'Teacher ID Or Phone' : 'Student ID, Enrollment No, Or Phone'}
+              label="Username / Enrollment ID / Teacher ID"
               icon={User} 
-              placeholder={loginRole === 'admin' || FEATURE_ROLES.some((role) => role.value === loginRole) ? 'Enter institution username' : loginRole === 'teacher' ? 'Enter teacher ID or phone' : 'Enter student ID, enrollment no, or phone'} 
+              placeholder="victor, VICTOREMP0001, or VICTORSTU0001"
               value={formData.username}
               onChange={(e) => {
                 setFormData({...formData, username: e.target.value});
@@ -253,17 +134,6 @@ const Login = () => {
               }}
               error={fieldErrors.username}
               required 
-            />
-
-            <RoleSelect
-              value={loginRole}
-              onChange={(value) => {
-                setLoginRole(value);
-                setError('');
-                setFieldErrors({});
-              }}
-              options={defaultRoleOptions}
-              error={fieldErrors.role}
             />
             
             <div className="space-y-2">
@@ -292,7 +162,7 @@ const Login = () => {
                 required 
               />
               <div className="text-right">
-                <Link to="#" className="text-[10px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-800 transition-colors">
+                <Link to="/forgot-password" className="text-[10px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-800 transition-colors">
                   Recovery Access?
                 </Link>
               </div>
@@ -303,13 +173,7 @@ const Login = () => {
               disabled={isLoggingIn}
               className="w-full bg-slate-950 text-white py-6 rounded-3xl font-black uppercase tracking-widest text-sm hover:bg-blue-600 hover:-translate-y-1 transition-all shadow-2xl shadow-blue-100 active:scale-95 flex items-center justify-center gap-3 group disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0 disabled:hover:bg-slate-950"
             >
-              {isLoggingIn ? 'Logging in...' : loginRole === 'admin'
-                ? 'Enter Dashboard'
-                : loginRole === 'teacher'
-                  ? 'Enter Teacher Portal'
-                  : loginRole === 'student'
-                    ? 'Enter Student Portal'
-                    : `Enter ${resolveRoleLabel(loginRole)}`}
+              {isLoggingIn ? 'Logging in...' : 'Login'}
               <ArrowRight size={18} className={`transition-transform ${isLoggingIn ? '' : 'group-hover:translate-x-1'}`} />
             </button>
           </form>
@@ -351,7 +215,33 @@ const Login = () => {
   );
 };
 
-const resolveRoleLabel = (value) => defaultRoleOptions.find((option) => option.value === value)?.label || 'User';
+const buildSession = (user) => ({
+  authenticated: true,
+  id: user.id,
+  username: user.username,
+  instituteName: user.instituteName,
+  type: user.type,
+  role: user.role,
+  logo: user.logo,
+  teacherId: user.teacherId,
+  employeeId: user.employeeId,
+  teacherName: user.teacherName,
+  studentId: user.studentId,
+  enrollmentNo: user.enrollmentNo,
+  studentName: user.studentName,
+  mustChangePassword: Boolean(user.mustChangePassword),
+  assignedFeatures: user.assignedFeatures || [],
+});
+
+const resolveLoginRoute = (user) => {
+  if (user.role === 'admin') return '/college';
+  if (user.role === 'teacher') return '/teacher';
+  if (user.role === 'student') return '/student';
+  const feature = FEATURE_ROLES.find((role) => role.value === user.featureRole || role.accessKey === user.featureRole);
+  return feature?.route || '/login';
+};
+
+const resolveRoleLabel = (value) => FEATURE_ROLES.find((option) => option.value === value)?.label || 'User';
 const featureRoleDescription = (value) => (
   FEATURE_ROLES.some((role) => role.value === value)
     ? 'Use institution username with the selected feature password'

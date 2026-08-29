@@ -39,15 +39,15 @@ public class LibraryMembershipService {
     /**
      * Get active membership for a student
      */
-    public Optional<LibraryMembership> getActiveLibraryMembership(Long studentId) {
-        return libraryMembershipRepository.findByStudentIdAndStatus(studentId, "active");
+    public Optional<LibraryMembership> getActiveLibraryMembership(Long instituteId, Long studentId) {
+        return libraryMembershipRepository.findByInstituteIdAndStudentIdAndStatus(instituteId, studentId, "active");
     }
 
     /**
      * Get all memberships for a student
      */
-    public List<LibraryMembership> getStudentMemberships(Long studentId) {
-        return libraryMembershipRepository.findByStudentId(studentId);
+    public List<LibraryMembership> getStudentMemberships(Long instituteId, Long studentId) {
+        return libraryMembershipRepository.findByInstituteIdAndStudentId(instituteId, studentId).stream().toList();
     }
 
     /**
@@ -60,8 +60,8 @@ public class LibraryMembershipService {
     /**
      * Update membership status
      */
-    public LibraryMembership updateMembershipStatus(Long membershipId, String status) {
-        Optional<LibraryMembership> membership = libraryMembershipRepository.findById(membershipId);
+    public LibraryMembership updateMembershipStatus(Long instituteId, Long membershipId, String status) {
+        Optional<LibraryMembership> membership = libraryMembershipRepository.findByInstituteIdAndId(instituteId, membershipId);
         if (membership.isPresent()) {
             LibraryMembership m = membership.get();
             m.setStatus(status);
@@ -73,8 +73,8 @@ public class LibraryMembershipService {
     /**
      * Update monthly charge for membership
      */
-    public LibraryMembership updateMonthlyCharge(Long membershipId, BigDecimal monthlyCharge) {
-        Optional<LibraryMembership> membership = libraryMembershipRepository.findById(membershipId);
+    public LibraryMembership updateMonthlyCharge(Long instituteId, Long membershipId, BigDecimal monthlyCharge) {
+        Optional<LibraryMembership> membership = libraryMembershipRepository.findByInstituteIdAndId(instituteId, membershipId);
         if (membership.isPresent()) {
             LibraryMembership m = membership.get();
             m.setMonthlyCharge(monthlyCharge);
@@ -93,43 +93,43 @@ public class LibraryMembershipService {
     /**
      * Suspend a membership
      */
-    public LibraryMembership suspendMembership(Long membershipId) {
-        return updateMembershipStatus(membershipId, "suspended");
+    public LibraryMembership suspendMembership(Long instituteId, Long membershipId) {
+        return updateMembershipStatus(instituteId, membershipId, "suspended");
     }
 
     /**
      * Deactivate a membership
      */
-    public LibraryMembership deactivateMembership(Long membershipId) {
-        return updateMembershipStatus(membershipId, "inactive");
+    public LibraryMembership deactivateMembership(Long instituteId, Long membershipId) {
+        return updateMembershipStatus(instituteId, membershipId, "inactive");
     }
 
     /**
      * Activate a membership
      */
-    public LibraryMembership activateMembership(Long membershipId) {
-        return updateMembershipStatus(membershipId, "active");
+    public LibraryMembership activateMembership(Long instituteId, Long membershipId) {
+        return updateMembershipStatus(instituteId, membershipId, "active");
     }
 
     /**
      * Delete a membership
      */
-    public void deleteMembership(Long membershipId) {
-        libraryMembershipRepository.deleteById(membershipId);
+    public void deleteMembership(Long instituteId, Long membershipId) {
+        deactivateMembership(instituteId, membershipId);
     }
 
     /**
      * Get membership by ID
      */
-    public Optional<LibraryMembership> getMembershipById(Long membershipId) {
-        return libraryMembershipRepository.findById(membershipId);
+    public Optional<LibraryMembership> getMembershipById(Long instituteId, Long membershipId) {
+        return libraryMembershipRepository.findByInstituteIdAndId(instituteId, membershipId);
     }
 
     /**
      * Update membership remarks
      */
-    public LibraryMembership updateMembershipRemarks(Long membershipId, String remarks) {
-        Optional<LibraryMembership> membership = libraryMembershipRepository.findById(membershipId);
+    public LibraryMembership updateMembershipRemarks(Long instituteId, Long membershipId, String remarks) {
+        Optional<LibraryMembership> membership = libraryMembershipRepository.findByInstituteIdAndId(instituteId, membershipId);
         if (membership.isPresent()) {
             LibraryMembership m = membership.get();
             m.setRemarks(remarks);

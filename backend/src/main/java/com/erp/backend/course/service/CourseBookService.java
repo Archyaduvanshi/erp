@@ -73,19 +73,39 @@ public class CourseBookService {
         courseBook.setClassName(request.className().trim());
         courseBook.setSubjectName(request.subjectName().trim());
         courseBook.setPublisher(request.publisher().trim());
+        courseBook.setBookTitle(defaultValue(request.bookTitle(), request.subjectName()));
         courseBook.setLanguage(defaultValue(request.language(), "English"));
         courseBook.setAcademicYear(defaultValue(request.academicYear(), "2026-27"));
+        courseBook.setIsbn(trim(request.isbn()));
+        courseBook.setEdition(trim(request.edition()));
+        courseBook.setPrimaryBook(request.primaryBook() == null || request.primaryBook());
+        courseBook.setStatus(defaultValue(request.status(), "ACTIVE"));
         courseBook.setNotes(trim(request.notes()));
     }
 
     private CourseBookResponse toResponse(CourseBook courseBook) {
+        Long classSubjectId = courseBook.getClassSubject() == null ? null : courseBook.getClassSubject().getId();
+        Long subjectId = courseBook.getClassSubject() == null ? null : courseBook.getClassSubject().getSubject().getId();
+        Long classId = courseBook.getClassSubject() == null ? null : courseBook.getClassSubject().getSchoolClass().getId();
+        String className = courseBook.getClassSubject() == null ? courseBook.getClassName() : courseBook.getClassSubject().getSchoolClass().getName();
+        String subjectName = courseBook.getClassSubject() == null ? courseBook.getSubjectName() : courseBook.getClassSubject().getSubject().getName();
+        String subjectCode = courseBook.getClassSubject() == null ? null : courseBook.getClassSubject().getSubject().getCode();
         return new CourseBookResponse(
                 courseBook.getId(),
-                courseBook.getClassName(),
-                courseBook.getSubjectName(),
+                classSubjectId,
+                subjectId,
+                classId,
+                className,
+                subjectName,
+                subjectCode,
+                defaultValue(courseBook.getBookTitle(), subjectName),
                 courseBook.getPublisher(),
                 defaultValue(courseBook.getLanguage(), "English"),
                 defaultValue(courseBook.getAcademicYear(), "2026-27"),
+                courseBook.getIsbn(),
+                courseBook.getEdition(),
+                courseBook.getPrimaryBook() == null || courseBook.getPrimaryBook(),
+                defaultValue(courseBook.getStatus(), "ACTIVE"),
                 courseBook.getNotes(),
                 courseBook.getCreatedAt(),
                 courseBook.getUpdatedAt()

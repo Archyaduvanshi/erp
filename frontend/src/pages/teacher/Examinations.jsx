@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -13,38 +14,37 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
-import { examApi, teacherApi, timetableApi, uploadApi } from '../../utils/api';
+import { examApi, uploadApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const TeacherExaminations = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState('home');
   const [selectedQuestionPaperClass, setSelectedQuestionPaperClass] = useState('');
   const [dateSheetSearch, setDateSheetSearch] = useState('');
   const [questionSearch, setQuestionSearch] = useState('');
   const [previewRecord, setPreviewRecord] = useState(null);
-  const [teachers, setTeachers] = useState([]);
-  const [classTimetables, setClassTimetables] = useState([]);
-  const [dateSheets, setDateSheets] = useState([]);
-  const [questionPapers, setQuestionPapers] = useState([]);
   const [questionPaperDrafts, setQuestionPaperDrafts] = useState({});
   const [loadError, setLoadError] = useState('');
+  const portalQuery = useQuery({
+    queryKey: ['examinations', 'teacher-me'],
+    queryFn: () => examApi.getTeacherMe(),
+    enabled: session?.role === 'teacher',
+  });
 
-  const teacher = useMemo(() => {
-    if (!session || session.role !== 'teacher') return null;
-    return teachers.find((entry) => String(entry.id) === String(session.teacherId)) || null;
-  }, [session, teachers]);
-
-  const teacherName = teacher
-    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.teacherSystemId || 'Teacher'
-    : 'Teacher';
-  const assignedClasses = useMemo(() => {
-    return deriveTeacherClassesFromTimetables(classTimetables, teacher);
-  }, [classTimetables, teacher]);
+  const dateSheets = portalQuery.data?.dateSheets || [];
+  const questionPapers = portalQuery.data?.questionPapers || [];
+  const teacherName = session?.username || 'Teacher';
+  const assignedClasses = useMemo(() => (portalQuery.data?.assignedClasses || []).map((entry) => entry.className), [portalQuery.data]);
 
   const teacherSubjectsByClass = useMemo(() => {
-    return deriveTeacherSubjectsByClass(classTimetables, teacher);
-  }, [classTimetables, teacher]);
+    return (portalQuery.data?.assignedClasses || []).reduce((accumulator, entry) => {
+      accumulator[entry.className] = (entry.subjects || []).map((subject) => subject.subjectName).filter(Boolean);
+      return accumulator;
+    }, {});
+  }, [portalQuery.data]);
 
   const filteredDateSheets = useMemo(() => {
     const query = dateSheetSearch.trim().toLowerCase();
@@ -147,41 +147,8 @@ const TeacherExaminations = () => {
     }
   }, [navigate, session]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [teacherResponse, timetableResponse, dateSheetResponse, questionPaperResponse] = await Promise.all([
-          teacherApi.getAll(),
-          timetableApi.getClassTimetables(),
-          examApi.getDateSheets(),
-          examApi.getQuestionPapers(),
-        ]);
-        setTeachers(teacherResponse);
-        setClassTimetables(timetableResponse);
-        setDateSheets(dateSheetResponse);
-        setQuestionPapers(questionPaperResponse);
-        setLoadError('');
-      } catch (error) {
-        setTeachers([]);
-        setClassTimetables([]);
-        setDateSheets([]);
-        setQuestionPapers([]);
-        setLoadError(error.message || 'Unable to load examination data.');
-      }
-    };
-
-    if (session?.role === 'teacher') {
-      loadData();
-    }
-  }, [session]);
-
   const refreshExamRecords = async () => {
-    const [dateSheetResponse, questionPaperResponse] = await Promise.all([
-      examApi.getDateSheets(),
-      examApi.getQuestionPapers(),
-    ]);
-    setDateSheets(dateSheetResponse);
-    setQuestionPapers(questionPaperResponse);
+    await queryClient.invalidateQueries({ queryKey: ['examinations', 'teacher-me'] });
   };
 
   const handleQuestionPaperBrowse = (className, subjectName, e) => {
@@ -289,9 +256,9 @@ const TeacherExaminations = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
+        {loadError || portalQuery.error ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {loadError || portalQuery.error?.message || 'Unable to load examination data.'}
           </div>
         ) : null}
 
@@ -609,51 +576,31 @@ const TeacherExaminations = () => {
   );
 };
 
-const deriveTeacherClassesFromTimetables = (classTimetables, teacher) => {
-  if (!teacher) return [];
-
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
+const deriveTeacherClassesFromPeriods = (periods = []) => {
   const classSet = new Set();
-
-  classTimetables.forEach((record) => {
-    const template = readTeacherTimetableTemplate(record);
-    const hasTeacherSlot = template?.rows?.some((row) =>
-      (row.slots || []).some((slot) => slotMatchesTeacher(slot, teacherKeys)),
-    );
-
-    if (hasTeacherSlot && record.className) {
-      classSet.add(record.className);
-    }
+  periods.forEach((period) => {
+    const className = period.sectionName ? `${period.className} / ${period.sectionName}` : period.className;
+    if (className) classSet.add(className);
   });
-
   return [...classSet].sort(compareClassNames);
 };
 
-const deriveTeacherSubjectsByClass = (classTimetables, teacher) => {
-  if (!teacher) return {};
-
-  const teacherKeys = buildTeacherIdentityKeys(teacher);
-  return classTimetables.reduce((accumulator, record) => {
-    const template = readTeacherTimetableTemplate(record);
-    if (!record?.className || !template?.rows?.length) return accumulator;
-
-    const subjectSet = new Set();
-    template.rows.forEach((row) => {
-      (row.slots || []).forEach((slot) => {
-        if (!slotMatchesTeacher(slot, teacherKeys)) return;
-        const subjectName = String(slot?.subjectName || '').trim();
-        if (subjectName) {
-          subjectSet.add(subjectName);
-        }
-      });
-    });
-
-    if (subjectSet.size) {
-      accumulator[record.className] = [...subjectSet].sort((left, right) => left.localeCompare(right));
-    }
-
+const deriveTeacherSubjectsByClass = (periods = []) => {
+  const subjectSetsByClass = periods.reduce((accumulator, period) => {
+    const className = period.sectionName ? `${period.className} / ${period.sectionName}` : period.className;
+    const subjectName = String(period.subjectName || '').trim();
+    if (!className || !subjectName) return accumulator;
+    accumulator[className] = accumulator[className] || new Set();
+    accumulator[className].add(subjectName);
     return accumulator;
   }, {});
+
+  return Object.fromEntries(
+    Object.entries(subjectSetsByClass).map(([className, subjectSet]) => [
+      className,
+      [...subjectSet].sort((left, right) => left.localeCompare(right)),
+    ]),
+  );
 };
 
 const readTeacherTimetableTemplate = (record) => {
@@ -736,9 +683,9 @@ const buildTeacherIdentityKeys = (teacher) => {
   const fullName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
   return [
     fullName,
-    teacher?.teacherSystemId,
     teacher?.employeeId,
-    fullName && teacher?.teacherSystemId ? `${fullName} (${teacher.teacherSystemId})` : '',
+    teacher?.employeeId,
+    fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
     fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
   ]
     .map((value) => String(value || '').trim().toLowerCase())

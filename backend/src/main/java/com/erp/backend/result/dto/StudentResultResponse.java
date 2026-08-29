@@ -4,7 +4,7 @@ import java.util.List;
 
 public record StudentResultResponse(
         ResultStudentResponse student,
-        List<String> subjects,
+        List<ResultSubjectResponse> subjects,
         List<ResultExamColumnResponse> exams,
         List<ResultCellResponse> cells,
         List<ResultSummaryResponse> summaries

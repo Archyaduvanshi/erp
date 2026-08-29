@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { instituteApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import {
   Bell,
   Briefcase,
@@ -19,46 +20,32 @@ import {
 } from 'lucide-react';
 
 const Dashboard = () => {
-  const [collegeData, setCollegeData] = useState(() => getSessionInstitute());
   const navigate = useNavigate();
+  const { session, logout } = useAuth();
+  const [collegeData, setCollegeData] = useState(() => sessionInstitute(session));
 
   useEffect(() => {
-    const collegeId = localStorage.getItem('current_college_id');
-
-    if (!collegeId) {
+    if (!session?.id) {
       navigate('/login');
       return;
     }
 
     let isMounted = true;
 
-    const localInstitute = getLocalInstitute(collegeId);
-    if (localInstitute) {
-      setCollegeData(localInstitute);
-    }
-
     const loadInstitute = async () => {
       try {
-        const institute = await instituteApi.getById(collegeId);
+        const institute = await instituteApi.getById(session.id);
         if (isMounted) {
           setCollegeData(institute);
-          cacheInstitute(institute);
         }
       } catch (error) {
-        if (isMounted && localInstitute) {
-          setCollegeData(localInstitute);
+        const fallbackInstitute = sessionInstitute(session);
+        if (isMounted && fallbackInstitute) {
+          setCollegeData(fallbackInstitute);
           return;
         }
 
-        const sessionInstitute = getSessionInstitute();
-        if (isMounted && sessionInstitute) {
-          setCollegeData(sessionInstitute);
-          return;
-        }
-
-        localStorage.removeItem('current_college_id');
-        localStorage.removeItem('active_session');
-        navigate('/login');
+        logout().finally(() => navigate('/login'));
       }
     };
 
@@ -67,12 +54,10 @@ const Dashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [navigate]);
+  }, [navigate, session, logout]);
 
   const handleLogout = () => {
-    localStorage.removeItem('current_college_id');
-    localStorage.removeItem('active_session');
-    navigate('/login');
+    logout().finally(() => navigate('/login'));
   };
 
   return (
@@ -255,42 +240,13 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
   </button>
 );
 
-const getSessionInstitute = () => {
-  try {
-    const session = JSON.parse(localStorage.getItem('active_session') || 'null');
-    return session?.instituteName
-      ? {
-          instituteName: session.instituteName,
-          username: session.username,
-          type: session.type,
-          logo: session.logo,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-const getLocalInstitute = (collegeId) => {
-  try {
-    const allColleges = JSON.parse(localStorage.getItem('registered_colleges') || '[]');
-    return allColleges.find((college) => String(college.id) === String(collegeId)) || null;
-  } catch {
-    return null;
-  }
-};
-
-const cacheInstitute = (institute) => {
-  try {
-    const allColleges = JSON.parse(localStorage.getItem('registered_colleges') || '[]');
-    const nextColleges = allColleges.some((college) => String(college.id) === String(institute.id))
-      ? allColleges.map((college) => String(college.id) === String(institute.id) ? { ...college, ...institute } : college)
-      : [...allColleges, institute];
-
-    localStorage.setItem('registered_colleges', JSON.stringify(nextColleges));
-  } catch {
-    // Cache is only a speed-up for deployed navigation; ignore localStorage quota/parse issues.
-  }
-};
+const sessionInstitute = (session) => session?.instituteName
+  ? {
+      instituteName: session.instituteName,
+      username: session.username,
+      type: session.type,
+      logo: session.logo,
+    }
+  : null;
 
 export default Dashboard;

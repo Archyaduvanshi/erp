@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { instituteApi, uploadApi } from '../utils/api';
+import { instituteApi, setAccessToken, uploadApi } from '../utils/api';
+import { useAuth } from '../context/AuthContext';
 import { 
   GraduationCap, Building2, Mail, Lock, ArrowRight, 
   CheckCircle2, User, Phone, MapPin, Hash, Globe, 
@@ -25,8 +26,14 @@ const DIGIT_FIELDS = {
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 const PASSWORD_MESSAGE = 'Password must be at least 8 characters with 1 uppercase letter, 1 lowercase letter, 1 number, and 1 symbol.';
 
+const buildInstitutionCode = (name = '') => {
+  const compact = String(name).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return compact || 'INST';
+};
+
 const RegisterInstitute = () => {
   const navigate = useNavigate();
+  const { acceptLogin } = useAuth();
   const [isSuccess, setIsSuccess] = useState(false);
   const [logoPreview, setLogoPreview] = useState(null);
   const [logoFile, setLogoFile] = useState(null);
@@ -34,6 +41,7 @@ const RegisterInstitute = () => {
   const [fieldErrors, setFieldErrors] = useState({});
   const [visiblePasswordField, setVisiblePasswordField] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [institutionCodeEdited, setInstitutionCodeEdited] = useState(false);
   
   const [formData, setFormData] = useState({
     instituteName: '',
@@ -73,7 +81,16 @@ const RegisterInstitute = () => {
       nextValue = value.replace(/\D/g, '').slice(0, DIGIT_FIELDS[field]);
     }
 
-    setFormData((currentData) => ({ ...currentData, [field]: nextValue }));
+    if (field === 'username') {
+      nextValue = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 120);
+      setInstitutionCodeEdited(true);
+    }
+
+    setFormData((currentData) => ({
+      ...currentData,
+      [field]: nextValue,
+      ...(field === 'instituteName' && !institutionCodeEdited ? { username: buildInstitutionCode(nextValue) } : {}),
+    }));
     setFieldErrors((currentErrors) => ({ ...currentErrors, [field]: '' }));
     setError('');
   };
@@ -105,7 +122,7 @@ const RegisterInstitute = () => {
     }
 
     if (formData.username && !/^[A-Za-z0-9]+$/.test(formData.username)) {
-      errors.username = 'Username can contain only small letters, capital letters, and numbers.';
+      errors.username = 'Institution code can contain only letters and numbers.';
     }
 
     if (formData.password && !PASSWORD_PATTERN.test(formData.password)) {
@@ -139,15 +156,17 @@ const RegisterInstitute = () => {
 
     try {
       const uploadedLogo = logoFile
-        ? await uploadApi.uploadFile(logoFile, '/erp/institutes/logos')
+        ? await uploadApi.uploadRegistrationLogo(logoFile)
         : null;
       const registeredInstitute = await instituteApi.register({
         ...formData,
         logo: uploadedLogo?.url || logoPreview,
       });
 
-      localStorage.setItem('active_session', JSON.stringify(registeredInstitute));
-      localStorage.setItem('current_college_id', String(registeredInstitute.id));
+      setAccessToken(registeredInstitute.accessToken || '');
+      const { accessToken, ...safeInstituteSession } = registeredInstitute;
+      safeInstituteSession.authenticated = true;
+      acceptLogin(safeInstituteSession);
 
       setIsSuccess(true);
       setTimeout(() => navigate('/college'), 1500);
@@ -246,7 +265,7 @@ const RegisterInstitute = () => {
               </div>
 
               <div className="grid md:grid-cols-3 gap-6">
-                <InputGroup label="Username" icon={User} placeholder="Inst01" value={formData.username} onChange={(e) => updateField('username', e.target.value)} error={fieldErrors.username} required />
+                <InputGroup label="Institution Code" icon={User} placeholder="VICTOR" value={formData.username} onChange={(e) => updateField('username', e.target.value)} error={fieldErrors.username} required />
                 <InputGroup label="Affiliation No." icon={Hash} placeholder="REG-12345" value={formData.affiliationNo} onChange={(e) => updateField('affiliationNo', e.target.value)} error={fieldErrors.affiliationNo} required />
                 <InputGroup label={formData.type === 'School' ? 'Board' : 'University'} icon={School} placeholder="e.g. CBSE / AKTU" value={formData.affiliatedFrom} onChange={(e) => updateField('affiliatedFrom', e.target.value)} error={fieldErrors.affiliatedFrom} required />
               </div>

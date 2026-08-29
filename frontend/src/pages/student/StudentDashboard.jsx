@@ -18,44 +18,32 @@ import {
   UserRound,
 } from 'lucide-react';
 import { attendanceApi, examApi, feeApi, libraryApi, noticeApi, studentApi, timetableApi, transportApi } from '../../utils/api';
-import { getFeeFacilityKey, isFeeStructureApplicableToStudent } from '../../utils/facilityUtils';
-import { buildFeeRow, formatMoney } from '../../utils/feeUtils';
-import { formatNoticeDate, getPortalNotices } from '../../utils/noticeUtils';
+import { formatMoney } from '../../utils/feeUtils';
+import { formatNoticeDate } from '../../utils/noticeUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session, logout } = useAuth();
   const [student, setStudent] = useState(null);
   const [classTimetables, setClassTimetables] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [dateSheets, setDateSheets] = useState([]);
   const [admitCards, setAdmitCards] = useState([]);
   const [transportRecords, setTransportRecords] = useState([]);
-  const [libraryIssues, setLibraryIssues] = useState([]);
-  const [books, setBooks] = useState([]);
-  const [feeStructures, setFeeStructures] = useState([]);
-  const [feePayments, setFeePayments] = useState([]);
+  const [librarySummary, setLibrarySummary] = useState(null);
+  const [feeSummaryData, setFeeSummaryData] = useState(null);
   const [notices, setNotices] = useState([]);
   const [loadError, setLoadError] = useState('');
 
   const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
+    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Student'
     : 'Student';
 
   const studentAttendance = useMemo(() => {
     if (!student) return [];
-    const studentKeys = [student.systemId, student.enrollmentNo, String(student.id)].filter(Boolean).map(String);
-    return attendanceRecords.filter((record) => {
-      const recordStudentId = String(record.studentId || '');
-      const recordRollNo = String(record.rollNo || '');
-      const recordName = String(record.studentName || '').trim().toLowerCase();
-      return (
-        studentKeys.includes(recordStudentId) ||
-        studentKeys.includes(recordRollNo) ||
-        recordName === studentName.toLowerCase()
-      );
-    });
-  }, [attendanceRecords, student, studentName]);
+    return attendanceRecords;
+  }, [attendanceRecords, student]);
 
   const presentCount = studentAttendance.filter((record) => record.status === 'Present').length;
   const attendanceRate = studentAttendance.length
@@ -74,7 +62,7 @@ const StudentDashboard = () => {
 
   const studentAdmitCards = useMemo(() => {
     if (!student) return [];
-    const studentKeys = [student.systemId, student.enrollmentNo, String(student.id)].filter(Boolean).map(String);
+    const studentKeys = [student.enrollmentNo, String(student.id)].filter(Boolean).map(String);
     return admitCards.filter((record) => {
       const recordStudentId = String(record.studentId || '');
       const recordRollNo = String(record.rollNo || '');
@@ -89,73 +77,28 @@ const StudentDashboard = () => {
 
   const transportAssignment = useMemo(() => {
     if (!student) return null;
-    const studentKeys = [String(student.id), String(student.systemId || ''), String(student.enrollmentNo || '')];
+    const studentKeys = [String(student.id), String(student.enrollmentNo || '')];
     return transportRecords.find((record) =>
       studentKeys.includes(String(record.studentId || '')) ||
       String(record.studentName || '').trim().toLowerCase() === studentName.toLowerCase(),
     ) || null;
   }, [student, studentName, transportRecords]);
 
-  const activeLibraryIssues = useMemo(() => {
-    if (!student) return [];
-    return libraryIssues
-      .filter((issue) => String(issue.borrowerId) === String(student.id) && !issue.returnDate)
-      .map((issue) => ({
-        ...issue,
-        bookTitle: books.find((book) => book.id === issue.bookId)?.title || 'Library Book',
-      }));
-  }, [books, libraryIssues, student]);
-
-  const studentPayments = useMemo(() => {
-    if (!student) return [];
-    return feePayments.filter((payment) => String(payment.studentId) === String(student.id));
-  }, [feePayments, student]);
-
-  const paidAmount = studentPayments
-    .filter((payment) => payment.paymentStatus === 'Success')
-    .reduce((sum, payment) => sum + (Number(payment.paidAmount) || 0), 0);
-
-  const studentFeeRows = useMemo(() => {
-    if (!student) return [];
-    const studentClassName = normalizeClassName(student.assignedClass || student.className || '');
-    if (!studentClassName) return [];
-    const successfulPayments = studentPayments.filter((payment) => payment.paymentStatus === 'Success');
-    return feeStructures
-      .filter((structure) => normalizeClassName(structure.courseId) === studentClassName)
-      .map((structure) => ({
-        structure,
-        ...buildFeeRow(structure, student.id, successfulPayments),
-      }))
-      .filter((row) => {
-        if (!isFeeStructureApplicableToStudent(row.structure, student)) return false;
-        return row.billingType !== 'monthly_active' || row.serviceMonthsCount > 0;
-      });
-  }, [feeStructures, student, studentPayments]);
+  const paidAmount = Number(feeSummaryData?.totalPaid) || 0;
 
   const feeSummary = useMemo(() => {
-    const totalPayable = studentFeeRows.reduce((sum, row) => sum + (Number(row.totalOutstanding) || 0), 0);
-    const currentCycleDue = studentFeeRows.reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
-    const previousPending = studentFeeRows.reduce((sum, row) => sum + (Number(row.previousPendingAmount) || 0), 0);
-    const activeFacilityFee = studentFeeRows
-      .filter((row) => isFacilityFeeStructure(row.structure))
-      .reduce((sum, row) => sum + (Number(row.currentCycleDueAmount) || 0), 0);
     return {
-      totalPayable,
-      currentCycleDue,
-      previousPending,
-      activeFacilityFee,
+      totalPayable: Number(feeSummaryData?.totalOutstanding) || 0,
+      currentCycleDue: Number(feeSummaryData?.currentDue) || 0,
+      previousPending: Number(feeSummaryData?.previousPending) || 0,
+      activeFacilityFee: 0,
     };
-  }, [studentFeeRows]);
+  }, [feeSummaryData]);
 
-  const portalNotices = useMemo(
-    () => getPortalNotices(notices, 'student', student?.assignedClass || student?.className, [], student?.id),
-    [notices, student],
-  );
+  const portalNotices = notices;
 
   const handleLogout = () => {
-    localStorage.removeItem('active_session');
-    localStorage.removeItem('current_college_id');
-    navigate('/login');
+    logout().finally(() => navigate('/login'));
   };
 
   useEffect(() => {
@@ -166,43 +109,37 @@ const StudentDashboard = () => {
 
     const loadStudentDashboard = async () => {
       try {
-        const [studentResponse, timetableResponse, assignmentResponse, bookResponse, issueResponse, attendanceResponse, dateSheetResponse, admitCardResponse, noticeResponse, feeStructureResponse, feePaymentResponse] = await Promise.all([
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const [studentResponse, timetableResponse, assignmentResponse, librarySummaryResponse, attendanceResponse, examinationResponse, noticeResponse, feeSummaryResponse] = await Promise.all([
           studentApi.getById(session.studentId),
-          timetableApi.getClassTimetables(),
-          transportApi.getAssignments(),
-          libraryApi.getBooks(),
-          libraryApi.getIssues(),
-          attendanceApi.getAll(),
-          examApi.getDateSheets(),
-          examApi.getAdmitCards(),
-          noticeApi.getPortalAll(),
-          feeApi.getStructures(),
-          feeApi.getPayments(session.studentId),
+          timetableApi.getMyStudentTimetable(),
+          transportApi.getMyAssignment(),
+          libraryApi.getMySummary(),
+          attendanceApi.getMyStudentAttendance(currentMonth),
+          examApi.getStudentMe(),
+          noticeApi.getPortalAll({ page: 0, size: 5 }),
+          feeApi.getMySummary(),
         ]);
         setStudent(studentResponse);
-        setClassTimetables(timetableResponse);
-        setTransportRecords(assignmentResponse);
-        setBooks(bookResponse);
-        setLibraryIssues(issueResponse);
+        setClassTimetables(timetableResponse ? [timetableResponse] : []);
+        setTransportRecords(assignmentResponse ? [assignmentResponse] : []);
+        setLibrarySummary(librarySummaryResponse);
         setAttendanceRecords(attendanceResponse);
-        setDateSheets(dateSheetResponse);
-        setAdmitCards(admitCardResponse);
-        setNotices(noticeResponse);
-        setFeeStructures(feeStructureResponse);
-        setFeePayments(feePaymentResponse);
+        setDateSheets(examinationResponse?.dateSheets || []);
+        setAdmitCards(examinationResponse?.admitCards || []);
+        setNotices(Array.isArray(noticeResponse?.content) ? noticeResponse.content : noticeResponse);
+        setFeeSummaryData(feeSummaryResponse);
         setLoadError('');
       } catch {
         setStudent(null);
         setClassTimetables([]);
         setTransportRecords([]);
-        setBooks([]);
-        setLibraryIssues([]);
+        setLibrarySummary(null);
         setAttendanceRecords([]);
         setDateSheets([]);
         setAdmitCards([]);
         setNotices([]);
-        setFeeStructures([]);
-        setFeePayments([]);
+        setFeeSummaryData(null);
         setLoadError('Unable to load student dashboard data.');
       }
     };
@@ -258,7 +195,7 @@ const StudentDashboard = () => {
             Student Dashboard
           </h1>
           <p className="mt-4 text-sm font-semibold text-slate-500">
-            {session.instituteName} | {student?.assignedClass || 'Class not assigned'} | {student?.enrollmentNo || student?.systemId || 'Enrollment pending'}
+            {session.instituteName} | {student?.assignedClass || 'Class not assigned'} | {student?.enrollmentNo || 'Enrollment pending'}
           </p>
         </div>
 
@@ -277,7 +214,7 @@ const StudentDashboard = () => {
               <MetricCard label="Attendance Rate" value={`${attendanceRate}%`} icon={CheckCircle2} />
               <MetricCard label="Exam Documents" value={classDateSheets.length + studentAdmitCards.length} icon={FileText} />
               <MetricCard label="Timetable" value={classTimetableRecord ? 'Available' : 'Pending'} icon={CalendarClock} />
-              <MetricCard label="Library Loans" value={activeLibraryIssues.length} icon={Library} />
+              <MetricCard label="Library Loans" value={librarySummary?.currentlyBorrowed || 0} icon={Library} />
               <MetricCard label="Fees Paid" value={formatMoney(paidAmount)} icon={CreditCard} />
               <MetricCard label="Notices" value={portalNotices.length} icon={Megaphone} />
             </div>
@@ -322,8 +259,8 @@ const StudentDashboard = () => {
           <ModuleCard
             icon={<Library className="text-amber-700" size={42} />}
             title="Library"
-            desc={activeLibraryIssues.length
-              ? `${activeLibraryIssues.length} active book issues currently linked to this student.`
+            desc={Number(librarySummary?.currentlyBorrowed || 0)
+              ? `${librarySummary.currentlyBorrowed} active book issues currently linked to this student.`
               : ((student?.libraryOptIn === 'yes' || student?.libraryOptIn === true)
                 ? `Library ${student?.libraryStatus || 'inactive'}`
                 : 'No library facility requested yet.')}
@@ -403,16 +340,5 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
     <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{desc}</p>
   </button>
 );
-
-const isFacilityFeeStructure = (structure = {}) => (
-  structure.feeType === 'facility_fee' || structure.billingType === 'monthly_active' || Boolean(getFeeFacilityKey(structure))
-);
-
-const normalizeClassName = (className = '') => String(className)
-  .split('/')
-  .at(0)
-  ?.replace(/\s+-\s+section\s+.+$/i, '')
-  .replace(/\s+section\s+.+$/i, '')
-  .trim() || '';
 
 export default StudentDashboard;

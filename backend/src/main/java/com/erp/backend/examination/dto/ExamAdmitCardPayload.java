@@ -3,13 +3,19 @@ package com.erp.backend.examination.dto;
 import jakarta.validation.constraints.NotBlank;
 
 public record ExamAdmitCardPayload(
+        Long academicSessionId,
+        Long examId,
+        Long realStudentId,
+        Long classId,
+        Long sectionId,
         @NotBlank(message = "Exam title is required") String examTitle,
-        @NotBlank(message = "Student ID is required") String studentId,
+        @NotBlank(message = "Enrollment number is required") String studentId,
         @NotBlank(message = "Student name is required") String studentName,
         @NotBlank(message = "Roll number is required") String rollNo,
         @NotBlank(message = "Class name is required") String className,
         @NotBlank(message = "Center name is required") String centerName,
         @NotBlank(message = "Reporting time is required") String reportingTime,
-        @NotBlank(message = "Exam date is required") String examDate
+        @NotBlank(message = "Exam date is required") String examDate,
+        String status
 ) {
 }

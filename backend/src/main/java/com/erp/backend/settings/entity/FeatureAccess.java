@@ -3,6 +3,7 @@ package com.erp.backend.settings.entity;
 import java.time.LocalDateTime;
 
 import com.erp.backend.institute.entity.Institute;
+import com.erp.backend.teacher.entity.Teacher;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -19,7 +20,7 @@ import jakarta.persistence.UniqueConstraint;
 @Entity
 @Table(
         name = "feature_access",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"institute_id", "feature_key"})
+        uniqueConstraints = @UniqueConstraint(columnNames = {"institute_id", "feature_key", "teacher_id"})
 )
 public class FeatureAccess {
 
@@ -33,6 +34,13 @@ public class FeatureAccess {
 
     @Column(name = "feature_key", nullable = false, length = 60)
     private String featureKey;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "teacher_id")
+    private Teacher teacher;
+
+    @Column(length = 20)
+    private String operation = "read";
 
     @Column(nullable = false)
     private boolean enabled;
@@ -76,6 +84,22 @@ public class FeatureAccess {
 
     public void setFeatureKey(String featureKey) {
         this.featureKey = featureKey;
+    }
+
+    public Teacher getTeacher() {
+        return teacher;
+    }
+
+    public void setTeacher(Teacher teacher) {
+        this.teacher = teacher;
+    }
+
+    public String getOperation() {
+        return operation;
+    }
+
+    public void setOperation(String operation) {
+        this.operation = operation;
     }
 
     public boolean isEnabled() {

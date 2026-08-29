@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,14 +11,11 @@ import {
   LayoutGrid,
   List,
   Mail,
-  MapPin,
   Phone,
   Plus,
   QrCode,
   Search,
   Download,
-  Eye,
-  EyeOff,
   Save,
   Trash2,
   Upload,
@@ -60,7 +58,6 @@ const initialFormData = {
   transportStatus: 'inactive',
   hostelStatus: 'inactive',
   libraryStatus: 'inactive',
-  studentPortalPassword: '',
   documentType: '',
   otherDocumentName: '',
   fileUploadPath: '',
@@ -100,14 +97,19 @@ const UPPERCASE_STUDENT_FIELDS = new Set([
 
 const StudentManagement = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('list');
   const [currentStep, setCurrentStep] = useState(1);
-  const [students, setStudents] = useState([]);
   const [currentAcademicYear, setCurrentAcademicYear] = useState(getDefaultAcademicYear());
   const [loadError, setLoadError] = useState('');
   const [viewMode, setViewMode] = useState('table');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sortValue, setSortValue] = useState('createdAt,desc');
   const [formData, setFormData] = useState(initialFormData);
   const [generatedStudent, setGeneratedStudent] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -125,27 +127,83 @@ const StudentManagement = () => {
   const [pendingDetailPhotoFile, setPendingDetailPhotoFile] = useState(null);
 
   useEffect(() => {
-    const loadStudents = async () => {
-      try {
-        const [apiStudents, settings] = await Promise.all([
-          studentApi.getAll(),
-          settingsApi.get().catch(() => null),
-        ]);
-        setStudents(apiStudents);
-        setCurrentAcademicYear(resolveCurrentAcademicYear(settings?.preferences));
-        setLoadError('');
-      } catch (error) {
-        setStudents([]);
-        setLoadError(error.message || 'Unable to load students from the server.');
-      }
-    };
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim());
+      setPage(0);
+    }, 350);
 
-    loadStudents();
-  }, []);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm]);
+
+  const academicYearQuery = useQuery({
+    queryKey: ['college-academic-year'],
+    queryFn: () => settingsApi.getAcademicYear(),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const classSummaryQuery = useQuery({
+    queryKey: ['student-class-summary'],
+    queryFn: () => studentApi.getClassSummary(),
+    staleTime: 30000,
+  });
+
+  const studentsQuery = useQuery({
+    queryKey: ['students', {
+      page,
+      size: pageSize,
+      assignedClass: selectedClass,
+      search: debouncedSearchTerm,
+      status: statusFilter,
+      sort: sortValue,
+    }],
+    queryFn: () => studentApi.getPage({
+      page,
+      size: pageSize,
+      assignedClass: selectedClass,
+      search: debouncedSearchTerm,
+      status: statusFilter,
+      sort: sortValue,
+    }),
+    enabled: Boolean(selectedClass),
+    staleTime: 30000,
+    placeholderData: keepPreviousData,
+  });
+
+  useEffect(() => {
+    if (academicYearQuery.data?.academicYear) {
+      setCurrentAcademicYear(String(academicYearQuery.data.academicYear).toUpperCase());
+    }
+  }, [academicYearQuery.data]);
+
+  useEffect(() => {
+    const error = academicYearQuery.error || classSummaryQuery.error || studentsQuery.error;
+    setLoadError(error?.message || '');
+  }, [academicYearQuery.error, classSummaryQuery.error, studentsQuery.error]);
+
+  const classSummaries = useMemo(() => (
+    (classSummaryQuery.data || []).map((summary) => ({
+      name: summary.assignedClass || 'Unassigned',
+      count: summary.totalStudents || 0,
+      verified: summary.verifiedStudents || 0,
+    }))
+  ), [classSummaryQuery.data]);
+
+  const studentPage = studentsQuery.data || { content: [], page: 0, size: pageSize, totalElements: 0, totalPages: 0 };
+  const students = studentPage.content || [];
 
   const today = new Date().toISOString().split('T')[0];
   const draftAssignedClass = [formData.className, formData.section].filter(Boolean).join(' / ');
-  const draftSystemId = 'EDU-AUTO-ID';
+  const draftEnrollmentNo = 'SCHOOLSTU AUTO NUMBER';
+
+  const refreshStudentQueries = async ({ studentId } = {}) => {
+    if (studentId) {
+      await queryClient.invalidateQueries({ queryKey: ['student', studentId] });
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['student-class-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['students'] }),
+    ]);
+  };
 
   const updateFormField = (field, value) => {
     setFormData((current) => ({ ...current, [field]: normalizeStudentFieldValue(field, value) }));
@@ -276,17 +334,7 @@ const StudentManagement = () => {
         ...pendingFormData,
         documents: formData.documents,
       }, pendingPhotoFile);
-      const studentId = `EDU-${Math.floor(1000 + Math.random() * 9000)}`;
       const resolvedAssignedClass = draftAssignedClass || uploadedFormData.assignedClass || '';
-      const resolvedPortalPassword = uploadedFormData.studentPortalPassword.trim() || buildDefaultPortalPassword(uploadedFormData);
-      const resolvedQrCodeData = buildStudentQrPayload({
-        ...uploadedFormData,
-        assignedClass: resolvedAssignedClass,
-        studentPortalPassword: resolvedPortalPassword,
-        registrationDate: today,
-        admissionDate: today,
-        systemId: studentId,
-      });
       const newStudent = {
         ...uploadedFormData,
         className: uploadedFormData.className,
@@ -313,26 +361,11 @@ const StudentManagement = () => {
             status: uploadedFormData.libraryOptIn === 'yes' ? 'active' : 'inactive',
           },
         },
-        systemId: studentId,
-        qrCodeData: resolvedQrCodeData,
-        studentPortalPassword: resolvedPortalPassword,
         status: 'Verified',
       };
       const savedStudent = await studentApi.create(newStudent);
-      const savedQrCodeData = buildStudentQrPayload({
-        ...newStudent,
-        enrollmentNo: savedStudent.enrollmentNo,
-        systemId: savedStudent.systemId,
-      });
-      const finalizedStudent = await studentApi.update(savedStudent.id, {
-        ...newStudent,
-        enrollmentNo: savedStudent.enrollmentNo,
-        systemId: savedStudent.systemId,
-        qrCodeData: savedQrCodeData,
-      });
-      const updatedStudents = [finalizedStudent, ...students];
-      setStudents(updatedStudents);
-      setGeneratedStudent(finalizedStudent);
+      await refreshStudentQueries({ studentId: savedStudent.id });
+      setGeneratedStudent(savedStudent);
       setFormData(initialFormData);
       setPendingPhotoFile(null);
       setCurrentStep(1);
@@ -372,6 +405,8 @@ const StudentManagement = () => {
     if (selectedClass) {
       setSelectedClass('');
       setSearchTerm('');
+      setDebouncedSearchTerm('');
+      setPage(0);
       setViewMode('table');
       return;
     }
@@ -390,8 +425,7 @@ const StudentManagement = () => {
     setIsDeletingStudent(true);
     try {
       await studentApi.delete(pendingDeleteStudent.id);
-      const updated = students.filter((student) => student.id !== pendingDeleteStudent.id);
-      setStudents(updated);
+      await refreshStudentQueries({ studentId: pendingDeleteStudent.id });
       if (selectedStudent?.id === pendingDeleteStudent.id) {
         setSelectedStudent(null);
         setDetailFormData(initialFormData);
@@ -409,8 +443,9 @@ const StudentManagement = () => {
   const updateStudentFacilities = async (studentId, updates) => {
     try {
       const updatedStudent = await studentApi.updateFacilities(studentId, updates);
-      const updated = students.map((student) => (student.id === studentId ? updatedStudent : student));
-      setStudents(updated);
+      queryClient.setQueryData(['student', studentId], updatedStudent);
+      await queryClient.invalidateQueries({ queryKey: ['students'] });
+      await queryClient.invalidateQueries({ queryKey: ['student-class-summary'] });
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to update student facilities.');
@@ -419,7 +454,11 @@ const StudentManagement = () => {
 
   const handleOpenStudent = async (studentId) => {
     try {
-      const student = await studentApi.getById(studentId);
+      const student = await queryClient.fetchQuery({
+        queryKey: ['student', studentId],
+        queryFn: () => studentApi.getById(studentId),
+        staleTime: 30000,
+      });
       setSelectedStudent(student);
       setDetailFormData(mapStudentToFormData(student));
       setPendingDetailDocument(null);
@@ -515,25 +554,19 @@ const StudentManagement = () => {
     try {
       const pendingDetailFormData = prepareStudentFormDataForSave(detailFormData);
       const resolvedAssignedClass = [pendingDetailFormData.className, pendingDetailFormData.section].filter(Boolean).join(' / ') || pendingDetailFormData.assignedClass || '';
-      const resolvedPortalPassword = pendingDetailFormData.studentPortalPassword.trim() || buildDefaultPortalPassword(pendingDetailFormData);
-      const resolvedQrCodeData = buildStudentQrPayload({
+      const uploadedDetailFormData = await uploadStudentAssets({
         ...pendingDetailFormData,
-        assignedClass: resolvedAssignedClass,
-        studentPortalPassword: resolvedPortalPassword,
-        registrationDate: pendingDetailFormData.regDate,
-        admissionDate: pendingDetailFormData.admissionDate,
-        systemId: selectedStudent.systemId,
-      });
+        documents: detailFormData.documents,
+      }, pendingDetailPhotoFile);
 
       const payload = {
         ...pendingDetailFormData,
+        ...uploadedDetailFormData,
         assignedClass: resolvedAssignedClass,
         academicYear: pendingDetailFormData.academicYear || selectedStudent.academicYear || currentAcademicYear,
         transportStatus: pendingDetailFormData.transportOptIn === 'yes' ? (pendingDetailFormData.transportStatus || 'active') : 'inactive',
         hostelStatus: pendingDetailFormData.hostelOptIn === 'yes' ? (pendingDetailFormData.hostelStatus || 'active') : 'inactive',
         libraryStatus: pendingDetailFormData.libraryOptIn === 'yes' ? (pendingDetailFormData.libraryStatus || 'active') : 'inactive',
-        studentPortalPassword: resolvedPortalPassword,
-        qrCodeData: resolvedQrCodeData,
         status: selectedStudent.status || 'Verified',
         regDate: pendingDetailFormData.regDate || today,
         admissionDate: pendingDetailFormData.admissionDate || today,
@@ -541,20 +574,10 @@ const StudentManagement = () => {
         cardExpiryDate: pendingDetailFormData.cardExpiryDate,
       };
       const updatedStudent = await studentApi.update(selectedStudent.id, payload);
-      const uploadedDetailFormData = await uploadStudentAssets({
-        ...payload,
-        documents: detailFormData.documents,
-      }, pendingDetailPhotoFile);
-      const finalizedStudent = await studentApi.update(updatedStudent.id, {
-        ...payload,
-        ...uploadedDetailFormData,
-        enrollmentNo: updatedStudent.enrollmentNo,
-        systemId: updatedStudent.systemId,
-      });
-      const updatedStudents = students.map((student) => (student.id === finalizedStudent.id ? finalizedStudent : student));
-      setStudents(updatedStudents);
-      setSelectedStudent(finalizedStudent);
-      setDetailFormData(mapStudentToFormData(finalizedStudent));
+      queryClient.setQueryData(['student', updatedStudent.id], updatedStudent);
+      await refreshStudentQueries({ studentId: updatedStudent.id, previousClass: selectedStudent.assignedClass, nextClass: updatedStudent.assignedClass });
+      setSelectedStudent(updatedStudent);
+      setDetailFormData(mapStudentToFormData(updatedStudent));
       setPendingDetailPhotoFile(null);
       setLoadError('');
     } catch (error) {
@@ -564,33 +587,6 @@ const StudentManagement = () => {
       setIsUpdatingStudent(false);
     }
   };
-
-  const classSummaries = Array.from(
-    students.reduce((classMap, student) => {
-      const className = getStudentClassLabel(student);
-      const current = classMap.get(className) || { name: className, count: 0, verified: 0 };
-      classMap.set(className, {
-        ...current,
-        count: current.count + 1,
-        verified: current.verified + (student.status === 'Verified' ? 1 : 0),
-      });
-      return classMap;
-    }, new Map()).values()
-  ).sort((firstClass, secondClass) => firstClass.name.localeCompare(secondClass.name));
-
-  const filteredStudents = students.filter((student) => {
-    const studentClass = getStudentClassLabel(student);
-    const matchesClass = selectedClass && studentClass === selectedClass;
-    const fullName = `${student.firstName} ${student.lastName}`.toLowerCase();
-    const searchValue = searchTerm.toLowerCase();
-    const matchesSearch =
-      !searchValue ||
-      fullName.includes(searchValue) ||
-      student.email?.toLowerCase().includes(searchValue) ||
-      student.systemId?.toLowerCase().includes(searchValue) ||
-      studentClass.toLowerCase().includes(searchValue);
-    return matchesClass && matchesSearch;
-  });
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f4f7fb_0%,#eef4ff_55%,#f9fbff_100%)] text-slate-900 selection:bg-cyan-500 selection:text-slate-950">
@@ -649,19 +645,42 @@ const StudentManagement = () => {
             students={students}
             classSummaries={classSummaries}
             selectedClass={selectedClass}
-            filteredStudents={filteredStudents}
+            studentPage={studentPage}
+            isClassSummaryLoading={classSummaryQuery.isLoading}
+            isStudentsLoading={studentsQuery.isLoading || studentsQuery.isFetching}
             viewMode={viewMode}
             setViewMode={setViewMode}
             searchTerm={searchTerm}
             setSearchTerm={setSearchTerm}
+            page={page}
+            setPage={setPage}
+            pageSize={pageSize}
+            setPageSize={(nextSize) => {
+              setPageSize(nextSize);
+              setPage(0);
+            }}
+            statusFilter={statusFilter}
+            setStatusFilter={(nextStatus) => {
+              setStatusFilter(nextStatus);
+              setPage(0);
+            }}
+            sortValue={sortValue}
+            setSortValue={(nextSort) => {
+              setSortValue(nextSort);
+              setPage(0);
+            }}
             onSelectClass={(className) => {
               setSelectedClass(className);
               setSearchTerm('');
+              setDebouncedSearchTerm('');
+              setPage(0);
               setViewMode('table');
             }}
             onBackToClasses={() => {
               setSelectedClass('');
               setSearchTerm('');
+              setDebouncedSearchTerm('');
+              setPage(0);
               setViewMode('table');
             }}
             onDelete={handleDelete}
@@ -711,7 +730,7 @@ const StudentManagement = () => {
               clearFieldError={(field) => setFieldErrors((current) => ({ ...current, [field]: '' }))}
               fieldErrors={fieldErrors}
               handleSave={handleSave}
-              draftSystemId={draftSystemId}
+              draftEnrollmentNo={draftEnrollmentNo}
               draftAssignedClass={draftAssignedClass}
               currentAcademicYear={currentAcademicYear}
               handleDocumentAdd={handleDocumentAdd}
@@ -754,11 +773,21 @@ const DirectoryView = ({
   students,
   classSummaries,
   selectedClass,
-  filteredStudents,
+  studentPage,
+  isClassSummaryLoading,
+  isStudentsLoading,
   viewMode,
   setViewMode,
   searchTerm,
   setSearchTerm,
+  page,
+  setPage,
+  pageSize,
+  setPageSize,
+  statusFilter,
+  setStatusFilter,
+  sortValue,
+  setSortValue,
   onSelectClass,
   onBackToClasses,
   onDelete,
@@ -773,13 +802,19 @@ const DirectoryView = ({
             <div>
               <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Class Directory</h3>
               <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                {classSummaries.length} classes | {students.length} student records
+                {classSummaries.length} classes | summary loaded from database
               </p>
             </div>
 
           </div>
 
-          {classSummaries.length > 0 ? (
+          {isClassSummaryLoading ? (
+            <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {[1, 2, 3, 4, 5, 6].map((item) => (
+                <div key={item} className="h-52 animate-pulse rounded-[1.9rem] border border-slate-200 bg-slate-100" />
+              ))}
+            </div>
+          ) : classSummaries.length > 0 ? (
             <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
               {classSummaries.map((classItem) => (
                 <button
@@ -835,7 +870,7 @@ const DirectoryView = ({
           </button>
           <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{selectedClass} Students</h3>
           <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-            {filteredStudents.length} records visible
+            {studentPage.totalElements || 0} records in this result
           </p>
         </div>
 
@@ -845,10 +880,34 @@ const DirectoryView = ({
             <input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search name, email, ID, class..."
+              placeholder="Search name, email, ID, phone..."
               className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-12 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
             />
           </div>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-black text-slate-700 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+          >
+            <option value="">All Status</option>
+            <option value="Verified">Verified</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+
+          <select
+            value={sortValue}
+            onChange={(e) => setSortValue(e.target.value)}
+            className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-black text-slate-700 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+          >
+            <option value="createdAt,desc">Newest Admission</option>
+            <option value="createdAt,asc">Oldest Admission</option>
+            <option value="name,asc">Name A-Z</option>
+            <option value="name,desc">Name Z-A</option>
+            <option value="rollNo,asc">Roll Number</option>
+            <option value="enrollmentNo,asc">Enrollment Number</option>
+          </select>
 
           <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
             <button
@@ -867,10 +926,12 @@ const DirectoryView = ({
         </div>
       </div>
 
-      {filteredStudents.length > 0 ? (
+      {isStudentsLoading && students.length === 0 ? (
+        <StudentRowsSkeleton viewMode={viewMode} />
+      ) : students.length > 0 ? (
         viewMode === 'grid' ? (
           <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {filteredStudents.map((student) => (
+            {students.map((student) => (
               <StudentCard key={student.id} student={student} onDelete={onDelete} onFacilityToggle={onFacilityToggle} onOpen={onOpenStudent} />
             ))}
           </div>
@@ -889,7 +950,7 @@ const DirectoryView = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 bg-white">
-                {filteredStudents.map((student) => (
+                {students.map((student) => (
                   <tr key={student.id} onClick={() => onOpenStudent(student.id)} className="cursor-pointer transition hover:bg-cyan-50/60">
                     <td className="px-6 py-5">
                       <p className="text-sm font-black text-slate-950">{student.firstName} {student.lastName}</p>
@@ -934,6 +995,43 @@ const DirectoryView = ({
           </p>
         </div>
       )}
+      {selectedClass ? (
+        <div className="mt-5 flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Rows</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 outline-none"
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setPage(Math.max(page - 1, 0))}
+              disabled={page <= 0 || isStudentsLoading}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+              Page {(studentPage.page || 0) + 1} of {Math.max(studentPage.totalPages || 1, 1)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(page + 1)}
+              disabled={page + 1 >= (studentPage.totalPages || 1) || isStudentsLoading}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   </div>
   );
@@ -948,7 +1046,7 @@ const EnrollmentWizard = ({
   clearFieldError,
   fieldErrors,
   handleSave,
-  draftSystemId,
+  draftEnrollmentNo,
   draftAssignedClass,
   currentAcademicYear,
   handleDocumentAdd,
@@ -992,7 +1090,7 @@ const EnrollmentWizard = ({
           <div className="mt-8 space-y-3 text-sm text-slate-300">
             <PreviewRow icon={Mail} value={formData.email || 'Email not added'} />
             <PreviewRow icon={Phone} value={formData.mobile || 'Mobile not added'} />
-            <PreviewRow icon={IdCard} value={draftSystemId} />
+            <PreviewRow icon={IdCard} value={draftEnrollmentNo} />
             <PreviewRow icon={FileText} value={`${formData.documents.length} document(s) added`} />
             <PreviewRow icon={QrCode} value="QR will appear only after final confirmation" />
           </div>
@@ -1106,15 +1204,6 @@ const EnrollmentWizard = ({
                 options={['Select', 'yes', 'no']}
                 error={fieldErrors.libraryOptIn}
               />
-            <div className="md:col-span-2">
-              <CreativeInput
-                label="Student Portal Password"
-                type="password"
-                value={formData.studentPortalPassword}
-                onChange={(e) => setFormData({ ...formData, studentPortalPassword: e.target.value })}
-                placeholder="Optional. Default: father phone first 6 digits + birth year"
-              />
-            </div>
           </div>
           <WizardButtons label="Continue to Documents" onNext={() => setCurrentStep(4)} onBack={() => setCurrentStep(2)} />
         </div>
@@ -1203,7 +1292,7 @@ const EnrollmentWizard = ({
 
       {currentStep === 5 && (
         <div>
-          <FormHeader eyebrow="Step 05" title="Student ID generation" desc="Upload the student photo, review the full form, and confirm to generate the QR code with all student details." />
+          <FormHeader eyebrow="Step 05" title="Enrollment number generation" desc="Upload the student photo, review the full form, and confirm to generate the QR code with all student details." />
           <div className="mt-8 grid gap-5">
             <DocumentUploadField label="Student Photo Upload" value={formData.photoUrl ? 'Photo selected' : ''} onBrowse={handlePhotoBrowse} error={fieldErrors.photoUrl} />
           </div>
@@ -1220,7 +1309,7 @@ const EnrollmentWizard = ({
               <div className="rounded-[1.6rem] bg-slate-950 p-6 text-white">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">Student ID Card</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">Enrollment Card</p>
                     <h3 className="mt-3 font-serif text-3xl font-black italic">
                       {formData.firstName || 'New'} {formData.lastName || 'Student'}
                     </h3>
@@ -1237,7 +1326,7 @@ const EnrollmentWizard = ({
                   )}
                 </div>
                 <div className="mt-8 grid gap-3 text-sm text-slate-300">
-                  <PreviewRow icon={IdCard} value={draftSystemId} />
+                  <PreviewRow icon={IdCard} value={draftEnrollmentNo} />
                   <PreviewRow icon={Mail} value={formData.email || 'Email not added'} />
                   <PreviewRow icon={Phone} value={formData.guardianPhone || 'Father phone not added'} />
                   <PreviewRow icon={Calendar} value={today} />
@@ -1279,17 +1368,13 @@ const EnrollmentWizard = ({
               <ReviewLine label="Transport" value={formData.transportOptIn === 'yes' ? `Requested | ${formData.transportStatus}` : 'Not requested'} />
               <ReviewLine label="Hostel" value={formData.hostelOptIn === 'yes' ? `Requested | ${formData.hostelStatus}` : 'Not requested'} />
               <ReviewLine label="Library" value={formData.libraryOptIn === 'yes' ? `Requested | ${formData.libraryStatus}` : 'Not requested'} />
-              <ReviewLine
-                label="Portal Password"
-                value={formData.studentPortalPassword || buildDefaultPortalPassword(formData)}
-              />
             </ReviewCard>
 
             <ReviewCard title="Documents & ID">
               <ReviewLine label="Total Documents" value={String(formData.documents.length)} />
               <ReviewLine label="Latest Document" value={formData.documents[formData.documents.length - 1]?.documentType || '-'} />
               <ReviewLine label="Latest File" value={formData.documents[formData.documents.length - 1]?.fileUploadPath || '-'} />
-              <ReviewLine label="System ID" value={draftSystemId} />
+              <ReviewLine label="Enrollment No" value={draftEnrollmentNo} />
               <ReviewLine label="Photo" value={formData.photoUrl ? 'Uploaded' : 'Not uploaded'} />
             </ReviewCard>
           </div>
@@ -1308,13 +1393,37 @@ const EnrollmentWizard = ({
   );
 };
 
+const StudentRowsSkeleton = ({ viewMode }) => (
+  viewMode === 'grid' ? (
+    <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      {[1, 2, 3, 4, 5, 6].map((item) => (
+        <div key={item} className="h-72 animate-pulse rounded-[1.9rem] border border-slate-200 bg-slate-100" />
+      ))}
+    </div>
+  ) : (
+    <div className="mt-6 overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white">
+      {[1, 2, 3, 4, 5].map((item) => (
+        <div key={item} className="flex animate-pulse items-center gap-4 border-b border-slate-100 px-6 py-5 last:border-0">
+          <div className="h-10 w-10 rounded-xl bg-slate-100" />
+          <div className="h-4 flex-1 rounded bg-slate-100" />
+          <div className="h-4 w-32 rounded bg-slate-100" />
+        </div>
+      ))}
+    </div>
+  )
+);
+
 const StudentCard = ({ student, onDelete, onFacilityToggle, onOpen }) => (
   <article onClick={() => onOpen(student.id)} className="group cursor-pointer overflow-hidden rounded-[1.9rem] border border-slate-200/80 bg-white p-6 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.35)] transition hover:-translate-y-1 hover:shadow-[0_24px_50px_-28px_rgba(6,182,212,0.35)]">
     <div className="flex items-start justify-between">
       <div className="flex items-center gap-4">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#cffafe_0%,#dbeafe_100%)] text-lg font-black uppercase text-slate-900">
-          {(student.firstName?.[0] || 'N') + (student.lastName?.[0] || 'S')}
-        </div>
+        {student.photoUrl ? (
+          <img src={buildImageKitThumbnail(student.photoUrl, 48)} alt={`${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student'} loading="lazy" className="h-14 w-14 rounded-2xl object-cover" />
+        ) : (
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#cffafe_0%,#dbeafe_100%)] text-lg font-black uppercase text-slate-900">
+            {(student.firstName?.[0] || 'N') + (student.lastName?.[0] || 'S')}
+          </div>
+        )}
         <div>
           <h4 className="text-lg font-black tracking-tight text-slate-950">{student.firstName} {student.lastName}</h4>
           <p className="mt-1 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">{student.assignedClass || [student.className, student.section].filter(Boolean).join(' / ') || 'Unassigned'}</p>
@@ -1335,7 +1444,7 @@ const StudentCard = ({ student, onDelete, onFacilityToggle, onOpen }) => (
     <div className="mt-6 grid gap-3 text-sm text-slate-600">
       <PreviewRow icon={Mail} value={student.email || 'No email added'} light />
       <PreviewRow icon={Phone} value={student.mobile || 'No phone added'} light />
-      <PreviewRow icon={MapPin} value={student.address || 'Address not available'} light />
+      <PreviewRow icon={IdCard} value={student.enrollmentNo || 'Enrollment pending'} light />
     </div>
 
     <div className="mt-6 rounded-[1.4rem] border border-slate-200 bg-slate-50 p-4">
@@ -1386,8 +1495,8 @@ const StudentCard = ({ student, onDelete, onFacilityToggle, onOpen }) => (
 
     <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
       <div>
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">System ID</p>
-        <p className="mt-1 text-sm font-semibold text-slate-700">{student.systemId}</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Enrollment No</p>
+        <p className="mt-1 text-sm font-semibold text-slate-700">{student.enrollmentNo}</p>
       </div>
       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
         {student.status || 'Verified'}
@@ -1704,13 +1813,6 @@ function splitNameParts(fullName) {
   };
 }
 
-function buildDefaultPortalPassword(formData) {
-  const guardianDigits = String(formData.guardianPhone || '').replace(/\D/g, '');
-  const firstSix = guardianDigits.slice(0, 6).padEnd(6, '0');
-  const year = formData.dob ? String(formData.dob).slice(0, 4) : '0000';
-  return `${firstSix}${year}`;
-}
-
 function getStudentClassLabel(student) {
   return student.assignedClass || [student.className, student.section].filter(Boolean).join(' / ') || 'Unassigned';
 }
@@ -1725,7 +1827,6 @@ function buildStudentQrPayload(student) {
   return [
     'ERP STUDENT PROFILE',
     `Name: ${fullName}`,
-    `Student ID: ${student.systemId || 'N/A'}`,
     `Enrollment No: ${student.enrollmentNo || 'N/A'}`,
     `Class: ${student.assignedClass || student.className || 'N/A'}`,
     `Section: ${student.section || 'N/A'}`,
@@ -1742,6 +1843,15 @@ function buildStudentQrPayload(student) {
 
 function createQrImageUrl(value) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'student')}`;
+}
+
+function buildImageKitThumbnail(url, size = 48) {
+  if (!url) {
+    return url;
+  }
+
+  const transformation = `tr=w-${size},h-${size},c-at_max`;
+  return url.includes('?') ? `${url}&${transformation}` : `${url}?${transformation}`;
 }
 
 function mapStudentToFormData(student) {
@@ -1780,7 +1890,6 @@ function mapStudentToFormData(student) {
     transportStatus: student.transportStatus || 'inactive',
     hostelStatus: student.hostelStatus || 'inactive',
     libraryStatus: student.libraryStatus || 'inactive',
-    studentPortalPassword: student.studentPortalPassword || '',
     documentType: student.documentType || '',
     otherDocumentName: student.otherDocumentName || '',
     fileUploadPath: '',
@@ -1928,7 +2037,6 @@ function StudentDetailView({
 }) {
   const qrImage = createQrImageUrl(student.qrCodeData);
   const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student';
-  const [showPortalPassword, setShowPortalPassword] = useState(false);
 
   return (
     <div className="space-y-8">
@@ -1976,8 +2084,7 @@ function StudentDetailView({
         <div className="mt-8 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-6">
             <ReviewCard title="Identity">
-              <ReviewLine label="System ID" value={student.systemId || '-'} />
-              <ReviewLine label="Enrollment" value={student.enrollmentNo || '-'} />
+              <ReviewLine label="Enrollment No" value={student.enrollmentNo || '-'} />
               <ReviewLine label="Roll No" value={student.rollNo || '-'} />
               <ReviewLine label="Status" value={student.status || 'Verified'} />
             </ReviewCard>
@@ -2011,24 +2118,6 @@ function StudentDetailView({
                 }} options={SECTION_OPTIONS.filter((option) => option !== 'Select')} error={fieldErrors.section} />
                 <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
                 <CreativeInput label="Academic Year" value={formData.academicYear || currentAcademicYear} onChange={(e) => updateFormField('academicYear', e.target.value)} />
-                <div className="space-y-2.5">
-                  <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Portal Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPortalPassword ? 'text' : 'password'}
-                      value={formData.studentPortalPassword}
-                      onChange={(e) => setFormData({ ...formData, studentPortalPassword: e.target.value })}
-                      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 pr-14 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPortalPassword((current) => !current)}
-                      className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-200 hover:text-slate-900"
-                    >
-                      {showPortalPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
                 <CreativeSelect label="Transport Requested" value={formData.transportOptIn} onChange={(e) => setFormData({ ...formData, transportOptIn: e.target.value, transportStatus: e.target.value === 'yes' ? formData.transportStatus : 'inactive' })} options={['yes', 'no']} />
                 <CreativeSelect label="Transport Status" value={formData.transportStatus} onChange={(e) => setFormData({ ...formData, transportStatus: e.target.value })} options={['active', 'inactive']} />
                 <CreativeSelect label="Hostel Requested" value={formData.hostelOptIn} onChange={(e) => setFormData({ ...formData, hostelOptIn: e.target.value, hostelStatus: e.target.value === 'yes' ? formData.hostelStatus : 'inactive' })} options={['yes', 'no']} />
@@ -2137,7 +2226,6 @@ function GeneratedStudentView({ student, onClose }) {
             <ReviewLine label="Class" value={student.className || '-'} />
             <ReviewLine label="Section" value={student.section || '-'} />
             <ReviewLine label="Assigned" value={student.assignedClass || '-'} />
-            <ReviewLine label="Portal Password" value={student.studentPortalPassword || '-'} />
           </ReviewCard>
           <button onClick={onClose} className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-cyan-600">
             Back To Student List

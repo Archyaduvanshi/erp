@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -12,7 +13,8 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { studentApi, transportApi } from '../../utils/api';
+import { academicSessionApi, transportApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const initialDriverForm = {
   driverName: '',
@@ -27,11 +29,16 @@ const initialDriverForm = {
 };
 
 const initialStudentForm = {
+  enrollmentNo: '',
   className: '',
   section: '',
   studentId: '',
+  studentName: '',
+  fatherName: '',
   pickupStop: '',
+  pickupStopId: '',
   assignedDriverId: '',
+  routeId: '',
 };
 
 const LICENSE_FORMAT_HINT = 'Use format SS-YY-XXXXXXXXXX, like DL-01-1234567890.';
@@ -99,11 +106,10 @@ const normalizeDriverPayload = (form) => ({
 
 const TransportManagement = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { session } = useAuth();
+  const instituteId = session?.id || '';
   const [activeSection, setActiveSection] = useState('home');
-  const [drivers, setDrivers] = useState([]);
-  const [transportStudents, setTransportStudents] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [driverSearch, setDriverSearch] = useState('');
   const [studentSearch, setStudentSearch] = useState('');
   const [recordSearch, setRecordSearch] = useState('');
@@ -115,30 +121,112 @@ const TransportManagement = () => {
   const [attendanceDate, setAttendanceDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [attendanceMap, setAttendanceMap] = useState({});
   const [loadError, setLoadError] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
   const [driverFormErrors, setDriverFormErrors] = useState({});
 
-  useEffect(() => {
-    refreshData();
-  }, []);
+  const selectedMonth = useMemo(() => String(attendanceDate || '').slice(0, 7), [attendanceDate]);
 
-  const refreshData = async () => {
-    try {
-      const [driverResponse, assignmentResponse, studentResponse, attendanceResponse] = await Promise.all([
-        transportApi.getDrivers(),
-        transportApi.getAssignments(),
-        studentApi.getAll(),
-        transportApi.getAttendance(),
-      ]);
-      setDrivers(driverResponse);
-      setTransportStudents(assignmentResponse);
-      setStudents(studentResponse);
-      setAttendanceRecords(attendanceResponse);
-      setLoadError('');
-    } catch (error) {
-      setLoadError(error.message || 'Unable to load transport records from the server.');
-    }
-  };
+  const sessionsQuery = useQuery({
+    queryKey: ['transport-academic-sessions', instituteId],
+    queryFn: academicSessionApi.getAll,
+    enabled: Boolean(instituteId),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const academicSession = useMemo(() => {
+    const sessions = sessionsQuery.data || [];
+    return sessions.find((item) => item.current) || sessions[0] || null;
+  }, [sessionsQuery.data]);
+  const academicSessionId = academicSession?.id || null;
+
+  const overviewQuery = useQuery({
+    queryKey: ['transport-overview', instituteId, attendanceDate],
+    queryFn: () => transportApi.getOverview(attendanceDate),
+    enabled: activeSection === 'home' && Boolean(instituteId && attendanceDate),
+    staleTime: 60 * 1000,
+  });
+
+  const driversQuery = useQuery({
+    queryKey: ['transport-drivers', instituteId],
+    queryFn: transportApi.getDrivers,
+    enabled: activeSection !== 'home' && Boolean(instituteId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const routeOperationsQuery = useQuery({
+    queryKey: ['transport-route-operations', instituteId, academicSessionId, attendanceDate],
+    queryFn: () => transportApi.getRouteOperations({ academicSessionId, date: attendanceDate }),
+    enabled: activeSection !== 'home' && Boolean(instituteId && academicSessionId),
+    staleTime: 60 * 1000,
+  });
+
+  const assignmentsQuery = useQuery({
+    queryKey: ['transport-assignments', instituteId, academicSessionId],
+    queryFn: () => transportApi.getAssignments(academicSessionId),
+    enabled: activeSection === 'students' && !selectedStudentDriverId && Boolean(instituteId && academicSessionId),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const selectedDriverAssignmentsQuery = useQuery({
+    queryKey: ['transport-driver-assignments', instituteId, academicSessionId, selectedStudentDriverId || attendanceDriverId || null],
+    queryFn: () => transportApi.getRouteAssignments(selectedStudentDriverId || attendanceDriverId, academicSessionId),
+    enabled: activeSection !== 'home' && Boolean(instituteId && academicSessionId && (selectedStudentDriverId || attendanceDriverId)),
+    staleTime: 60 * 1000,
+  });
+
+  const dailyAttendanceQuery = useQuery({
+    queryKey: ['transport-attendance-day', instituteId, attendanceDriverId || null, attendanceDate],
+    queryFn: () => transportApi.getRouteDailyAttendance({ routeId: attendanceDriverId, date: attendanceDate }),
+    enabled: activeSection === 'attendance' && Boolean(instituteId && attendanceDriverId && attendanceDate),
+  });
+
+  const monthlyAttendanceQuery = useQuery({
+    queryKey: ['transport-attendance-month', instituteId, attendanceDriverId || null, selectedMonth],
+    queryFn: () => transportApi.getRouteMonthlyAttendance({ routeId: attendanceDriverId, month: selectedMonth }),
+    enabled: activeSection === 'attendance' && Boolean(instituteId && attendanceDriverId && selectedMonth),
+  });
+
+  const drivers = driversQuery.data || [];
+  const transportRoutes = routeOperationsQuery.data || [];
+  const transportStudents = selectedStudentDriverId || attendanceDriverId
+    ? selectedDriverAssignmentsQuery.data || []
+    : assignmentsQuery.data || [];
+  const students = studentForm.studentId ? [{
+    id: Number(studentForm.studentId),
+    enrollmentNo: studentForm.enrollmentNo,
+    firstName: studentForm.studentName,
+    guardianName: studentForm.fatherName,
+    className: studentForm.className,
+    section: studentForm.section,
+  }] : [];
+  const attendanceRecords = [
+    ...(dailyAttendanceQuery.data || []),
+    ...(monthlyAttendanceQuery.data || []),
+  ].filter((record, index, records) => (
+    records.findIndex((candidate) => String(candidate.id) === String(record.id)) === index
+  ));
+
+  const firstQueryError = [
+    overviewQuery.error,
+    sessionsQuery.error,
+    driversQuery.error,
+    routeOperationsQuery.error,
+    assignmentsQuery.error,
+    selectedDriverAssignmentsQuery.error,
+    dailyAttendanceQuery.error,
+    monthlyAttendanceQuery.error,
+  ].find(Boolean);
+
+  useEffect(() => {
+    setLoadError(firstQueryError?.message || '');
+  }, [firstQueryError]);
+
+  useEffect(() => {
+    const records = dailyAttendanceQuery.data || [];
+    setAttendanceMap(records.reduce((map, record) => ({
+      ...map,
+      [String(record.studentId)]: record.status,
+    }), {}));
+  }, [dailyAttendanceQuery.data]);
 
   const filteredDrivers = useMemo(() => {
     const query = driverSearch.trim().toLowerCase();
@@ -168,7 +256,7 @@ const TransportManagement = () => {
     });
   }, [studentSearch, transportStudents]);
 
-  const attendanceDriver = drivers.find((driver) => String(driver.id) === String(attendanceDriverId)) || null;
+  const attendanceDriver = transportRoutes.find((route) => String(route.routeId) === String(attendanceDriverId)) || null;
   const classOptions = useMemo(() => (
     [...new Set(students.map((student) => student.className).filter(Boolean))].sort((left, right) => left.localeCompare(right))
   ), [students]);
@@ -190,12 +278,12 @@ const TransportManagement = () => {
   ), [studentForm.className, studentForm.section, students]);
 
   const studentsUnderSelectedDriver = useMemo(() => (
-    transportStudents.filter((record) => String(record.assignedDriverId || '') === String(attendanceDriverId || ''))
+    transportStudents.filter((record) => String(record.routeId || '') === String(attendanceDriverId || ''))
   ), [attendanceDriverId, transportStudents]);
 
   const filteredAttendanceRecords = useMemo(() => (
     attendanceRecords
-      .filter((record) => !attendanceDriverId || String(record.driverId) === String(attendanceDriverId))
+      .filter((record) => !attendanceDriverId || String(record.routeId) === String(attendanceDriverId))
       .sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime())
   ), [attendanceDriverId, attendanceRecords]);
 
@@ -203,6 +291,7 @@ const TransportManagement = () => {
   const todayPresentCount = todayAttendance.filter((record) => record.status === 'Present').length;
   const todayAbsentCount = todayAttendance.filter((record) => record.status === 'Absent').length;
   const assignedStudentsCount = transportStudents.filter((record) => record.assignedDriverId).length;
+  const overview = overviewQuery.data || {};
 
   const monthlyAttendanceRegister = useMemo(() => {
     if (!attendanceDriverId) return null;
@@ -295,6 +384,102 @@ const TransportManagement = () => {
     };
   }, [attendanceDate, attendanceDriver?.busNumber, attendanceDriver?.driverName, attendanceDriver?.routeName, attendanceDriverId, filteredAttendanceRecords, recordSearch, studentsUnderSelectedDriver]);
 
+  const createDriverMutation = useMutation({
+    mutationFn: transportApi.createDriver,
+    onSuccess: (savedDriver) => {
+      queryClient.setQueryData(['transport-drivers', instituteId], (current = []) => [savedDriver, ...current]);
+      queryClient.invalidateQueries({ queryKey: ['transport-route-operations', instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-overview', instituteId] });
+      setDriverForm(initialDriverForm);
+      setDriverFormErrors({});
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save the driver record.'),
+  });
+
+  const saveAssignmentMutation = useMutation({
+    mutationFn: transportApi.saveAssignment,
+    onSuccess: (savedAssignment) => {
+      const routeKey = savedAssignment.routeId ? String(savedAssignment.routeId) : '';
+      queryClient.setQueryData(['transport-driver-assignments', instituteId, academicSessionId, routeKey], (current = []) => {
+        const withoutSaved = current.filter((record) => String(record.id) !== String(savedAssignment.id));
+        return [savedAssignment, ...withoutSaved];
+      });
+      queryClient.invalidateQueries({ queryKey: ['transport-assignments', instituteId, academicSessionId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-route-operations', instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-overview', instituteId] });
+      setStudentForm(initialStudentForm);
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save the student transport record.'),
+  });
+
+  const deleteDriverMutation = useMutation({
+    mutationFn: transportApi.deleteDriver,
+    onSuccess: (_, driverId) => {
+      queryClient.setQueryData(['transport-drivers', instituteId], (current = []) => current.filter((driver) => String(driver.id) !== String(driverId)));
+      queryClient.invalidateQueries({ queryKey: ['transport-assignments', instituteId, academicSessionId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-route-operations', instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-overview', instituteId] });
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to delete the driver record.'),
+  });
+
+  const deleteAssignmentMutation = useMutation({
+    mutationFn: transportApi.deleteAssignment,
+    onSuccess: (_, assignmentId) => {
+      queryClient.setQueriesData({ queryKey: ['transport-driver-assignments', instituteId, academicSessionId] }, (current = []) => (
+        Array.isArray(current) ? current.filter((record) => String(record.id) !== String(assignmentId)) : current
+      ));
+      queryClient.invalidateQueries({ queryKey: ['transport-assignments', instituteId, academicSessionId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-route-operations', instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-overview', instituteId] });
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to delete the student assignment.'),
+  });
+
+  const saveAttendanceMutation = useMutation({
+    mutationFn: transportApi.saveAttendance,
+    onSuccess: (savedRecords) => {
+      queryClient.setQueryData(['transport-attendance-day', instituteId, attendanceDriverId, attendanceDate], savedRecords);
+      queryClient.invalidateQueries({ queryKey: ['transport-attendance-month', instituteId, attendanceDriverId, selectedMonth] });
+      queryClient.invalidateQueries({ queryKey: ['transport-route-operations', instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['transport-overview', instituteId] });
+      setAttendanceMap({});
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save transport attendance.'),
+  });
+
+  const lookupStudentMutation = useMutation({
+    mutationFn: ({ enrollmentNo }) => transportApi.lookupStudent(enrollmentNo),
+    onSuccess: (student, variables) => {
+      setStudentForm((current) => ({
+        ...current,
+        ...(variables.extraFormValues || {}),
+        enrollmentNo: student.enrollmentNo || current.enrollmentNo,
+        studentId: student.studentId ? String(student.studentId) : '',
+        studentName: student.studentName || '',
+        fatherName: student.fatherName || '',
+        className: student.className || '',
+        section: student.section || '',
+      }));
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Student enrollment ID nahi mila.'),
+  });
+
+  const isSaving = [
+    createDriverMutation.isPending,
+    saveAssignmentMutation.isPending,
+    deleteDriverMutation.isPending,
+    deleteAssignmentMutation.isPending,
+    saveAttendanceMutation.isPending,
+    lookupStudentMutation.isPending,
+  ].some(Boolean);
+
   const handleDriverSave = async (e) => {
     e.preventDefault();
     const normalizedDriverForm = normalizeDriverPayload(driverForm);
@@ -305,59 +490,33 @@ const TransportManagement = () => {
       return;
     }
 
-    setIsSaving(true);
-    try {
-      await transportApi.createDriver({
-        ...normalizedDriverForm,
-        status: 'Active',
-        routeCode: `ROUTE-${normalizedDriverForm.routeName.replace(/\s+/g, '-').toUpperCase()}`,
-      });
-      setDriverForm(initialDriverForm);
-      setDriverFormErrors({});
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save the driver record.');
-    } finally {
-      setIsSaving(false);
-    }
+    createDriverMutation.mutate({
+      ...normalizedDriverForm,
+      status: 'Active',
+      routeCode: `ROUTE-${normalizedDriverForm.routeName.replace(/\s+/g, '-').toUpperCase()}`,
+    });
   };
 
   const handleStudentSave = async (e) => {
     e.preventDefault();
-    setIsSaving(true);
-    try {
-      await transportApi.saveAssignment({
-        studentId: Number(studentForm.studentId),
-        assignedDriverId: studentForm.assignedDriverId ? Number(studentForm.assignedDriverId) : null,
-        pickupStop: studentForm.pickupStop,
-      });
-      setStudentForm(initialStudentForm);
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save the student transport record.');
-    } finally {
-      setIsSaving(false);
-    }
+    saveAssignmentMutation.mutate({
+      studentId: Number(studentForm.studentId),
+      academicSessionId,
+      assignedDriverId: studentForm.assignedDriverId ? Number(studentForm.assignedDriverId) : null,
+      routeId: studentForm.routeId ? Number(studentForm.routeId) : null,
+      pickupStopId: studentForm.pickupStopId ? Number(studentForm.pickupStopId) : null,
+      pickupStop: studentForm.pickupStop,
+    });
   };
 
   const handleDeleteDriver = async (driverId) => {
     if (!window.confirm('Delete this driver and bus record?')) return;
-    try {
-      await transportApi.deleteDriver(driverId);
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to delete the driver record.');
-    }
+    deleteDriverMutation.mutate(driverId);
   };
 
   const handleDeleteAssignment = async (assignmentId) => {
     if (!window.confirm('Delete this student transport assignment?')) return;
-    try {
-      await transportApi.deleteAssignment(assignmentId);
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to delete the student assignment.');
-    }
+    deleteAssignmentMutation.mutate(assignmentId);
   };
 
   const handleAttendanceStatusChange = (studentId, status) => {
@@ -374,24 +533,17 @@ const TransportManagement = () => {
     const unmarkedStudents = studentsUnderSelectedDriver.filter((record) => !attendanceMap[String(record.studentId)]);
     if (unmarkedStudents.length > 0) return;
 
-    setIsSaving(true);
-    try {
-      await transportApi.saveAttendance({
-        driverId: Number(attendanceDriverId),
-        date: attendanceDate,
-        markedBy: attendanceDriver?.driverName || 'Driver',
-        entries: studentsUnderSelectedDriver.map((record) => ({
-          studentId: Number(record.studentId),
-          status: attendanceMap[String(record.studentId)] || 'Absent',
-        })),
-      });
-      setAttendanceMap({});
-      await refreshData();
-    } catch (error) {
-      setLoadError(error.message || 'Unable to save transport attendance.');
-    } finally {
-      setIsSaving(false);
-    }
+    saveAttendanceMutation.mutate({
+      driverId: Number(attendanceDriver?.driverId || 0),
+      routeId: Number(attendanceDriverId),
+      academicSessionId,
+      date: attendanceDate,
+      markedBy: attendanceDriver?.driverName || 'Driver',
+      entries: studentsUnderSelectedDriver.map((record) => ({
+        studentId: Number(record.studentId),
+        status: attendanceMap[String(record.studentId)] || 'Absent',
+      })),
+    });
   };
 
   const handleTransportBack = () => {
@@ -445,11 +597,10 @@ const TransportManagement = () => {
 
         {activeSection === 'home' && (
           <TransportHome
-            drivers={drivers}
-            transportStudents={transportStudents}
-            assignedStudentsCount={assignedStudentsCount}
-            todayPresentCount={todayPresentCount}
-            todayAbsentCount={todayAbsentCount}
+            activeDrivers={overview.activeDrivers || 0}
+            assignedStudentsCount={overview.assignedStudents || assignedStudentsCount}
+            todayPresentCount={overview.todayPresent || todayPresentCount}
+            todayAbsentCount={overview.todayAbsent || todayAbsentCount}
             onOpenDrivers={() => setActiveSection('drivers')}
             onOpenStudents={() => {
               setSelectedStudentDriverId('');
@@ -481,10 +632,11 @@ const TransportManagement = () => {
           <StudentSection
             studentForm={studentForm}
             setStudentForm={setStudentForm}
+            students={students}
             classOptions={classOptions}
             sectionOptions={sectionOptions}
             filteredStudentOptions={filteredStudentOptions}
-            drivers={drivers}
+            drivers={transportRoutes}
             transportStudents={transportStudents}
             filteredTransportStudents={filteredTransportStudents}
             selectedDriverId={selectedStudentDriverId}
@@ -494,6 +646,7 @@ const TransportManagement = () => {
             onSearch={setStudentSearch}
             searchValue={studentSearch}
             onSave={handleStudentSave}
+            onLookupStudent={(enrollmentNo, extraFormValues = {}) => lookupStudentMutation.mutate({ enrollmentNo, extraFormValues })}
             isSaving={isSaving}
             onDelete={handleDeleteAssignment}
           />
@@ -501,7 +654,7 @@ const TransportManagement = () => {
 
         {activeSection === 'attendance' && (
           <AttendanceSection
-            drivers={drivers}
+            drivers={transportRoutes}
             attendanceDriverId={attendanceDriverId}
             setAttendanceDriverId={setAttendanceDriverId}
             attendanceDate={attendanceDate}
@@ -522,8 +675,7 @@ const TransportManagement = () => {
 };
 
 const TransportHome = ({
-  drivers,
-  transportStudents,
+  activeDrivers,
   assignedStudentsCount,
   todayPresentCount,
   todayAbsentCount,
@@ -537,7 +689,7 @@ const TransportHome = ({
         icon={Users}
         title="Driver Management"
         description="Save driver, salary, bus, route, phone, license, and the bus start point directly in the backend."
-        meta={`${drivers.length} driver records`}
+        meta={`${activeDrivers} active drivers`}
         buttonLabel="Open Drivers"
         onClick={onOpenDrivers}
       />
@@ -545,7 +697,7 @@ const TransportHome = ({
         icon={Bus}
         title="Student Transport"
         description="Assign each student to a saved driver and keep the student's transport facility status in sync."
-        meta={`${transportStudents.length} student assignments`}
+        meta={`${assignedStudentsCount} student assignments`}
         buttonLabel="Open Students"
         onClick={onOpenStudents}
       />
@@ -716,6 +868,7 @@ const DriverSection = ({ driverForm, setDriverForm, driverFormErrors, setDriverF
 const StudentSection = ({
   studentForm,
   setStudentForm,
+  students,
   classOptions,
   sectionOptions,
   filteredStudentOptions,
@@ -729,23 +882,76 @@ const StudentSection = ({
   onSearch,
   searchValue,
   onSave,
+  onLookupStudent,
   isSaving,
   onDelete,
 }) => {
-  const selectedDriver = drivers.find((driver) => String(driver.id) === String(selectedDriverId)) || null;
-  const selectedDriverAssignments = transportStudents.filter((record) => String(record.assignedDriverId || '') === String(selectedDriverId));
-  const visibleDriverAssignments = filteredTransportStudents.filter((record) => String(record.assignedDriverId || '') === String(selectedDriverId));
+  const selectedDriver = drivers.find((driver) => String(driver.routeId) === String(selectedDriverId)) || null;
+  const selectedDriverAssignments = transportStudents.filter((record) => String(record.routeId || '') === String(selectedDriverId));
+  const visibleDriverAssignments = filteredTransportStudents.filter((record) => String(record.routeId || '') === String(selectedDriverId));
+  const selectedStudent = useMemo(() => (
+    students.find((student) => String(student.id) === String(studentForm.studentId || '')) || null
+  ), [studentForm.studentId, students]);
+  const studentEnrollmentOptions = useMemo(() => (
+    students
+      .filter((student) => student.enrollmentNo)
+      .sort((left, right) => String(left.enrollmentNo || '').localeCompare(String(right.enrollmentNo || '')))
+  ), [students]);
+
+  const selectStudent = (student, extraFormValues = {}) => {
+    setStudentForm({
+      ...studentForm,
+      ...extraFormValues,
+      enrollmentNo: student?.enrollmentNo || '',
+      studentId: student ? String(student.id) : '',
+      studentName: student ? getStudentFullName(student) : '',
+      fatherName: student?.guardianName || '',
+      className: student ? getStudentClassName(student) : '',
+      section: student ? getStudentSection(student) : '',
+    });
+  };
+
+  const handleEnrollmentChange = (value, extraFormValues = {}, shouldLookup = false) => {
+    const normalizedValue = String(value || '').trim();
+    const foundStudent = students.find((student) => String(student.enrollmentNo || '').toLowerCase() === normalizedValue.toLowerCase());
+    if (foundStudent) {
+      selectStudent(foundStudent, extraFormValues);
+      return;
+    }
+    setStudentForm({
+      ...studentForm,
+      ...extraFormValues,
+      enrollmentNo: value,
+      studentId: '',
+      studentName: '',
+      fatherName: '',
+      className: '',
+      section: '',
+    });
+    if (shouldLookup && normalizedValue.length >= 2) {
+      onLookupStudent(normalizedValue, extraFormValues);
+    }
+  };
 
   const openDriverStudents = (driverId) => {
     setSelectedDriverId(String(driverId));
     setIsStudentFormOpen(false);
     onSearch('');
-    setStudentForm({ ...studentForm, assignedDriverId: String(driverId), className: '', section: '', studentId: '', pickupStop: '' });
+    const route = drivers.find((item) => String(item.routeId) === String(driverId));
+    setStudentForm({
+      ...initialStudentForm,
+      assignedDriverId: route?.driverId ? String(route.driverId) : '',
+      routeId: String(driverId),
+    });
   };
 
   const openStudentForm = () => {
     setIsStudentFormOpen(true);
-    setStudentForm({ ...studentForm, assignedDriverId: selectedDriverId, className: '', section: '', studentId: '', pickupStop: '' });
+    setStudentForm({
+      ...initialStudentForm,
+      assignedDriverId: selectedDriver?.driverId ? String(selectedDriver.driverId) : '',
+      routeId: selectedDriverId,
+    });
   };
 
   const handleSelectedDriverSave = async (event) => {
@@ -766,7 +972,7 @@ const StudentSection = ({
             type="button"
             onClick={() => {
               setIsStudentFormOpen(true);
-              setStudentForm({ ...studentForm, assignedDriverId: '', className: '', section: '', studentId: '', pickupStop: '' });
+              setStudentForm(initialStudentForm);
             }}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.22em] text-white transition hover:bg-cyan-600"
           >
@@ -779,52 +985,53 @@ const StudentSection = ({
           <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
             <FormTitle title="Add Student Transport" description="Choose a driver, pick a student, and save the assignment." />
             <form className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3" onSubmit={handleSelectedDriverSave}>
+              <StudentEnrollmentField
+                value={studentForm.enrollmentNo}
+                onChange={(value, shouldLookup) => handleEnrollmentChange(value, {}, shouldLookup)}
+                students={studentEnrollmentOptions}
+              />
+              <CreativeInput label="Student Name" value={studentForm.studentName || (selectedStudent ? getStudentFullName(selectedStudent) : '')} readOnly placeholder="Auto filled from enrollment ID" />
+              <CreativeInput label="Father Name" value={studentForm.fatherName || selectedStudent?.guardianName || ''} readOnly placeholder="Auto filled from student record" />
+              <CreativeInput label="Class" value={studentForm.className || (selectedStudent ? getStudentClassName(selectedStudent) : '')} readOnly placeholder="Auto filled" />
+              <CreativeInput label="Section" value={studentForm.section || (selectedStudent ? getStudentSection(selectedStudent) : '')} readOnly placeholder="Auto filled" />
               <CreativeSelect
-                label="Assign Driver"
-                value={studentForm.assignedDriverId}
-                onChange={(e) => setStudentForm({ ...studentForm, assignedDriverId: e.target.value })}
-                options={['', ...drivers.map((driver) => String(driver.id))]}
+                label="Assign Route"
+                value={studentForm.routeId}
+                onChange={(e) => {
+                  const route = drivers.find((driver) => String(driver.routeId) === e.target.value);
+                  setStudentForm({
+                    ...studentForm,
+                    routeId: e.target.value,
+                    assignedDriverId: route?.driverId ? String(route.driverId) : '',
+                    pickupStopId: '',
+                    pickupStop: '',
+                  });
+                }}
+                options={['', ...drivers.map((driver) => String(driver.routeId))]}
                 renderOptionLabel={(value) => {
-                  if (!value) return drivers.length ? 'Choose driver' : 'No drivers available';
-                  const found = drivers.find((driver) => String(driver.id) === value);
+                  if (!value) return drivers.length ? 'Choose route' : 'No routes available';
+                  const found = drivers.find((driver) => String(driver.routeId) === value);
                   return found ? `${found.driverName} | ${found.busNumber || 'Bus pending'} | ${found.routeName || 'Route pending'}`.toUpperCase() : value;
                 }}
               />
               <CreativeSelect
-                label="Class"
-                value={studentForm.className}
-                onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value, section: '', studentId: '' })}
-                options={['', ...classOptions]}
-                renderOptionLabel={(value) => value || 'Choose class first'}
-              />
-              <CreativeSelect
-                label="Section"
-                value={studentForm.section}
-                onChange={(e) => setStudentForm({ ...studentForm, section: e.target.value, studentId: '' })}
-                options={['', ...sectionOptions]}
-                renderOptionLabel={(value) => value || (studentForm.className ? 'Choose section' : 'Choose class first')}
-                disabled={!studentForm.className}
-              />
-              <CreativeSelect
-                label="Select Student"
-                value={studentForm.studentId}
-                onChange={(e) => setStudentForm({ ...studentForm, studentId: e.target.value })}
-                options={['', ...filteredStudentOptions.map((student) => String(student.id))]}
-                renderOptionLabel={(value) => {
-                  if (!value) return 'Choose saved student';
-                  const found = filteredStudentOptions.find((student) => String(student.id) === value);
-                  return found ? `${found.firstName || ''} ${found.lastName || ''}`.trim().toUpperCase() : value;
-                }}
-                disabled={!studentForm.className || !studentForm.section}
-              />
-              <CreativeInput
                 label="Pickup Stop"
-                value={studentForm.pickupStop}
-                onChange={(e) => setStudentForm({ ...studentForm, pickupStop: e.target.value.toUpperCase() })}
-                placeholder="Enter pickup stop"
+                value={studentForm.pickupStopId}
+                onChange={(e) => {
+                  const route = drivers.find((driver) => String(driver.routeId) === String(studentForm.routeId));
+                  const stop = (route?.stops || []).find((item) => String(item.id) === e.target.value);
+                  setStudentForm({ ...studentForm, pickupStopId: e.target.value, pickupStop: stop?.stopName || '' });
+                }}
+                options={['', ...((drivers.find((driver) => String(driver.routeId) === String(studentForm.routeId))?.stops || []).map((stop) => String(stop.id)))]}
+                renderOptionLabel={(value) => {
+                  if (!value) return studentForm.routeId ? 'Choose pickup stop' : 'Choose route first';
+                  const route = drivers.find((driver) => String(driver.routeId) === String(studentForm.routeId));
+                  const stop = (route?.stops || []).find((item) => String(item.id) === value);
+                  return stop?.stopName || value;
+                }}
               />
               <div className="md:col-span-2 lg:col-span-3">
-                <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId || !studentForm.assignedDriverId} />
+                <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId || !studentForm.routeId || !studentForm.pickupStopId} />
               </div>
             </form>
           </section>
@@ -833,12 +1040,12 @@ const StudentSection = ({
         {drivers.length > 0 ? (
           <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             {drivers.map((driver) => {
-              const studentCount = transportStudents.filter((record) => String(record.assignedDriverId || '') === String(driver.id)).length;
+              const studentCount = driver.assignedStudentCount ?? transportStudents.filter((record) => String(record.routeId || '') === String(driver.routeId)).length;
               return (
                 <button
-                  key={driver.id}
+                  key={driver.routeId}
                   type="button"
-                  onClick={() => openDriverStudents(driver.id)}
+                  onClick={() => openDriverStudents(driver.routeId)}
                   className="rounded-4xl border border-slate-200/80 bg-white p-6 text-left shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] transition hover:-translate-y-1 hover:border-cyan-200 hover:shadow-[0_24px_60px_-30px_rgba(6,182,212,0.28)]"
                 >
                   <div className="flex items-start justify-between gap-4">
@@ -899,41 +1106,40 @@ const StudentSection = ({
         <section className="rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
           <FormTitle title="Add Student Transport" description="Pick a student and save the assignment under this driver." />
           <form className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3" onSubmit={handleSelectedDriverSave}>
-            <CreativeSelect
-              label="Class"
-              value={studentForm.className}
-              onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value, section: '', studentId: '', assignedDriverId: selectedDriverId })}
-              options={['', ...classOptions]}
-              renderOptionLabel={(value) => value || 'Choose class first'}
+            <StudentEnrollmentField
+              value={studentForm.enrollmentNo}
+              onChange={(value, shouldLookup) => handleEnrollmentChange(value, {
+                assignedDriverId: selectedDriver?.driverId ? String(selectedDriver.driverId) : '',
+                routeId: selectedDriverId,
+              }, shouldLookup)}
+              students={studentEnrollmentOptions}
             />
+            <CreativeInput label="Student Name" value={studentForm.studentName || (selectedStudent ? getStudentFullName(selectedStudent) : '')} readOnly placeholder="Auto filled from enrollment ID" />
+            <CreativeInput label="Father Name" value={studentForm.fatherName || selectedStudent?.guardianName || ''} readOnly placeholder="Auto filled from student record" />
+            <CreativeInput label="Class" value={studentForm.className || (selectedStudent ? getStudentClassName(selectedStudent) : '')} readOnly placeholder="Auto filled" />
+            <CreativeInput label="Section" value={studentForm.section || (selectedStudent ? getStudentSection(selectedStudent) : '')} readOnly placeholder="Auto filled" />
             <CreativeSelect
-              label="Section"
-              value={studentForm.section}
-              onChange={(e) => setStudentForm({ ...studentForm, section: e.target.value, studentId: '', assignedDriverId: selectedDriverId })}
-              options={['', ...sectionOptions]}
-              renderOptionLabel={(value) => value || (studentForm.className ? 'Choose section' : 'Choose class first')}
-              disabled={!studentForm.className}
-            />
-            <CreativeSelect
-              label="Select Student"
-              value={studentForm.studentId}
-              onChange={(e) => setStudentForm({ ...studentForm, studentId: e.target.value, assignedDriverId: selectedDriverId })}
-              options={['', ...filteredStudentOptions.map((student) => String(student.id))]}
-              renderOptionLabel={(value) => {
-                if (!value) return 'Choose saved student';
-                const found = filteredStudentOptions.find((student) => String(student.id) === value);
-                return found ? `${found.firstName || ''} ${found.lastName || ''}`.trim().toUpperCase() : value;
-              }}
-              disabled={!studentForm.className || !studentForm.section}
-            />
-            <CreativeInput
               label="Pickup Stop"
-              value={studentForm.pickupStop}
-              onChange={(e) => setStudentForm({ ...studentForm, pickupStop: e.target.value.toUpperCase(), assignedDriverId: selectedDriverId })}
-              placeholder="Enter pickup stop"
+              value={studentForm.pickupStopId}
+              onChange={(e) => {
+                const stop = (selectedDriver?.stops || []).find((item) => String(item.id) === e.target.value);
+                setStudentForm({
+                  ...studentForm,
+                  pickupStopId: e.target.value,
+                  pickupStop: stop?.stopName || '',
+                  assignedDriverId: selectedDriver?.driverId ? String(selectedDriver.driverId) : '',
+                  routeId: selectedDriverId,
+                });
+              }}
+              options={['', ...((selectedDriver?.stops || []).map((stop) => String(stop.id)))]}
+              renderOptionLabel={(value) => {
+                if (!value) return selectedDriver?.stops?.length ? 'Choose pickup stop' : 'No stops available';
+                const stop = (selectedDriver?.stops || []).find((item) => String(item.id) === value);
+                return stop?.stopName || value;
+              }}
             />
             <div className="md:col-span-2 lg:col-span-3">
-              <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId} />
+              <PrimaryButton type="submit" icon={Plus} label={isSaving ? 'Saving Student Transport...' : 'Save Student Transport'} disabled={isSaving || !studentForm.studentId || !studentForm.routeId || !studentForm.pickupStopId} />
             </div>
           </form>
         </section>
@@ -1019,10 +1225,10 @@ const AttendanceSection = ({
               label="Driver"
               value={attendanceDriverId}
               onChange={(e) => setAttendanceDriverId(e.target.value)}
-              options={['', ...drivers.map((driver) => String(driver.id))]}
+              options={['', ...drivers.map((driver) => String(driver.routeId))]}
               renderOptionLabel={(value) => {
-                if (!value) return drivers.length ? 'Choose driver' : 'No drivers available';
-                const found = drivers.find((driver) => String(driver.id) === value);
+                if (!value) return drivers.length ? 'Choose route' : 'No routes available';
+                const found = drivers.find((driver) => String(driver.routeId) === value);
                 return found ? `${found.driverName} | ${found.busNumber || 'Bus pending'} | ${found.routeName || 'Route pending'}` : value;
               }}
             />
@@ -1264,6 +1470,27 @@ const CreativeInput = ({ label, error = '', ...props }) => (
   </div>
 );
 
+const StudentEnrollmentField = ({ value, onChange, students }) => (
+  <div className="space-y-2.5">
+    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Student Enrollment ID</label>
+    <input
+      list="transport-student-enrollment-options"
+      value={value}
+      onChange={(event) => onChange(event.target.value, false)}
+      onBlur={(event) => onChange(event.target.value, true)}
+      placeholder="Enter or choose enrollment ID"
+      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold uppercase text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:ring-4 focus:ring-sky-100"
+    />
+    <datalist id="transport-student-enrollment-options">
+      {students.map((student) => (
+        <option key={student.id} value={student.enrollmentNo}>
+          {`${student.enrollmentNo} | ${getStudentFullName(student)}`}
+        </option>
+      ))}
+    </datalist>
+  </div>
+);
+
 const CreativeSelect = ({ label, options, renderOptionLabel, error = '', ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
@@ -1333,5 +1560,21 @@ const EmptyState = ({ icon: Icon, title, description }) => (
     <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">{description}</p>
   </div>
 );
+
+const getStudentFullName = (student) => (
+  `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || student?.name || 'Unnamed student'
+);
+
+const getStudentClassName = (student) => {
+  const assignedClass = String(student?.assignedClass || '').trim();
+  if (assignedClass.includes('/')) return assignedClass.split('/')[0].trim();
+  return student?.className || assignedClass || '';
+};
+
+const getStudentSection = (student) => {
+  const assignedClass = String(student?.assignedClass || '').trim();
+  if (assignedClass.includes('/')) return assignedClass.split('/').slice(1).join('/').trim();
+  return student?.section || '';
+};
 
 export default TransportManagement;

@@ -5,7 +5,7 @@ public record ResultStudentResponse(
         String name,
         String rollNo,
         String className,
-        int subjectCount,
+        long subjectCount,
         String status
 ) {
 }

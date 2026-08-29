@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -9,40 +10,53 @@ import {
 } from 'lucide-react';
 import { attendanceApi, holidayApi, studentApi } from '../../utils/api';
 import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const StudentAttendance = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [student, setStudent] = useState(null);
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [holidays, setHolidays] = useState([]);
+  const { session } = useAuth();
+  const instituteId = session?.id || '';
   const [searchValue, setSearchValue] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [loadError, setLoadError] = useState('');
+
+  const studentQuery = useQuery({
+    queryKey: ['student-attendance-profile', instituteId, session?.studentId || null],
+    queryFn: () => studentApi.getById(session.studentId),
+    enabled: Boolean(session?.role === 'student' && instituteId && session?.studentId),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const attendanceQuery = useQuery({
+    queryKey: ['student-attendance-month', instituteId, session?.studentId || null, selectedMonth],
+    queryFn: () => attendanceApi.getMyStudentAttendance(selectedMonth),
+    enabled: Boolean(session?.role === 'student' && instituteId && session?.studentId && selectedMonth),
+  });
+
+  const student = studentQuery.data || null;
+  const attendanceRecords = attendanceQuery.data || [];
+  const studentClassLabel = student?.assignedClass || student?.className || '';
+  const holidayRange = useMemo(() => getMonthRange(selectedMonth), [selectedMonth]);
+  const holidaysQuery = useQuery({
+    queryKey: ['student-attendance-holidays', instituteId, studentClassLabel, holidayRange.from, holidayRange.to],
+    queryFn: () => holidayApi.getAll(holidayRange),
+    enabled: Boolean(session?.role === 'student' && studentClassLabel && holidayRange.from && holidayRange.to),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const holidays = useMemo(() => (
+    (holidaysQuery.data || []).filter((holiday) => holidayAppliesToStudentClass(holiday, studentClassLabel))
+  ), [holidaysQuery.data, studentClassLabel]);
+  const loadError = [studentQuery.error, attendanceQuery.error, holidaysQuery.error].find(Boolean)?.message || '';
 
   const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
+    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Student'
     : 'Student';
 
   const studentRecords = useMemo(() => {
     if (!student) return [];
-
-    const studentKeys = [student.systemId, student.enrollmentNo, String(student.id)]
-      .filter(Boolean)
-      .map((value) => String(value));
     const query = searchValue.trim().toLowerCase();
 
     return attendanceRecords
-      .filter((record) => {
-        const recordStudentId = String(record.studentId || '');
-        const recordRollNo = String(record.rollNo || '');
-        const recordName = String(record.studentName || '').trim().toLowerCase();
-        return (
-          studentKeys.includes(recordStudentId) ||
-          studentKeys.includes(recordRollNo) ||
-          recordName === studentName.toLowerCase()
-        );
-      })
       .filter((record) => {
         if (!query) return true;
         return (
@@ -55,7 +69,7 @@ const StudentAttendance = () => {
         );
       })
       .sort((a, b) => new Date(b.createdAt || b.date || 0).getTime() - new Date(a.createdAt || a.date || 0).getTime());
-  }, [attendanceRecords, searchValue, student, studentName]);
+  }, [attendanceRecords, searchValue, student]);
 
   const today = new Date().toISOString().split('T')[0];
   const todayRecords = studentRecords.filter((record) => record.date === today);
@@ -70,13 +84,6 @@ const StudentAttendance = () => {
     monthSet.add(new Date().toISOString().slice(0, 7));
     return [...monthSet].sort((left, right) => right.localeCompare(left));
   }, [studentRecords]);
-
-  useEffect(() => {
-    if (!attendanceMonthOptions.length) return;
-    if (!attendanceMonthOptions.includes(selectedMonth)) {
-      setSelectedMonth(attendanceMonthOptions[0]);
-    }
-  }, [attendanceMonthOptions, selectedMonth]);
 
   const monthlyAttendanceRegister = useMemo(() => {
     if (!student || !studentRecords.length) return null;
@@ -140,29 +147,6 @@ const StudentAttendance = () => {
       return;
     }
 
-    const loadData = async () => {
-      try {
-        const [studentResponse, attendanceResponse, holidayResponse] = await Promise.all([
-          studentApi.getById(session.studentId),
-          attendanceApi.getAll(),
-          holidayApi.getAll(),
-        ]);
-        setStudent(studentResponse);
-        setAttendanceRecords(attendanceResponse);
-        setHolidays(holidayResponse.filter((holiday) => holidayAppliesToStudentClass(
-          holiday,
-          studentResponse.assignedClass || studentResponse.className,
-        )));
-        setLoadError('');
-      } catch (error) {
-        setStudent(null);
-        setAttendanceRecords([]);
-        setHolidays([]);
-        setLoadError(error.message || 'Unable to load attendance data.');
-      }
-    };
-
-    loadData();
   }, [navigate, session]);
 
   if (!session || session.role !== 'student') return null;
@@ -207,7 +191,7 @@ const StudentAttendance = () => {
           <div className="mt-8 grid gap-4 sm:grid-cols-3">
             <HighlightCard label="Today Records" value={todayRecords.length} icon={CalendarDays} tone="emerald" />
             <HighlightCard label="Class" value={student?.assignedClass || 'Not assigned'} icon={BookOpen} tone="slate" />
-            <HighlightCard label="Student ID" value={student?.enrollmentNo || student?.systemId || 'Pending'} icon={Clock3} tone="slate" />
+            <HighlightCard label="Enrollment No" value={student?.enrollmentNo || 'Pending'} icon={Clock3} tone="slate" />
           </div>
 
           {monthlyAttendanceRegister ? (
@@ -344,6 +328,15 @@ const formatMonthDateKey = (year, month, day) => {
   const monthValue = String(month).padStart(2, '0');
   const dayValue = String(day).padStart(2, '0');
   return `${year}-${monthValue}-${dayValue}`;
+};
+
+const getMonthRange = (monthKey) => {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || '')) return { from: '', to: '' };
+  const [year, month] = monthKey.split('-').map(Number);
+  return {
+    from: formatMonthDateKey(year, month, 1),
+    to: formatMonthDateKey(year, month, new Date(year, month, 0).getDate()),
+  };
 };
 
 export default StudentAttendance;

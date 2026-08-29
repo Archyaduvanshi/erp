@@ -7,7 +7,6 @@ public record TeacherPortalLoginResponse(
         String instituteType,
         String instituteLogo,
         Long teacherId,
-        String teacherSystemId,
         String employeeId,
         String teacherName
 ) {

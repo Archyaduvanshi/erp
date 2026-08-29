@@ -7,9 +7,12 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 
 public record StudentMarksRegisterPayload(
+        Long academicSessionId,
+        Long classId,
         @NotBlank String className,
+        Long subjectId,
         @NotBlank String subjectName,
-        @NotBlank String uploadedBy,
+        String uploadedBy,
         @Valid @NotEmpty List<StudentMarksExamPayload> exams
 ) {
 }

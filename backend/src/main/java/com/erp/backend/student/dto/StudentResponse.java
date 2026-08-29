@@ -27,6 +27,7 @@ public record StudentResponse(
         String academicYear,
         String enrollmentNo,
         String rollNo,
+        Long classId,
         String className,
         String section,
         String assignedClass,
@@ -39,7 +40,6 @@ public record StudentResponse(
         String libraryStatus,
         String libraryMonthlyCharge,
         Map<String, Object> facilities,
-        String studentPortalPassword,
         String documentType,
         String otherDocumentName,
         String fileUploadPath,
@@ -47,7 +47,6 @@ public record StudentResponse(
         String qrCodeData,
         String cardExpiryDate,
         String photoUrl,
-        String systemId,
         String status,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

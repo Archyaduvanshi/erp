@@ -2,7 +2,11 @@ package com.erp.backend.examination.entity;
 
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.AcademicSession;
+import com.erp.backend.curriculum.entity.SchoolClass;
+import com.erp.backend.curriculum.entity.Subject;
 import com.erp.backend.institute.entity.Institute;
+import com.erp.backend.teacher.entity.Teacher;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -33,6 +37,26 @@ public class ExamQuestionPaper {
     @JoinColumn(name = "institute_id", nullable = false)
     private Institute institute;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "academic_session_id")
+    private AcademicSession academicSession;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "exam_id")
+    private Exam exam;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "class_id")
+    private SchoolClass schoolClass;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "subject_id")
+    private Subject subject;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "uploaded_by_teacher_id")
+    private Teacher uploadedByTeacher;
+
     @Column(nullable = false)
     private String examTitle;
 
@@ -43,12 +67,15 @@ public class ExamQuestionPaper {
     private String subjectName;
 
     private String uploadedBy;
+    private Long uploadedByAccountId;
     private String fileName;
 
     @Column(columnDefinition = "TEXT")
     private String fileData;
 
     private String fileType;
+    private String status = "DRAFT";
+    private LocalDateTime releaseAt;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

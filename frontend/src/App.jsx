@@ -7,6 +7,23 @@ import LandingPage from './components/LandingPage';
 import RegisterInstitute from './pages/RegisterInstitute';
 import Login from './pages/Login';
 import { warmApi } from './utils/api';
+import { AuthProvider, useAuth } from './context/AuthContext';
+
+const FEATURE_ROUTE_MAP = {
+  admissionStudent: '/college/students',
+  teacher: '/college/teachers',
+  library: '/college/library',
+  hostel: '/college/hostel',
+  fees: '/college/fees',
+  transport: '/college/transport',
+  attendance: '/college/attendance',
+  courses: '/college/courses',
+  examinations: '/college/examinations',
+  timetable: '/college/timetable',
+  salary: '/college/salary',
+  notices: '/college/notices',
+  holidays: '/college/holidays',
+};
 
 const ComingSoonPage = lazy(() => import('./components/ComingSoonPage'));
 const Dashboard = lazy(() => import('./pages/college/Dashboard'));
@@ -43,6 +60,8 @@ const TeacherProfile = lazy(() => import('./pages/teacher/TeacherProfile'));
 const TeacherSalary = lazy(() => import('./pages/teacher/TeacherSalary'));
 const TeacherTimetable = lazy(() => import('./pages/teacher/Timetable'));
 const PortalNotices = lazy(() => import('./pages/portal/PortalNotices'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 
 function App() {
   useEffect(() => {
@@ -50,13 +69,16 @@ function App() {
   }, []);
 
   return (
-    <Router>
-      <Suspense fallback={<RouteLoading />}>
-        <Routes>
+    <AuthProvider>
+      <Router>
+        <Suspense fallback={<RouteLoading />}>
+          <Routes>
           {/* Public Landing Page */}
           <Route path="/" element={<LandingPage />} />  
           <Route path="/register-institute" element={<RegisterInstitute />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           
           {/* College Admin Dashboard */}
           <Route path="/college" element={<RequireCollegeAccess><Dashboard /></RequireCollegeAccess>} />
@@ -78,35 +100,36 @@ function App() {
           <Route path="/college/reports" element={<RequireCollegeAccess><ReportsManagement /></RequireCollegeAccess>} />
           <Route path="/college/settings" element={<RequireCollegeAccess adminOnly><SettingsManagement /></RequireCollegeAccess>} />
           <Route path="/college/*" element={<ComingSoonPage />} />
-          <Route path="/student" element={<StudentDashboard />} />
-          <Route path="/student/attendance" element={<StudentAttendance />} />
-          <Route path="/student/examinations" element={<StudentExaminations />} />
-          <Route path="/student/fees" element={<StudentFees />} />
-          <Route path="/student/hostel" element={<StudentHostel />} />
-          <Route path="/student/library" element={<StudentLibrary />} />
-          <Route path="/student/profile" element={<StudentProfile />} />
-          <Route path="/student/timetable" element={<StudentTimetable />} />
-          <Route path="/student/transport" element={<StudentTransport />} />
-          <Route path="/student/notices" element={<PortalNotices role="student" />} />
-          <Route path="/student/*" element={<ComingSoonPage />} />
-          <Route path="/teacher" element={<TeacherDashboard />} />
-          <Route path="/teacher/attendance" element={<TeacherAttendance />} />
-          <Route path="/teacher/examinations" element={<TeacherExaminations />} />
-          <Route path="/teacher/marks" element={<TeacherMarks />} />
-          <Route path="/teacher/mark" element={<TeacherMarks />} />
-          <Route path="/teacher/jmarks" element={<TeacherMarks />} />
-          <Route path="/teacher/Marks" element={<TeacherMarks />} />
-          <Route path="/teacher/profile" element={<TeacherProfile />} />
-          <Route path="/teacher/salary" element={<TeacherSalary />} />
-          <Route path="/teacher/timetable" element={<TeacherTimetable />} />
-          <Route path="/teacher/notices" element={<PortalNotices role="teacher" />} />
-          <Route path="/teacher/*" element={<ComingSoonPage />} />
+          <Route path="/student" element={<RequirePortalAccess role="student"><StudentDashboard /></RequirePortalAccess>} />
+          <Route path="/student/attendance" element={<RequirePortalAccess role="student"><StudentAttendance /></RequirePortalAccess>} />
+          <Route path="/student/examinations" element={<RequirePortalAccess role="student"><StudentExaminations /></RequirePortalAccess>} />
+          <Route path="/student/fees" element={<RequirePortalAccess role="student"><StudentFees /></RequirePortalAccess>} />
+          <Route path="/student/hostel" element={<RequirePortalAccess role="student"><StudentHostel /></RequirePortalAccess>} />
+          <Route path="/student/library" element={<RequirePortalAccess role="student"><StudentLibrary /></RequirePortalAccess>} />
+          <Route path="/student/profile" element={<RequirePortalAccess role="student"><StudentProfile /></RequirePortalAccess>} />
+          <Route path="/student/timetable" element={<RequirePortalAccess role="student"><StudentTimetable /></RequirePortalAccess>} />
+          <Route path="/student/transport" element={<RequirePortalAccess role="student"><StudentTransport /></RequirePortalAccess>} />
+          <Route path="/student/notices" element={<RequirePortalAccess role="student"><PortalNotices role="student" /></RequirePortalAccess>} />
+          <Route path="/student/*" element={<RequirePortalAccess role="student"><ComingSoonPage /></RequirePortalAccess>} />
+          <Route path="/teacher" element={<RequirePortalAccess role="teacher"><TeacherDashboard /></RequirePortalAccess>} />
+          <Route path="/teacher/attendance" element={<RequirePortalAccess role="teacher"><TeacherAttendance /></RequirePortalAccess>} />
+          <Route path="/teacher/examinations" element={<RequirePortalAccess role="teacher"><TeacherExaminations /></RequirePortalAccess>} />
+          <Route path="/teacher/marks" element={<RequirePortalAccess role="teacher"><TeacherMarks /></RequirePortalAccess>} />
+          <Route path="/teacher/mark" element={<RequirePortalAccess role="teacher"><TeacherMarks /></RequirePortalAccess>} />
+          <Route path="/teacher/jmarks" element={<RequirePortalAccess role="teacher"><TeacherMarks /></RequirePortalAccess>} />
+          <Route path="/teacher/Marks" element={<RequirePortalAccess role="teacher"><TeacherMarks /></RequirePortalAccess>} />
+          <Route path="/teacher/profile" element={<RequirePortalAccess role="teacher"><TeacherProfile /></RequirePortalAccess>} />
+          <Route path="/teacher/salary" element={<RequirePortalAccess role="teacher"><TeacherSalary /></RequirePortalAccess>} />
+          <Route path="/teacher/timetable" element={<RequirePortalAccess role="teacher"><TeacherTimetable /></RequirePortalAccess>} />
+          <Route path="/teacher/notices" element={<RequirePortalAccess role="teacher"><PortalNotices role="teacher" /></RequirePortalAccess>} />
+          <Route path="/teacher/*" element={<RequirePortalAccess role="teacher"><ComingSoonPage /></RequirePortalAccess>} />
 
           {/* Fallback for modules that are not wired yet */}
           <Route path="*" element={<ComingSoonPage backTo="/" backLabel="Back To Home" />} />
-        </Routes>
-      </Suspense>
-    </Router>
+          </Routes>
+        </Suspense>
+      </Router>
+    </AuthProvider>
   );
 }
 
@@ -121,9 +144,11 @@ const RouteLoading = () => (
 
 const RequireCollegeAccess = ({ children, adminOnly = false }) => {
   const location = useLocation();
-  const session = JSON.parse(localStorage.getItem('active_session') || 'null');
+  const { session, isLoading } = useAuth();
 
+  if (isLoading) return <RouteLoading />;
   if (!session) return <Navigate to="/login" replace />;
+  if (!session.authenticated) return <Navigate to="/login" replace />;
   if (session.role === 'admin') return children;
   if (adminOnly) return <Navigate to={session.allowedPath || '/login'} replace />;
   if (session.role === 'feature') {
@@ -132,17 +157,39 @@ const RequireCollegeAccess = ({ children, adminOnly = false }) => {
       ? <FeatureAccessFrame>{children}</FeatureAccessFrame>
       : <Navigate to={allowedPath} replace />;
   }
+  if (session.role === 'teacher') {
+    const assignedFeatures = Array.isArray(session.assignedFeatures) ? session.assignedFeatures : [];
+    const allowedFeature = assignedFeatures.find((feature) => {
+      const route = FEATURE_ROUTE_MAP[feature.feature];
+      return feature.enabled && route && location.pathname.startsWith(route);
+    });
+    return allowedFeature
+      ? <FeatureAccessFrame>{children}</FeatureAccessFrame>
+      : <Navigate to="/teacher" replace />;
+  }
 
   return <Navigate to="/login" replace />;
 };
 
+const RequirePortalAccess = ({ children, role }) => {
+  const { session, isLoading } = useAuth();
+
+  if (isLoading) return <RouteLoading />;
+  if (!session?.authenticated) return <Navigate to="/login" replace />;
+  if (session.role !== role) {
+    return <Navigate to={session.role === 'teacher' ? '/teacher' : session.role === 'student' ? '/student' : '/login'} replace />;
+  }
+  return children;
+};
+
 const FeatureAccessFrame = ({ children }) => {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const { logout } = useAuth();
 
   const handleLogout = () => {
-    localStorage.removeItem('active_session');
-    localStorage.removeItem('current_college_id');
-    window.location.href = '/login';
+    logout().finally(() => {
+      window.location.href = '/login';
+    });
   };
 
   return (

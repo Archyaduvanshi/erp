@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Banknote,
@@ -10,57 +11,70 @@ import {
   ShieldCheck,
   WalletCards,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { salaryApi, teacherApi } from '../../utils/api';
+import { salaryApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import {
-  buildSalaryTimeline,
   formatCurrencyAmount,
-  formatSalary,
-  getCurrentMonthSalaryStatus,
   getMonthLabel,
-  normalizeTeacherSalary,
 } from '../../utils/salaryUtils';
 
 const TeacherSalary = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [teacher, setTeacher] = useState(null);
-  const [loadError, setLoadError] = useState('');
+  const { session } = useAuth();
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!session || session.role !== 'teacher') {
       navigate('/login');
-      return;
     }
-
-    const loadSalary = async () => {
-      try {
-        const [teacherResponse, paymentResponse] = await Promise.all([
-          teacherApi.getById(session.teacherId),
-          salaryApi.getPayments(session.teacherId),
-        ]);
-        setTeacher(attachSalaryPayments(normalizeTeacherSalary(teacherResponse), paymentResponse));
-        setLoadError('');
-      } catch (error) {
-        const fallbackTeacher = db.getAll('teachers').find((entry) => String(entry.id) === String(session.teacherId)) || null;
-        setTeacher(fallbackTeacher ? normalizeTeacherSalary(fallbackTeacher) : null);
-        setLoadError(error.message || 'Unable to load salary details.');
-      }
-    };
-
-    loadSalary();
   }, [navigate, session]);
 
-  const currentSalaryStatus = useMemo(() => getCurrentMonthSalaryStatus(teacher), [teacher]);
-  const salaryTimeline = useMemo(() => buildSalaryTimeline(teacher), [teacher]);
-  const salaryHistory = useMemo(() => salaryTimeline.filter((entry) => entry.isPaid), [salaryTimeline]);
+  const summaryQuery = useQuery({
+    queryKey: ['salary', 'teacher-me', 'summary', currentMonthKey],
+    queryFn: () => salaryApi.getMySummary({ monthKey: currentMonthKey }),
+    enabled: session?.role === 'teacher',
+  });
+
+  const payrollQuery = useInfiniteQuery({
+    queryKey: ['salary', 'teacher-me', 'payroll-periods'],
+    queryFn: ({ pageParam = 0 }) => salaryApi.getMyPayrollPeriods({ page: pageParam, size: 12 }),
+    enabled: session?.role === 'teacher',
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+  });
+
+  const paymentsQuery = useInfiniteQuery({
+    queryKey: ['salary', 'teacher-me', 'payments'],
+    queryFn: ({ pageParam = 0 }) => salaryApi.getMyPayments({ page: pageParam, size: 12 }),
+    enabled: session?.role === 'teacher',
+    initialPageParam: 0,
+    getNextPageParam: nextPageParam,
+  });
+
+  const loadError = summaryQuery.error?.message || payrollQuery.error?.message || paymentsQuery.error?.message || '';
+  const salaryTimeline = useMemo(() => pagesContent(payrollQuery.data).map((period) => ({
+    ...period,
+    label: getMonthLabel(period.monthKey),
+    amount: Number(period.netPayableAmount) || 0,
+    totalAmount: Number(period.netPayableAmount) || 0,
+    baseSalary: Number(period.baseSalary) || 0,
+    previousPendingAmount: Number(period.outstandingAmount) || 0,
+    leaveDeductionAmount: Number(period.leaveDeductionAmount) || 0,
+    isPaid: period.status === 'PAID',
+  })), [payrollQuery.data]);
+  const salaryHistory = useMemo(() => pagesContent(paymentsQuery.data).map((payment) => ({
+    ...payment,
+    label: getMonthLabel(payment.monthKey),
+    isPaid: payment.status === 'COMPLETED',
+  })), [paymentsQuery.data]);
   const paidMonths = salaryTimeline.filter((entry) => entry.isPaid).length;
   const pendingMonths = salaryTimeline.filter((entry) => !entry.isPaid).length;
   const latestPaidEntry = salaryHistory[0] || null;
-  const totalPaidAmount = salaryHistory.reduce((sum, entry) => sum + (Number(entry.totalAmount || entry.amount) || 0), 0);
+  const totalPaidAmount = Number(summaryQuery.data?.totalPaid) || 0;
   const totalPendingAmount = salaryTimeline
     .filter((entry) => !entry.isPaid)
     .reduce((sum, entry) => sum + (Number(entry.baseSalary || entry.amount) || 0), 0);
+  const authoritativePending = Number(summaryQuery.data?.totalPayable ?? totalPendingAmount);
 
   if (!session || session.role !== 'teacher') return null;
 
@@ -99,13 +113,13 @@ const TeacherSalary = () => {
             icon={WalletCards}
             title="Total Paid So Far"
             value={formatCurrencyAmount(totalPaidAmount)}
-            caption={`${salaryHistory.length} settled salary record${salaryHistory.length === 1 ? '' : 's'}`}
+            caption="Lifetime completed salary payments"
           />
           <InsightCard
             icon={ReceiptText}
             title="Total Pending Exposure"
-            value={formatCurrencyAmount(totalPendingAmount)}
-            caption={pendingMonths ? `${pendingMonths} pending month${pendingMonths > 1 ? 's' : ''}` : 'No pending dues'}
+            value={formatCurrencyAmount(authoritativePending)}
+            caption={authoritativePending > 0 ? 'Backend outstanding salary ledger' : 'No pending dues'}
           />
           <InsightCard
             icon={ShieldCheck}
@@ -129,6 +143,13 @@ const TeacherSalary = () => {
                     highlight={index === 0}
                   />
                 ))}
+                {payrollQuery.hasNextPage ? (
+                  <LoadMoreButton
+                    loading={payrollQuery.isFetchingNextPage}
+                    onClick={() => payrollQuery.fetchNextPage()}
+                    label={`Load More Salary Cycles (${salaryTimeline.length}/${payrollQuery.data?.pages?.at(-1)?.totalElements || salaryTimeline.length})`}
+                  />
+                ) : null}
               </div>
             ) : (
               <EmptyState text="Your college has not added salary details yet." />
@@ -159,6 +180,13 @@ const TeacherSalary = () => {
                     <HistoryRow key={entry.monthKey} entry={entry} />
                   ))}
                 </div>
+                {paymentsQuery.hasNextPage ? (
+                  <LoadMoreButton
+                    loading={paymentsQuery.isFetchingNextPage}
+                    onClick={() => paymentsQuery.fetchNextPage()}
+                    label={`Load More Payments (${salaryHistory.length}/${paymentsQuery.data?.pages?.at(-1)?.totalElements || salaryHistory.length})`}
+                  />
+                ) : null}
               </div>
             ) : (
               <EmptyState text="No paid salary history is available yet." />
@@ -288,39 +316,32 @@ const EmptyState = ({ text }) => (
   </div>
 );
 
-const attachSalaryPayments = (teacher, salaryPayments = []) => {
-  if (!teacher) return null;
-  const paymentMap = new Map();
-  (Array.isArray(teacher.paymentHistory) ? teacher.paymentHistory : []).forEach((payment) => {
-    if (payment?.monthKey) paymentMap.set(payment.monthKey, payment);
-  });
-  salaryPayments.forEach((payment) => {
-    if (!payment?.monthKey) return;
-    paymentMap.set(payment.monthKey, {
-      monthKey: payment.monthKey,
-      baseSalary: Number(payment.baseSalary) || 0,
-      previousPendingAmount: Number(payment.previousPendingAmount) || 0,
-      bonusAmount: Number(payment.bonusAmount) || 0,
-      advanceAmount: Number(payment.advanceAmount) || 0,
-      leaveDeductionAmount: Number(payment.leaveDeductionAmount) || 0,
-      amount: Number(payment.totalAmount ?? payment.amount) || 0,
-      totalAmount: Number(payment.totalAmount ?? payment.amount) || 0,
-      openSchoolDays: Number(payment.openSchoolDays) || 0,
-      presentDays: Number(payment.presentDays) || 0,
-      absentDays: Number(payment.absentDays) || 0,
-      allowedLeaves: Number(payment.allowedLeaves) || 0,
-      extraLeaveDays: Number(payment.extraLeaveDays) || 0,
-      perDaySalary: Number(payment.perDaySalary) || 0,
-      paidOn: payment.paidOn || '',
-      settledMonthKeys: Array.isArray(payment.settledMonthKeys) ? payment.settledMonthKeys : [],
-      note: payment.note || '',
-    });
-  });
+const LoadMoreButton = ({ label, loading, onClick }) => (
+  <button
+    type="button"
+    disabled={loading}
+    onClick={onClick}
+    className="mt-5 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {loading ? 'Loading...' : label}
+  </button>
+);
 
-  return {
-    ...teacher,
-    paymentHistory: [...paymentMap.values()],
-  };
-};
+function pageContent(page) {
+  if (Array.isArray(page)) return page;
+  if (Array.isArray(page?.content)) return page.content;
+  return [];
+}
+
+function pagesContent(data) {
+  if (!data?.pages) return pageContent(data);
+  return data.pages.flatMap(pageContent);
+}
+
+function nextPageParam(lastPage) {
+  if (!lastPage || Array.isArray(lastPage) || lastPage.last) return undefined;
+  const nextPage = Number(lastPage.number || 0) + 1;
+  return nextPage < Number(lastPage.totalPages || 0) ? nextPage : undefined;
+}
 
 export default TeacherSalary;

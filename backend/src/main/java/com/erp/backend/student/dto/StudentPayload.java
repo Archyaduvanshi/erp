@@ -36,6 +36,7 @@ public record StudentPayload(
         String admissionDate,
         String academicYear,
         String enrollmentNo,
+        Long classId,
         @NotBlank(message = "Class is required") String className,
         @NotBlank(message = "Section is required") String section,
         String assignedClass,
@@ -47,7 +48,6 @@ public record StudentPayload(
         String hostelStatus,
         String libraryStatus,
         String libraryMonthlyCharge,
-        String studentPortalPassword,
         String documentType,
         String otherDocumentName,
         String fileUploadPath,
@@ -55,7 +55,6 @@ public record StudentPayload(
         String qrCodeData,
         String cardExpiryDate,
         String photoUrl,
-        String systemId,
         String status
 ) {
 }

@@ -1,36 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   CalendarClock,
   Clock3,
   Download,
-  DoorOpen,
   FileText,
-  GraduationCap,
   Search,
-  ShieldCheck,
   Trash2,
   UserCheck,
-  UserRound,
   X,
 } from 'lucide-react';
-import { db } from '../../utils/db';
-import { courseBookApi, feeApi, studentApi, teacherApi, timetableApi } from '../../utils/api';
-
-const initialExamSlotForm = {
-  examTitle: '',
-  className: '',
-  subjectName: '',
-  examDate: '',
-  dayOfWeek: '',
-  timeFrom: '',
-  timeTo: '',
-  roomId: '',
-  invigilatorName: '',
-  examDuration: '',
-  studentSeatingRange: '',
-};
+import { classSubjectApi, settingsApi, teacherApi, timetableApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const initialTemplateForm = {
   schoolName: '',
@@ -42,69 +25,38 @@ const initialTemplateForm = {
 
 const TimetableManagement = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const queryClient = useQueryClient();
+  const { session } = useAuth();
   const [activePage, setActivePage] = useState('class');
-  const [students, setStudents] = useState([]);
-  const [teachers, setTeachers] = useState([]);
-  const [courseBooks, setCourseBooks] = useState([]);
-  const [schoolClasses, setSchoolClasses] = useState([]);
-  const [classTimetables, setClassTimetables] = useState([]);
-  const [examSlots, setExamSlots] = useState(() => db.getAll('timetable_exam_slots'));
   const [selectedClass, setSelectedClass] = useState('');
-  const [examSlotForm, setExamSlotForm] = useState(initialExamSlotForm);
   const [classSearch, setClassSearch] = useState('');
-  const [examSearch, setExamSearch] = useState('');
   const [openTimetablePreviewId, setOpenTimetablePreviewId] = useState(null);
   const [classTimetableAction, setClassTimetableAction] = useState('');
-  const [savedTemplateDrafts, setSavedTemplateDrafts] = useState([]);
   const [templateForm, setTemplateForm] = useState(initialTemplateForm);
   const [generatedTemplateDraft, setGeneratedTemplateDraft] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const timetableSummarySessionKey = 'current';
 
-  const refreshTimetables = async () => {
-    const [nextClassTimetables, nextDrafts] = await Promise.all([
-      timetableApi.getClassTimetables(),
-      timetableApi.getTemplateDrafts(),
-    ]);
-    setClassTimetables(nextClassTimetables);
-    setExamSlots(db.getAll('timetable_exam_slots'));
-    setSavedTemplateDrafts(nextDrafts);
-  };
+  const timetableSummaryQuery = useQuery({
+    queryKey: ['timetable-summary', timetableSummarySessionKey],
+    queryFn: () => timetableApi.getSummary(),
+    staleTime: 2 * 60 * 1000,
+  });
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [studentResponse, teacherResponse, courseBookResponse, schoolClassResponse, timetableResponse, draftResponse] = await Promise.all([
-          studentApi.getAll(),
-          teacherApi.getAll(),
-          courseBookApi.getAll(),
-          feeApi.getClasses(),
-          timetableApi.getClassTimetables(),
-          timetableApi.getTemplateDrafts(),
-        ]);
+  const teacherOptionsQuery = useQuery({
+    queryKey: ['teacher-options'],
+    queryFn: () => teacherApi.getOptions(),
+    staleTime: 10 * 60 * 1000,
+  });
 
-        setStudents(studentResponse);
-        setTeachers(teacherResponse);
-        setCourseBooks(courseBookResponse);
-        setSchoolClasses(schoolClassResponse);
-        setClassTimetables(timetableResponse);
-        setSavedTemplateDrafts(draftResponse);
-        setExamSlots(db.getAll('timetable_exam_slots'));
-        setLoadError('');
-      } catch (error) {
-        setStudents([]);
-        setTeachers([]);
-        setCourseBooks([]);
-        setSchoolClasses([]);
-        setClassTimetables([]);
-        setSavedTemplateDrafts([]);
-        setExamSlots(db.getAll('timetable_exam_slots'));
-        setLoadError(error.message || 'Unable to load timetable data from the server.');
-      }
-    };
+  const settingsQuery = useQuery({
+    queryKey: ['college-settings'],
+    queryFn: settingsApi.get,
+    staleTime: 10 * 60 * 1000,
+  });
 
-    loadData();
-  }, []);
+  const timetableSummaries = timetableSummaryQuery.data || [];
+  const teachers = useMemo(() => (teacherOptionsQuery.data || []).map(mapTeacherOptionToLegacyTeacher), [teacherOptionsQuery.data]);
 
   const teacherSession = useMemo(() => {
     if (!session || session.role !== 'teacher') return null;
@@ -112,8 +64,117 @@ const TimetableManagement = () => {
   }, [session, teachers]);
 
   const teacherName = teacherSession
-    ? `${teacherSession.firstName || ''} ${teacherSession.lastName || ''}`.trim() || teacherSession.teacherSystemId || 'Teacher'
+    ? teacherSession.name || `${teacherSession.firstName || ''} ${teacherSession.lastName || ''}`.trim() || teacherSession.employeeId || 'Teacher'
     : '';
+
+  const teacherOptions = useMemo(() => {
+    return teachers
+      .map((teacher) => {
+        const displayName = formatTimetableText(`${teacher.firstName || ''} ${teacher.lastName || ''}`) || 'Unnamed Teacher';
+        const teacherCode = String(teacher.employeeId || '').trim();
+        const teacherLabel = teacherCode ? `${displayName} (${teacherCode})` : displayName;
+        return {
+          value: String(teacher.id),
+          label: teacherLabel,
+          teacherName: displayName,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [teachers]);
+
+  const selectedClassTeacherOptions = useMemo(() => {
+    return teacherOptions;
+  }, [teacherOptions]);
+
+  const selectedClassSummary = useMemo(() => (
+    findClassSummary(timetableSummaries, selectedClass)
+  ), [selectedClass, timetableSummaries]);
+  const selectedAcademicSessionId = selectedClassSummary?.academicSessionId || null;
+  const selectedClassId = selectedClassSummary?.classId || null;
+  const selectedSectionId = selectedClassSummary?.sectionId || null;
+  const selectedSubjectClassId = selectedClassSummary?.subjectClassId || selectedClassId;
+
+  const classSubjectsQuery = useQuery({
+    queryKey: ['class-subjects', selectedAcademicSessionId, selectedSubjectClassId],
+    queryFn: () => classSubjectApi.getByClass(selectedSubjectClassId, selectedAcademicSessionId),
+    enabled: Boolean(selectedSubjectClassId && selectedAcademicSessionId),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const classTimetableQuery = useQuery({
+    queryKey: ['class-timetable', selectedAcademicSessionId, selectedClassId, selectedSectionId ?? null],
+    queryFn: () => timetableApi.getClassTimetable(selectedClassId, {
+      academicSessionId: selectedAcademicSessionId,
+      sectionId: selectedSectionId,
+    }).catch(() => null),
+    enabled: Boolean(selectedClassId && selectedAcademicSessionId),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const classDraftQuery = useQuery({
+    queryKey: ['class-timetable-draft', selectedAcademicSessionId, selectedClassId, selectedSectionId ?? null],
+    queryFn: () => timetableApi.getTemplateDraft(selectedClassId, {
+      academicSessionId: selectedAcademicSessionId,
+      sectionId: selectedSectionId,
+    }).catch(() => null),
+    enabled: Boolean(selectedClassId && selectedAcademicSessionId),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const teacherOccupancyQuery = useQuery({
+    queryKey: ['teacher-occupancy', selectedAcademicSessionId],
+    queryFn: () => timetableApi.getTeacherOccupancy(selectedAcademicSessionId),
+    enabled: Boolean(selectedAcademicSessionId && activePage === 'template-editor' && generatedTemplateDraft),
+    staleTime: 60 * 1000,
+  });
+
+  const selectedClassSubjects = classSubjectsQuery.data || [];
+  const classTimetables = classTimetableQuery.data ? [classTimetableQuery.data] : [];
+  const savedTemplateDrafts = classDraftQuery.data ? [classDraftQuery.data] : [];
+  const selectedTimetableQueryKey = ['class-timetable', selectedAcademicSessionId, selectedClassId, selectedSectionId ?? null];
+  const selectedDraftQueryKey = ['class-timetable-draft', selectedAcademicSessionId, selectedClassId, selectedSectionId ?? null];
+  const teacherOccupancyQueryKey = ['teacher-occupancy', selectedAcademicSessionId];
+
+  useEffect(() => {
+    setTemplateForm((current) => ({
+      ...current,
+      schoolName: current.schoolName || settingsQuery.data?.instituteName || session?.instituteName || '',
+    }));
+  }, [settingsQuery.data?.instituteName, session?.instituteName]);
+
+  const publishTimetableMutation = useMutation({
+    mutationFn: ({ classId, payload }) => timetableApi.publishClassTimetable(classId, payload),
+  });
+
+  const saveClassTimetableMutation = useMutation({
+    mutationFn: timetableApi.saveClassTimetable,
+  });
+
+  const saveDraftMutation = useMutation({
+    mutationFn: ({ classId, payload, params }) => timetableApi.saveTemplateDraftForClass(classId, payload, params),
+  });
+
+  const saveLegacyDraftMutation = useMutation({
+    mutationFn: timetableApi.saveTemplateDraft,
+  });
+
+  const deleteTimetableMutation = useMutation({
+    mutationFn: timetableApi.deleteClassTimetable,
+  });
+
+  const deleteDraftMutation = useMutation({
+    mutationFn: timetableApi.deleteTemplateDraft,
+  });
+
+  const visibleLoadError = loadError
+    || timetableSummaryQuery.error?.message
+    || teacherOptionsQuery.error?.message
+    || settingsQuery.error?.message
+    || classSubjectsQuery.error?.message
+    || classTimetableQuery.error?.message
+    || classDraftQuery.error?.message
+    || teacherOccupancyQuery.error?.message
+    || '';
 
   const teacherClassOptions = useMemo(() => {
     return deriveTeacherClassesFromTimetables(classTimetables, teacherSession);
@@ -122,15 +183,10 @@ const TimetableManagement = () => {
   const studentClassOptions = useMemo(() => {
     return [
       ...new Set(
-        [
-          ...schoolClasses,
-          ...students.flatMap((student) => buildStudentTimetableClassCandidates(student)),
-          ...classTimetables.map((record) => record.className),
-          ...savedTemplateDrafts.map((record) => record.className),
-        ],
+        timetableSummaries.map((record) => record.displayName || record.className),
       ),
     ].map((value) => String(value || '').trim()).filter(Boolean).sort(compareClassNames);
-  }, [classTimetables, savedTemplateDrafts, schoolClasses, students]);
+  }, [timetableSummaries]);
 
   const classOptions = useMemo(() => {
     return teacherSession ? teacherClassOptions : studentClassOptions;
@@ -144,35 +200,32 @@ const TimetableManagement = () => {
     });
   }, [classOptions, classSearch]);
 
-  const teacherOptions = useMemo(() => {
-    return teachers
-      .map((teacher) => {
-        const displayName = formatTimetableText(`${teacher.firstName || ''} ${teacher.lastName || ''}`) || 'Unnamed Teacher';
-        const teacherCode = String(teacher.teacherSystemId || teacher.employeeId || '').trim();
-        const teacherLabel = teacherCode ? `${displayName} (${teacherCode})` : displayName;
-        return {
-          value: teacherLabel,
-          label: teacherLabel,
-        };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [teachers]);
-
-  const selectedClassTeacherOptions = useMemo(() => {
-    return teacherOptions;
-  }, [teacherOptions]);
-
   const selectedClassSubjectOptions = useMemo(() => {
     const baseClassName = normalizeTimetableClassLabel(selectedClass);
     if (!baseClassName) return [];
 
-    return [...new Set(
-      courseBooks
-        .filter((record) => normalizeTimetableClassLabel(record.className) === baseClassName)
-        .map((record) => formatTimetableText(record.subjectName))
-        .filter(Boolean),
-    )].sort((left, right) => left.localeCompare(right));
-  }, [courseBooks, selectedClass]);
+    return selectedClassSubjects
+      .map((record) => {
+        const subjectName = formatTimetableText(record.subjectName || record.name || record.subject?.name);
+        const classSubjectId = record.classSubjectId || record.id;
+        return subjectName && classSubjectId ? {
+          value: String(classSubjectId),
+          label: subjectName,
+          subjectName,
+        } : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [selectedClass, selectedClassSubjects]);
+
+  const updateSelectedSummary = (patch) => {
+    queryClient.setQueryData(['timetable-summary', timetableSummarySessionKey], (current = []) => current.map((record) => (
+      String(record.classId) === String(selectedClassSummary?.classId)
+        && String(record.sectionId || '') === String(selectedClassSummary?.sectionId || '')
+        ? { ...record, ...patch }
+        : record
+    )));
+  };
 
   const selectedClassRecord = useMemo(() => {
     return classTimetables.find((record) => record.className === selectedClass);
@@ -201,56 +254,26 @@ const TimetableManagement = () => {
 
   const isSelectedClassEditableTimetable = Boolean(selectedClassEditableTemplate);
 
-  const filteredExamSlots = useMemo(() => {
-    const query = examSearch.trim().toLowerCase();
-    return examSlots
-      .filter((slot) => {
-        if (!teacherSession) return true;
-        return teacherClassOptions.includes(slot.className) || slot.invigilatorName === teacherName;
-      })
-      .filter((slot) => {
-        if (!query) return true;
-        return (
-          slot.examTitle?.toLowerCase().includes(query) ||
-          slot.className?.toLowerCase().includes(query) ||
-          slot.subjectName?.toLowerCase().includes(query) ||
-          slot.invigilatorName?.toLowerCase().includes(query) ||
-          slot.roomId?.toLowerCase().includes(query) ||
-          slot.studentSeatingRange?.toLowerCase().includes(query)
-        );
-      })
-      .sort((a, b) => new Date(a.examDate || 0) - new Date(b.examDate || 0) || sortByDayAndTime(a, b));
-  }, [examSearch, examSlots, teacherClassOptions, teacherName, teacherSession]);
-
-  const handleSaveExamSlot = (e) => {
-    e.preventDefault();
-    const payload = {
-      ...examSlotForm,
-      examTitle: examSlotForm.examTitle.trim(),
-      className: examSlotForm.className.trim(),
-      subjectName: examSlotForm.subjectName.trim(),
-      roomId: examSlotForm.roomId.trim(),
-      invigilatorName: examSlotForm.invigilatorName.trim(),
-      examDuration: examSlotForm.examDuration.trim(),
-      studentSeatingRange: examSlotForm.studentSeatingRange.trim(),
-    };
-    if (!payload.examTitle || !payload.className || !payload.subjectName || !payload.examDate || !payload.timeFrom || !payload.timeTo || !payload.roomId || !payload.invigilatorName) return;
-    if (payload.timeTo <= payload.timeFrom) return;
-    db.save('timetable_exam_slots', payload);
-    setExamSlotForm(initialExamSlotForm);
-    refreshTimetables();
-  };
-
   const handleDelete = async (module, id) => {
     try {
       if (module === 'timetable_class_slots') {
-        await timetableApi.deleteClassTimetable(id);
+        await deleteTimetableMutation.mutateAsync(id);
+        queryClient.setQueryData(selectedTimetableQueryKey, null);
+        updateSelectedSummary({
+          timetableId: null,
+          hasTimetable: false,
+          updatedAt: new Date().toISOString(),
+        });
+        await queryClient.invalidateQueries({ queryKey: teacherOccupancyQueryKey });
       } else if (module === 'timetable_template_drafts') {
-        await timetableApi.deleteTemplateDraft(id);
-      } else {
-        replaceModuleRecords(module, db.getAll(module).filter((record) => record.id !== id));
+        await deleteDraftMutation.mutateAsync(id);
+        queryClient.setQueryData(selectedDraftQueryKey, null);
+        updateSelectedSummary({
+          draftId: null,
+          hasDraft: false,
+          updatedAt: new Date().toISOString(),
+        });
       }
-      await refreshTimetables();
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to delete the timetable record.');
@@ -286,10 +309,11 @@ const TimetableManagement = () => {
       firstLectureStart: templateForm.firstLectureStart,
       lectureLength,
       lunchLength,
+      attendanceTeacherId: '',
       attendanceTeacher: '',
       rows: classTemplateDays.map((day) => ({
         day,
-        slots: lecturePlan.map(() => ({ subjectName: '', teacherName: '' })),
+        slots: lecturePlan.map(() => ({ classSubjectId: '', subjectName: '', teacherId: '', teacherName: '' })),
       })),
     });
     setActivePage('template-editor');
@@ -306,6 +330,7 @@ const TimetableManagement = () => {
       firstLectureStart: selectedClassEditableTemplate.firstLectureStart || selectedClassEditableTemplate.lecturePlan?.[0]?.timeFrom || '',
       lectureLength: selectedClassEditableTemplate.lectureLength || calculateLectureLength(selectedClassEditableTemplate.lecturePlan),
       lunchLength: selectedClassEditableTemplate.lunchLength ?? '',
+      attendanceTeacherId: selectedClassEditableTemplate.attendanceTeacherId || '',
       attendanceTeacher: resolveTimetableAttendanceTeacher(selectedClassRecord),
     });
     setClassTimetableAction('');
@@ -333,6 +358,22 @@ const TimetableManagement = () => {
     });
   };
 
+  const handleDraftSubjectChange = (dayIndex, slotIndex, value) => {
+    const option = selectedClassSubjectOptions.find((entry) => String(entry.value) === String(value));
+    setGeneratedTemplateDraft((current) => updateDraftSlot(current, dayIndex, slotIndex, {
+      classSubjectId: option?.value || '',
+      subjectName: option?.subjectName || '',
+    }));
+  };
+
+  const handleDraftTeacherChange = (dayIndex, slotIndex, value) => {
+    const option = selectedClassTeacherOptions.find((entry) => String(entry.value) === String(value));
+    setGeneratedTemplateDraft((current) => updateDraftSlot(current, dayIndex, slotIndex, {
+      teacherId: option?.value || '',
+      teacherName: option?.label || '',
+    }));
+  };
+
   const handleSaveGeneratedTemplate = async () => {
       if (!generatedTemplateDraft || !selectedClass) return;
 
@@ -349,8 +390,12 @@ const TimetableManagement = () => {
       const now = new Date().toISOString();
       const payload = {
         className: selectedClass,
+        academicSessionId: selectedClassSummary?.academicSessionId || null,
+        classId: selectedClassSummary?.classId || null,
+        sectionId: selectedClassSummary?.sectionId || null,
+        attendanceTeacherId: normalizedTemplateDraft.attendanceTeacherId || null,
         fileName: buildTimetableTemplateFileName(selectedClass),
-        fileData: buildTimetableTemplateDataUri(normalizedTemplateDraft),
+        fileData: '',
         fileType: 'text/html',
         uploadedAt: now,
         templateData: normalizedTemplateDraft,
@@ -360,15 +405,31 @@ const TimetableManagement = () => {
           firstLectureStart: normalizedTemplateDraft.firstLectureStart,
           lectureLength: normalizedTemplateDraft.lectureLength,
           lunchLength: normalizedTemplateDraft.lunchLength,
+          attendanceTeacherId: normalizedTemplateDraft.attendanceTeacherId,
           attendanceTeacher: normalizedTemplateDraft.attendanceTeacher,
         },
-      };
+    };
     try {
-      await timetableApi.saveClassTimetable(payload);
-      if (selectedTemplateDraftRecord?.id) {
-        await timetableApi.deleteTemplateDraft(selectedTemplateDraftRecord.id);
+      if (selectedClassSummary?.classId) {
+        const savedTimetable = await publishTimetableMutation.mutateAsync({ classId: selectedClassSummary.classId, payload });
+        queryClient.setQueryData(selectedTimetableQueryKey, savedTimetable || null);
+        queryClient.setQueryData(selectedDraftQueryKey, null);
+        updateSelectedSummary({
+          timetableId: savedTimetable?.id || selectedClassSummary.timetableId,
+          hasTimetable: Boolean(savedTimetable),
+          draftId: null,
+          hasDraft: false,
+          updatedAt: savedTimetable?.updatedAt || new Date().toISOString(),
+        });
+        await queryClient.invalidateQueries({ queryKey: teacherOccupancyQueryKey });
+      } else {
+        const savedTimetable = await saveClassTimetableMutation.mutateAsync(payload);
+        queryClient.setQueryData(selectedTimetableQueryKey, savedTimetable || null);
+        if (selectedTemplateDraftRecord?.id) {
+          await deleteDraftMutation.mutateAsync(selectedTemplateDraftRecord.id);
+          queryClient.setQueryData(selectedDraftQueryKey, null);
+        }
       }
-      await refreshTimetables();
       setGeneratedTemplateDraft(null);
       setClassTimetableAction('');
       setActivePage('class');
@@ -381,12 +442,32 @@ const TimetableManagement = () => {
   const handleSaveTemplateDraft = async () => {
     if (!generatedTemplateDraft || !selectedClass) return;
     const payload = {
-      className: selectedClass,
-      draftData: normalizeGeneratedTemplateDraft(generatedTemplateDraft),
+        className: selectedClass,
+        academicSessionId: selectedClassSummary?.academicSessionId || null,
+        classId: selectedClassSummary?.classId || null,
+        sectionId: selectedClassSummary?.sectionId || null,
+        draftData: normalizeGeneratedTemplateDraft(generatedTemplateDraft),
     };
     try {
-      await timetableApi.saveTemplateDraft(payload);
-      await refreshTimetables();
+      if (selectedClassSummary?.classId) {
+        const savedDraft = await saveDraftMutation.mutateAsync({
+          classId: selectedClassSummary.classId,
+          payload,
+          params: {
+            academicSessionId: selectedClassSummary.academicSessionId,
+            sectionId: selectedClassSummary.sectionId,
+          },
+        });
+        queryClient.setQueryData(selectedDraftQueryKey, savedDraft || null);
+        updateSelectedSummary({
+          draftId: savedDraft?.id || selectedClassSummary.draftId,
+          hasDraft: Boolean(savedDraft),
+          updatedAt: savedDraft?.updatedAt || new Date().toISOString(),
+        });
+      } else {
+        const savedDraft = await saveLegacyDraftMutation.mutateAsync(payload);
+        queryClient.setQueryData(selectedDraftQueryKey, savedDraft || null);
+      }
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to save the timetable draft.');
@@ -406,11 +487,6 @@ const TimetableManagement = () => {
 
   const handleBack = () => {
     if (activePage === 'template-editor') {
-      setActivePage('class');
-      return;
-    }
-
-    if (activePage === 'exam') {
       setActivePage('class');
       return;
     }
@@ -439,40 +515,18 @@ const TimetableManagement = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
+        {visibleLoadError ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {visibleLoadError}
           </div>
         ) : null}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">Timetable Page</p>
             <h2 className="mt-2 font-serif text-3xl font-black italic tracking-tight text-slate-950">
-              {activePage === 'class' ? 'Class And Teacher Timetable' : activePage === 'template-editor' ? 'Edit Timetable Template' : 'Exam Timetable'}
+              {activePage === 'template-editor' ? 'Edit Timetable Template' : 'Class And Teacher Timetable'}
             </h2>
           </div>
-          {activePage !== 'template-editor' ? (
-            <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1.5">
-              <button
-                type="button"
-                onClick={() => setActivePage('class')}
-                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition ${
-                  activePage === 'class' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-emerald-50 hover:text-emerald-700'
-                }`}
-              >
-                Class
-              </button>
-              <button
-                type="button"
-                onClick={() => setActivePage('exam')}
-                className={`rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition ${
-                  activePage === 'exam' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-emerald-50 hover:text-emerald-700'
-                }`}
-              >
-                Exam
-              </button>
-            </div>
-          ) : null}
         </div>
 
         {activePage === 'class' ? (
@@ -489,7 +543,8 @@ const TimetableManagement = () => {
                 </div>
                 <div className="mt-6 grid gap-3">
                   {filteredClassOptions.map((className) => {
-                    const record = classTimetables.find((entry) => entry.className === className);
+                    const record = findClassSummary(timetableSummaries, className);
+                    const hasSavedTimetable = Boolean(record?.hasTimetable);
                     return (
                       <button
                         key={className}
@@ -507,11 +562,11 @@ const TimetableManagement = () => {
                         <div className="min-w-0">
                           <h4 className="truncate text-base font-black text-slate-950">{className}</h4>
                           <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
-                            {record ? 'Timetable Saved' : 'No Timetable Saved'}
+                            {hasSavedTimetable ? 'Timetable Saved' : 'No Timetable Saved'}
                           </p>
                         </div>
-                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${record ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-300'}`}>
-                          {record ? <FileText size={18} /> : <CalendarClock size={18} />}
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${hasSavedTimetable ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-300'}`}>
+                          {hasSavedTimetable ? <FileText size={18} /> : <CalendarClock size={18} />}
                         </div>
                       </button>
                     );
@@ -804,10 +859,17 @@ const TimetableManagement = () => {
                   <div className="mt-6 max-w-xl">
                     <SelectField
                       label="Attendance Teacher"
-                      value={generatedTemplateDraft.attendanceTeacher || ''}
-                      onChange={(e) => setGeneratedTemplateDraft({ ...generatedTemplateDraft, attendanceTeacher: e.target.value })}
+                      value={generatedTemplateDraft.attendanceTeacherId || ''}
+                      onChange={(e) => {
+                        const option = teacherOptions.find((entry) => String(entry.value) === String(e.target.value));
+                        setGeneratedTemplateDraft({
+                          ...generatedTemplateDraft,
+                          attendanceTeacherId: option?.value || '',
+                          attendanceTeacher: option?.label || '',
+                        });
+                      }}
                       options={['', ...teacherOptions.map((option) => option.value)]}
-                      renderOptionLabel={(value) => value || 'Select teacher for class attendance'}
+                      renderOptionLabel={(value) => teacherOptions.find((option) => String(option.value) === String(value))?.label || 'Select teacher for class attendance'}
                     />
                   </div>
 
@@ -877,22 +939,22 @@ const TimetableManagement = () => {
                                 );
                               }
 
-                              const slot = row.slots[column.lectureIndex] || { subjectName: '', teacherName: '' };
+                              const slot = row.slots[column.lectureIndex] || { classSubjectId: '', subjectName: '', teacherId: '', teacherName: '' };
                               return (
                                 <td key={`${row.day}-editor-${column.lectureIndex}`} className="border border-slate-300 px-2 py-2 align-top">
                                   <div className="min-w-37.5 space-y-2">
                                     <CompactTemplateField
                                       prefix="S"
-                                      value={slot.subjectName}
-                                      onChange={(e) => handleDraftCellChange(dayIndex, column.lectureIndex, 'subjectName', e.target.value)}
+                                      value={slot.classSubjectId || ''}
+                                      onChange={(e) => handleDraftSubjectChange(dayIndex, column.lectureIndex, e.target.value)}
                                       placeholder="Write subject name"
                                       suggestions={selectedClassSubjectOptions}
                                       datalistId={`subject-options-${slugifyTimetableValue(selectedClass || generatedTemplateDraft.className)}`}
                                     />
                                     <CompactTemplateSelect
                                       prefix="T"
-                                      value={slot.teacherName}
-                                      onChange={(e) => handleDraftCellChange(dayIndex, column.lectureIndex, 'teacherName', e.target.value)}
+                                      value={slot.teacherId || ''}
+                                      onChange={(e) => handleDraftTeacherChange(dayIndex, column.lectureIndex, e.target.value)}
                                       options={selectedClassTeacherOptions}
                                     />
                                   </div>
@@ -920,74 +982,6 @@ const TimetableManagement = () => {
           </section>
         ) : null}
 
-        {activePage === 'exam' ? (
-          <TwoColumnPage
-            left={
-              teacherSession ? (
-                <Panel
-                  title="Teacher Exam View"
-                  description="Only exam timetable records connected to your classes or invigilation duty are listed on the right."
-                >
-                  <div className="mt-8 rounded-[1.8rem] border border-emerald-200 bg-emerald-50 p-6">
-                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">Teacher Access</p>
-                    <h4 className="mt-3 font-serif text-2xl font-black italic tracking-tight text-slate-950">Exam timetable is read-only here.</h4>
-                    <p className="mt-3 text-sm leading-7 text-slate-600">
-                      You can review only the exam schedule for your teaching classes and any invigilation duties assigned to you.
-                    </p>
-                  </div>
-                </Panel>
-              ) : (
-                <Panel title="Create Exam Slot" description="Plan assessment periods with invigilator, duration, seating range, room, and time.">
-                  <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSaveExamSlot}>
-                    <InputField label="Exam Title" value={examSlotForm.examTitle} onChange={(e) => setExamSlotForm({ ...examSlotForm, examTitle: e.target.value })} placeholder="Write exam title" />
-                    <SelectField label="Class" value={examSlotForm.className} onChange={(e) => setExamSlotForm({ ...examSlotForm, className: e.target.value })} options={['', ...classOptions]} />
-                    <InputField label="Subject" value={examSlotForm.subjectName} onChange={(e) => setExamSlotForm({ ...examSlotForm, subjectName: e.target.value })} placeholder="Write subject name" />
-                    <InputField label="Exam Date" type="date" value={examSlotForm.examDate} onChange={(e) => setExamSlotForm({ ...examSlotForm, examDate: e.target.value })} />
-                    <SelectField label="Day Of Week" value={examSlotForm.dayOfWeek} onChange={(e) => setExamSlotForm({ ...examSlotForm, dayOfWeek: e.target.value })} options={['', ...weekDays]} />
-                    <InputField label="Room ID" value={examSlotForm.roomId} onChange={(e) => setExamSlotForm({ ...examSlotForm, roomId: e.target.value })} placeholder="Write room name or ID" />
-                    <InputField label="Time From" type="time" value={examSlotForm.timeFrom} onChange={(e) => setExamSlotForm({ ...examSlotForm, timeFrom: e.target.value })} />
-                    <InputField label="Time To" type="time" value={examSlotForm.timeTo} onChange={(e) => setExamSlotForm({ ...examSlotForm, timeTo: e.target.value })} />
-                    <InputField label="Invigilator Name" value={examSlotForm.invigilatorName} onChange={(e) => setExamSlotForm({ ...examSlotForm, invigilatorName: e.target.value })} placeholder="Write invigilator name" />
-                    <InputField label="Exam Duration" value={examSlotForm.examDuration} onChange={(e) => setExamSlotForm({ ...examSlotForm, examDuration: e.target.value })} placeholder="Write exam duration" />
-                    <div className="md:col-span-2">
-                      <InputField label="Student Seating Range" value={examSlotForm.studentSeatingRange} onChange={(e) => setExamSlotForm({ ...examSlotForm, studentSeatingRange: e.target.value })} placeholder="Write seating range" />
-                    </div>
-                    <div className="md:col-span-2">
-                      <PrimaryButton type="submit" icon={ShieldCheck} label="Save Exam Timetable Slot" />
-                    </div>
-                  </form>
-                </Panel>
-              )
-            }
-            right={
-              <Panel
-                title="Exam Timetable"
-                description={teacherSession
-                  ? 'Search your class-wise exam timetable and invigilation entries.'
-                  : 'Search by exam, class, subject, invigilator, room, or seating range.'}
-              >
-                <div className="mt-6">
-                  <SearchInput value={examSearch} onChange={setExamSearch} placeholder="Search exam timetable..." />
-                </div>
-                <div className="mt-6 grid gap-4">
-                  {filteredExamSlots.map((slot) => (
-                    <RecordCard key={slot.id} icon={ShieldCheck} title={`${slot.examTitle} | ${slot.examDate}`} subtitle={`${slot.className} | ${slot.subjectName} | ${slot.timeFrom} - ${slot.timeTo}`}>
-                      <InfoPill icon={UserRound} text={slot.invigilatorName} />
-                      <InfoPill icon={Clock3} text={slot.examDuration || `${slot.timeFrom}-${slot.timeTo}`} />
-                      <InfoPill icon={GraduationCap} text={slot.studentSeatingRange || 'Seating pending'} />
-                      <InfoPill icon={DoorOpen} text={slot.roomId} />
-                      {!teacherSession ? (
-                        <button onClick={() => handleDelete('timetable_exam_slots', slot.id)} className="ml-auto text-slate-400 transition hover:text-rose-600">
-                          <Trash2 size={18} />
-                        </button>
-                      ) : null}
-                    </RecordCard>
-                  ))}
-                </div>
-              </Panel>
-            }
-          />
-        ) : null}
       </main>
 
     </div>
@@ -1006,8 +1000,22 @@ const buildTimetableTemplateFileName = (className) => {
 const normalizeTimetableClassLabel = (value) => {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
-  const [baseClass] = normalized.split('/');
-  return baseClass.trim();
+  return getCurriculumClassSubjectKey(normalized);
+};
+
+const getCurriculumClassSubjectKey = (value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  const classNumber = extractLeadingClassNumber(normalized);
+  if (classNumber && classNumber >= 1 && classNumber <= 8) {
+    return normalized.split('/')[0].trim().toLowerCase();
+  }
+  return normalized.toLowerCase().replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ');
+};
+
+const extractLeadingClassNumber = (value) => {
+  const match = String(value || '').trim().match(/^(?:class\s*)?(\d{1,2})(?:\b|\s|\/)/i);
+  return match ? Number(match[1]) : null;
 };
 
 const buildStudentTimetableClassCandidates = (student) => {
@@ -1094,6 +1102,24 @@ const calculateLectureLength = (lecturePlan = []) => {
   return Math.max(1, parseTimeToMinutes(firstLecture.timeTo) - parseTimeToMinutes(firstLecture.timeFrom));
 };
 
+const updateDraftSlot = (current, dayIndex, slotIndex, patch) => {
+  if (!current) return current;
+
+  return {
+    ...current,
+    rows: current.rows.map((row, currentDayIndex) => (
+      currentDayIndex !== dayIndex
+        ? row
+        : {
+            ...row,
+            slots: row.slots.map((slot, currentSlotIndex) => (
+              currentSlotIndex !== slotIndex ? slot : { ...slot, ...patch }
+            )),
+          }
+    )),
+  };
+};
+
 const normalizeGeneratedTemplateDraft = (draft) => {
   if (!draft) return draft;
 
@@ -1101,12 +1127,15 @@ const normalizeGeneratedTemplateDraft = (draft) => {
     ...draft,
     schoolName: formatTimetableText(draft.schoolName),
     className: formatTimetableText(draft.className),
+    attendanceTeacherId: draft.attendanceTeacherId ? Number(draft.attendanceTeacherId) : null,
     attendanceTeacher: formatTeacherStoredValue(draft.attendanceTeacher),
     rows: (draft.rows || []).map((row) => ({
       ...row,
       slots: (row.slots || []).map((slot) => ({
         ...slot,
+        classSubjectId: slot.classSubjectId ? Number(slot.classSubjectId) : null,
         subjectName: formatTimetableText(slot.subjectName),
+        teacherId: slot.teacherId ? Number(slot.teacherId) : null,
         teacherName: formatTeacherStoredValue(slot.teacherName),
       })),
     })),
@@ -1116,7 +1145,7 @@ const normalizeGeneratedTemplateDraft = (draft) => {
 const findUnusedTimetableSubjects = (draft, availableSubjects = []) => {
   const normalizedAvailableSubjects = [...new Set(
     availableSubjects
-      .map((subjectName) => formatTimetableText(subjectName))
+      .map((subject) => formatTimetableText(subject.subjectName || subject.label || subject))
       .filter(Boolean),
   )];
 
@@ -1229,11 +1258,25 @@ const escapeTemplateHtml = (value) => String(value || '')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
-const replaceModuleRecords = (module, records) => {
-  const tenantId = db.getTenantId();
-  if (!tenantId) return;
-  localStorage.setItem(`${tenantId}_${module}`, JSON.stringify(records));
+const mapTeacherOptionToLegacyTeacher = (teacher) => {
+  const displayName = String(teacher.name || '').trim();
+  const [firstName = '', ...lastNameParts] = displayName.split(/\s+/).filter(Boolean);
+  return {
+    ...teacher,
+    firstName,
+    lastName: lastNameParts.join(' '),
+    name: displayName,
+    status: 'Active',
+  };
 };
+
+const findClassSummary = (summaries, className) => (
+  (summaries || []).find((record) => getTimetableClassKey(record.displayName || record.className) === getTimetableClassKey(className)) || null
+);
+
+const getTimetableClassKey = (value) => (
+  String(value || '').trim().toLowerCase().replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ')
+);
 
 const sortByDayAndTime = (a, b) => {
   return (dayOrder[a.dayOfWeek] ?? 99) - (dayOrder[b.dayOfWeek] ?? 99) || String(a.timeFrom || '').localeCompare(String(b.timeFrom || ''));
@@ -1370,12 +1413,12 @@ const extractSlotValue = (slotText, key) => {
 };
 
 const buildTeacherIdentityKeys = (teacher) => {
-  const fullName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
+  const fullName = teacher?.name || `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
   return [
     fullName,
-    teacher?.teacherSystemId,
     teacher?.employeeId,
-    fullName && teacher?.teacherSystemId ? `${fullName} (${teacher.teacherSystemId})` : '',
+    teacher?.employeeId,
+    fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
     fullName && teacher?.employeeId ? `${fullName} (${teacher.employeeId})` : '',
   ]
     .map((value) => String(value || '').trim().toLowerCase())
@@ -1545,8 +1588,8 @@ const CompactTemplateField = ({ prefix, suggestions = [], datalistId, ...props }
       >
         <option value="">Select</option>
         {suggestions.map((option) => (
-          <option key={option} value={option}>
-            {option}
+          <option key={option.value || option} value={option.value || option}>
+            {option.label || option}
           </option>
         ))}
       </select>
@@ -1588,16 +1631,6 @@ const SearchInput = ({ value, onChange, placeholder }) => (
       className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-12 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
     />
   </div>
-);
-
-const PrimaryButton = ({ type, icon, label }) => (
-  <button
-    type={type}
-    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600"
-  >
-    {React.createElement(icon, { size: 15 })}
-    {label}
-  </button>
 );
 
 const InfoPill = ({ icon, text }) => (

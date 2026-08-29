@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -11,36 +12,37 @@ import {
   Ticket,
   X,
 } from 'lucide-react';
-import { examApi, studentApi } from '../../utils/api';
+import { examApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const StudentExaminations = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session } = useAuth();
   const [activeSection, setActiveSection] = useState('home');
   const [searchValue, setSearchValue] = useState('');
-  const [students, setStudents] = useState([]);
-  const [dateSheets, setDateSheets] = useState([]);
-  const [questionPapers, setQuestionPapers] = useState([]);
-  const [admitCards, setAdmitCards] = useState([]);
   const [selectedQuestionExamType, setSelectedQuestionExamType] = useState('');
   const [selectedQuestionSubject, setSelectedQuestionSubject] = useState('');
   const [previewRecord, setPreviewRecord] = useState(null);
-  const [loadError, setLoadError] = useState('');
+  const portalQuery = useQuery({
+    queryKey: ['examinations', 'student-me'],
+    queryFn: () => examApi.getStudentMe(),
+    enabled: session?.role === 'student',
+  });
 
   const student = useMemo(() => {
-    if (!session || session.role !== 'student') return null;
+    if (!portalQuery.data) return null;
+    return {
+      id: portalQuery.data.studentId,
+      assignedClass: portalQuery.data.className,
+      name: portalQuery.data.studentName,
+    };
+  }, [portalQuery.data]);
 
-    return students.find((entry) => {
-      const matchesId = session.studentId && String(entry.id) === String(session.studentId);
-      const matchesSystemId = session.studentSystemId && String(entry.systemId) === String(session.studentSystemId);
-      const matchesEnrollment = session.enrollmentNo && String(entry.enrollmentNo) === String(session.enrollmentNo);
-      return matchesId || matchesSystemId || matchesEnrollment;
-    }) || null;
-  }, [session, students]);
-
-  const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
-    : 'Student';
+  const studentName = portalQuery.data?.studentName || 'Student';
+  const dateSheets = portalQuery.data?.dateSheets || [];
+  const questionPapers = portalQuery.data?.questionPapers || [];
+  const admitCards = portalQuery.data?.admitCards || [];
+  const loadError = portalQuery.error;
 
   const classDateSheets = useMemo(() => {
     if (!student?.assignedClass) return [];
@@ -66,7 +68,7 @@ const StudentExaminations = () => {
   const studentAdmitCards = useMemo(() => {
     if (!student) return [];
     const query = searchValue.trim().toLowerCase();
-    const studentKeys = [student.systemId, student.enrollmentNo, String(student.id)].filter(Boolean).map(String);
+    const studentKeys = [student.enrollmentNo, String(student.id)].filter(Boolean).map(String);
 
     return admitCards
       .filter((record) => {
@@ -152,34 +154,6 @@ const StudentExaminations = () => {
     }
   }, [navigate, session]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [studentResponse, dateSheetResponse, questionPaperResponse, admitCardResponse] = await Promise.all([
-          studentApi.getAll(),
-          examApi.getDateSheets(),
-          examApi.getQuestionPapers(),
-          examApi.getAdmitCards(),
-        ]);
-        setStudents(studentResponse);
-        setDateSheets(dateSheetResponse);
-        setQuestionPapers(questionPaperResponse);
-        setAdmitCards(admitCardResponse);
-        setLoadError('');
-      } catch (error) {
-        setStudents([]);
-        setDateSheets([]);
-        setQuestionPapers([]);
-        setAdmitCards([]);
-        setLoadError(error.message || 'Unable to load examination data.');
-      }
-    };
-
-    if (session?.role === 'student') {
-      loadData();
-    }
-  }, [session]);
-
   const handleDownloadFile = (record, fallbackName) => {
     if (!record?.fileData) return;
     const link = document.createElement('a');
@@ -234,7 +208,7 @@ const StudentExaminations = () => {
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
         {loadError ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {loadError.message || 'Unable to load examination data.'}
           </div>
         ) : null}
         {activeSection === 'home' && (
@@ -434,7 +408,7 @@ const StudentExaminations = () => {
                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">{card.examTitle || 'Exam pending'}</p>
                     <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">{card.className || student?.assignedClass || 'Class pending'}</h3>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      <StaticInfoPill label="Roll No" value={card.rollNo || student?.enrollmentNo || student?.systemId || '-'} />
+                      <StaticInfoPill label="Roll No" value={card.rollNo || student?.enrollmentNo || '-'} />
                       <StaticInfoPill label="Exam Date" value={card.examDate || 'Not scheduled'} />
                       <StaticInfoPill label="Center" value={card.centerName || 'Not assigned'} />
                       <StaticInfoPill label="Reporting Time" value={card.reportingTime || 'Not added'} />

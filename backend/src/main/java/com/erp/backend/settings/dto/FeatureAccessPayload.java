@@ -7,12 +7,16 @@ public record FeatureAccessPayload(
         @NotBlank(message = "Feature is required")
         String feature,
 
-        @NotBlank(message = "Password is required")
         @Pattern(
-                regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,}$",
+                regexp = "^$|(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,}$",
                 message = "Password must be at least 8 characters with uppercase, lowercase, number, and symbol."
         )
         String password,
+
+        Long teacherId,
+
+        @Pattern(regexp = "^(read|read_write)$", message = "Operation must be read or read_write")
+        String operation,
 
         boolean enabled
 ) {

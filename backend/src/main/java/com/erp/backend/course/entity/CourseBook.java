@@ -2,6 +2,7 @@ package com.erp.backend.course.entity;
 
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.ClassSubject;
 import com.erp.backend.institute.entity.Institute;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -14,12 +15,19 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Index;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "course_books")
+@Table(
+        name = "course_books",
+        indexes = {
+                @Index(name = "idx_course_books_class_subject_status", columnList = "class_subject_id,status"),
+                @Index(name = "idx_course_books_institute_legacy_class", columnList = "institute_id,className")
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -33,17 +41,26 @@ public class CourseBook {
     @JoinColumn(name = "institute_id", nullable = false)
     private Institute institute;
 
-    @Column(nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "class_subject_id")
+    private ClassSubject classSubject;
+
     private String className;
 
-    @Column(nullable = false)
     private String subjectName;
 
-    @Column(nullable = false)
+    private String bookTitle;
+
     private String publisher;
 
     private String language;
     private String academicYear;
+    private String isbn;
+    private String edition;
+
+    private Boolean primaryBook = true;
+
+    private String status = "ACTIVE";
 
     @Column(length = 2000)
     private String notes;

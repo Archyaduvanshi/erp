@@ -26,7 +26,6 @@ const buildStudent = ({
   libraryMonthlyCharge = '0',
   documentNames,
   photoUrl,
-  studentPortalPassword = 'student123',
 }) => ({
   id,
   firstName,
@@ -53,7 +52,6 @@ const buildStudent = ({
   hostelStatus,
   libraryStatus,
   libraryMonthlyCharge,
-  studentPortalPassword,
   documentType: '',
   otherDocumentName: '',
   fileUploadPath: '',
@@ -62,10 +60,9 @@ const buildStudent = ({
     documentType,
     fileUploadPath: `${documentType.toLowerCase().replace(/\s+/g, '-')}-${enrollmentNo}.pdf`,
   })),
-  qrCodeData: `EDU-${id}-${enrollmentNo}`,
+  qrCodeData: `${enrollmentNo}`,
   cardExpiryDate: '2027-03-31',
   photoUrl,
-  systemId: `EDU-${id}`,
   status: 'Verified',
   createdAt: `${regDate}T09:00:00.000Z`,
   facilities: {
@@ -95,7 +92,6 @@ const buildTeacher = ({
   personalEmail,
   mobileNumber,
   employeeId,
-  teacherPortalPassword = 'teacher123',
   specialization,
   experienceYears,
   contractType,
@@ -113,7 +109,6 @@ const buildTeacher = ({
   personalEmail,
   mobileNumber,
   employeeId,
-  teacherPortalPassword,
   specialization,
   experienceYears,
   contractType,
@@ -130,10 +125,9 @@ const buildTeacher = ({
     documentType,
     fileUploadPath: `${documentType.toLowerCase().replace(/\s+/g, '-')}-${employeeId}.pdf`,
   })),
-  qrCodeData: `TCH-${employeeId}-${mobileNumber}`,
+  qrCodeData: `${employeeId}-${mobileNumber}`,
   cardExpiryDate: '2027-03-31',
   photoUrl,
-  teacherSystemId: `TCH-${employeeId}`,
   status: 'Active',
   attendanceStatus: 'Present',
   createdAt: '2026-04-01T09:30:00.000Z',
@@ -298,7 +292,7 @@ const createSchoolStudents = () => {
         const guardianName = `${guardianFirstNames[(classIndex * 3 + seat + sectionIndex) % guardianFirstNames.length]} ${lastName}`;
         const enrollmentPrefix = classConfig.label.replace(/\s+/g, '').toUpperCase();
         const sectionCode = section.replace(/\s+/g, '').toUpperCase();
-        const enrollmentNo = `${enrollmentPrefix}-${sectionCode}-${String(seat).padStart(3, '0')}`;
+        const enrollmentNo = `STU${String(students.length + 1).padStart(4, '0')}`;
 
         students.push(buildStudent({
           id: currentId,
@@ -438,7 +432,7 @@ const createSchoolAttendance = (students, teachers) => {
         subject: classTeacher?.specialization || schoolSubjectCycle[classIndex],
         markedBy: `${classTeacher?.firstName || ''} ${classTeacher?.lastName || ''}`.trim(),
         className,
-        studentId: student.systemId,
+        studentId: student.enrollmentNo,
         rollNo: student.enrollmentNo,
         studentName: `${student.firstName} ${student.lastName}`.trim(),
         status: studentIndex % 5 === 0 ? 'Absent' : 'Present',
@@ -775,7 +769,7 @@ const greenfieldAttendance = [
     subject: 'Programming Fundamentals',
     markedBy: 'Arjun Mehta',
     className: 'BCA Semester 1',
-    studentId: 'EDU-1001',
+    studentId: 'STU0001',
     rollNo: '2026-BCA-001',
     studentName: 'Aarav Singh',
     status: 'Present',
@@ -787,7 +781,7 @@ const greenfieldAttendance = [
     subject: 'Programming Fundamentals',
     markedBy: 'Arjun Mehta',
     className: 'BCA Semester 1',
-    studentId: 'EDU-1002',
+    studentId: 'STU0002',
     rollNo: '2026-BCA-002',
     studentName: 'Diya Sharma',
     status: 'Absent',
@@ -799,7 +793,7 @@ const greenfieldAttendance = [
     subject: 'Programming Fundamentals',
     markedBy: 'Arjun Mehta',
     className: 'BCA Semester 1',
-    studentId: 'EDU-1003',
+    studentId: 'STU0003',
     rollNo: '2026-BCA-003',
     studentName: 'Kabir Verma',
     status: 'Present',
@@ -811,7 +805,7 @@ const greenfieldAttendance = [
     subject: 'Discrete Mathematics',
     markedBy: 'Neha Agarwal',
     className: 'B.Tech CSE / A',
-    studentId: 'EDU-1004',
+    studentId: 'STU0004',
     rollNo: '2026-BTECH-014',
     studentName: 'Meera Joshi',
     status: 'Present',
@@ -823,7 +817,7 @@ const greenfieldAttendance = [
     subject: 'Discrete Mathematics',
     markedBy: 'Neha Agarwal',
     className: 'B.Tech CSE / A',
-    studentId: 'EDU-1005',
+    studentId: 'STU0005',
     rollNo: '2026-BTECH-015',
     studentName: 'Rohan Iyer',
     status: 'Absent',
@@ -914,7 +908,7 @@ const greenfieldAdmitCards = [
   {
     id: 6401,
     examTitle: 'Mid Term Examination',
-    studentId: 'EDU-1001',
+    studentId: 'STU0001',
     studentName: 'Aarav Singh',
     rollNo: '2026-BCA-001',
     className: 'BCA Semester 1',
@@ -1066,39 +1060,6 @@ const greenfieldClassTimetable = [
   },
 ];
 
-const greenfieldExamTimetable = [
-  {
-    id: 7301,
-    examTitle: 'Mid Term Examination',
-    className: 'BCA Semester 1',
-    subjectName: 'Programming Fundamentals',
-    examDate: '2026-05-12',
-    dayOfWeek: 'Tuesday',
-    timeFrom: '09:30',
-    timeTo: '12:30',
-    roomId: 'Main Examination Hall',
-    invigilatorName: 'Neha Agarwal',
-    examDuration: '3 Hours',
-    studentSeatingRange: 'Roll 2026-BCA-001 to 2026-BCA-060',
-    createdAt: '2026-04-21T10:00:00.000Z',
-  },
-  {
-    id: 7302,
-    examTitle: 'Mid Term Examination',
-    className: 'B.Tech CSE / A',
-    subjectName: 'Discrete Mathematics',
-    examDate: '2026-05-14',
-    dayOfWeek: 'Thursday',
-    timeFrom: '09:30',
-    timeTo: '12:30',
-    roomId: 'Seminar Hall B',
-    invigilatorName: 'Arjun Mehta',
-    examDuration: '3 Hours',
-    studentSeatingRange: 'Roll 2026-BTECH-001 to 2026-BTECH-080',
-    createdAt: '2026-04-21T10:10:00.000Z',
-  },
-];
-
 const sunriseStudents = createSchoolStudents();
 const sunriseTeachers = createSchoolTeachers();
 const sunriseDrivers = createSchoolDrivers();
@@ -1207,7 +1168,7 @@ const sunriseAdmitCards = [
   {
     id: 6701,
     examTitle: 'Unit Test 1',
-    studentId: 'EDU-1101',
+    studentId: 'STU0006',
     studentName: 'Bhavya Gupta',
     rollNo: 'LKG-A-001',
     className: 'LKG / A',
@@ -1348,39 +1309,6 @@ const sunriseClassTimetable = [
   },
 ];
 
-const sunriseExamTimetable = [
-  {
-    id: 7501,
-    examTitle: 'Unit Test 1',
-    className: 'Class 8 / A',
-    subjectName: 'English',
-    examDate: '2026-05-08',
-    dayOfWeek: 'Friday',
-    timeFrom: '08:30',
-    timeTo: '10:00',
-    roomId: 'Exam Hall 1',
-    invigilatorName: 'Sonal Bhardwaj',
-    examDuration: '1 Hour 30 Minutes',
-    studentSeatingRange: 'Roll CLASS8-A-001 to CLASS8-A-040',
-    createdAt: '2026-04-22T09:30:00.000Z',
-  },
-  {
-    id: 7502,
-    examTitle: 'Unit Test 1',
-    className: 'Class 12 / Science',
-    subjectName: 'Physics',
-    examDate: '2026-05-10',
-    dayOfWeek: 'Sunday',
-    timeFrom: '09:00',
-    timeTo: '11:00',
-    roomId: 'Senior Lab Hall',
-    invigilatorName: 'Pankaj Tandon',
-    examDuration: '2 Hours',
-    studentSeatingRange: 'Roll CLASS12-SCI-001 to CLASS12-SCI-045',
-    createdAt: '2026-04-22T09:40:00.000Z',
-  },
-];
-
 const demoDatasets = {
   greenfield_demo: {
     students: greenfieldStudents,
@@ -1395,7 +1323,6 @@ const demoDatasets = {
     fee_structures: greenfieldFeeStructures,
     fee_payments: greenfieldFeePayments,
     timetable_class_slots: greenfieldClassTimetable,
-    timetable_exam_slots: greenfieldExamTimetable,
   },
   sunrise_demo: {
     students: sunriseStudents,
@@ -1410,33 +1337,25 @@ const demoDatasets = {
     fee_structures: sunriseFeeStructures,
     fee_payments: sunriseFeePayments,
     timetable_class_slots: sunriseClassTimetable,
-    timetable_exam_slots: sunriseExamTimetable,
   },
 };
 
 export const seedDemoData = () => {
-  localStorage.setItem('registered_colleges', JSON.stringify(demoInstitutions));
-
-  Object.entries(demoDatasets).forEach(([tenantId, modules]) => {
-    Object.entries(modules).forEach(([moduleName, records]) => {
-      localStorage.setItem(`${tenantId}_${moduleName}`, JSON.stringify(records));
-    });
-  });
+  return demoDatasets;
 };
 
 export const activateDemoSession = (username = 'greenfield_demo') => {
   const institution = demoInstitutions.find((college) => college.username === username);
   if (!institution) return null;
 
-  localStorage.setItem('active_session', JSON.stringify({
+  return {
+    id: institution.id,
     username: institution.username,
     instituteName: institution.instituteName,
     type: institution.type,
     role: 'admin',
     logo: institution.logo,
-  }));
-  localStorage.setItem('current_college_id', institution.id);
-  return institution;
+  };
 };
 
 export const demoCredentials = demoInstitutions.map((institution) => ({

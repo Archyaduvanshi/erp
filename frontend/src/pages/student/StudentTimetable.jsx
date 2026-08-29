@@ -5,19 +5,14 @@ import {
   Download,
   FileText,
 } from 'lucide-react';
-import { studentApi, timetableApi } from '../../utils/api';
+import { timetableApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const StudentTimetable = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [student, setStudent] = useState(null);
-  const [classTimetables, setClassTimetables] = useState([]);
+  const { session } = useAuth();
+  const [classTimetableRecord, setClassTimetableRecord] = useState(null);
   const [loadError, setLoadError] = useState('');
-
-  const classTimetableRecord = useMemo(() => {
-    if (!student?.assignedClass) return null;
-    return classTimetables.find((record) => record.className === student.assignedClass) || null;
-  }, [classTimetables, student]);
 
   const studentVisibleTimetableRecord = useMemo(() => (
     buildStudentVisibleTimetableRecord(classTimetableRecord)
@@ -32,16 +27,11 @@ const StudentTimetable = () => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [studentResponse, timetableResponse] = await Promise.all([
-          studentApi.getById(session.studentId),
-          timetableApi.getClassTimetables(),
-        ]);
-        setStudent(studentResponse);
-        setClassTimetables(timetableResponse);
+        const timetableResponse = await timetableApi.getMyStudentTimetable();
+        setClassTimetableRecord(timetableResponse);
         setLoadError('');
       } catch (error) {
-        setStudent(null);
-        setClassTimetables([]);
+        setClassTimetableRecord(null);
         setLoadError(error.message || 'Unable to load your timetable.');
       }
     };
@@ -94,7 +84,7 @@ const StudentTimetable = () => {
             <div>
               <h2 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Assigned Class Timetable</h2>
               <p className="mt-1 text-sm leading-6 text-slate-500">
-                Only timetable for {student?.assignedClass || 'your class'} is visible here.
+                Only timetable for {classTimetableRecord?.className || 'your class'} is visible here.
               </p>
             </div>
           </div>
@@ -104,7 +94,7 @@ const StudentTimetable = () => {
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
-                    Class {studentVisibleTimetableRecord.className || student?.assignedClass || 'pending'}
+                    Class {studentVisibleTimetableRecord.className || 'pending'}
                   </p>
                   <p className="mt-2 text-sm font-semibold text-slate-500">
                     Uploaded {formatDateTime(studentVisibleTimetableRecord.uploadedAt || studentVisibleTimetableRecord.createdAt)}

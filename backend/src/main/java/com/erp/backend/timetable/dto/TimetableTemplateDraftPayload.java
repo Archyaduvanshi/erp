@@ -4,6 +4,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 public record TimetableTemplateDraftPayload(
+        Long academicSessionId,
+        Long classId,
+        Long sectionId,
         @NotBlank(message = "Class name is required.")
         String className,
         @NotNull(message = "Draft data is required.")

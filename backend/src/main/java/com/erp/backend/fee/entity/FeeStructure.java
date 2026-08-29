@@ -1,7 +1,10 @@
 package com.erp.backend.fee.entity;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.AcademicSession;
 import com.erp.backend.institute.entity.Institute;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -33,6 +36,10 @@ public class FeeStructure {
     @JoinColumn(name = "institute_id", nullable = false)
     private Institute institute;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "academic_session_id")
+    private AcademicSession academicSession;
+
     @Column(nullable = false)
     private String courseId;
 
@@ -45,14 +52,15 @@ public class FeeStructure {
     @Column(nullable = false)
     private String feeComponent;
 
-    @Column(nullable = false)
-    private Double amount;
+    @Column(nullable = false, precision = 12, scale = 2)
+    private BigDecimal amount;
 
     private Integer cycleMonths;
     private String billingType;
-    private String dueDate;
+    private LocalDate dueDate;
     private String activeFromMonth;
     private String joinMonth;
+    private String status = "ACTIVE";
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

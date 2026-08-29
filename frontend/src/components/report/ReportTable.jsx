@@ -3,11 +3,13 @@ import { useMemo, useState } from 'react';
 
 const pageSizes = [10, 25, 50, 100];
 
-export default function ReportTable({ rows, columns, title }) {
+export default function ReportTable({ rows, columns, title, pagination, onPageChange, onPageSizeChange }) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState({ key: columns[0]?.key, direction: 'asc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const serverPaged = Boolean(pagination);
+  const currentPageSize = serverPaged ? Number(pagination.size || pageSize) : pageSize;
 
   const filteredRows = useMemo(() => {
     const text = query.trim().toLowerCase();
@@ -28,9 +30,10 @@ export default function ReportTable({ rows, columns, title }) {
     });
   }, [columns, query, rows, sort]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const visibleRows = filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const totalRecords = serverPaged ? Number(pagination.totalElements || rows.length) : filteredRows.length;
+  const totalPages = serverPaged ? Number(pagination.totalPages || 1) : Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const safePage = serverPaged ? Number(pagination.number || 0) + 1 : Math.min(page, totalPages);
+  const visibleRows = serverPaged ? filteredRows : filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const updateSort = (key) => {
     setSort((current) => ({
@@ -44,7 +47,7 @@ export default function ReportTable({ rows, columns, title }) {
       <div className="flex flex-col gap-3 border-b border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h2>
-          <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">{filteredRows.length} records</p>
+          <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">{totalRecords} records</p>
         </div>
         <div className="relative w-full md:w-80">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -52,7 +55,11 @@ export default function ReportTable({ rows, columns, title }) {
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
-              setPage(1);
+              if (serverPaged) {
+                onPageChange?.(0);
+              } else {
+                setPage(1);
+              }
             }}
             placeholder="Search table"
             className="h-10 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 pl-9 pr-3 text-sm font-semibold outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
@@ -90,10 +97,15 @@ export default function ReportTable({ rows, columns, title }) {
 
       <div className="flex flex-col gap-3 border-t border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
         <select
-          value={pageSize}
+          value={currentPageSize}
           onChange={(event) => {
-            setPageSize(Number(event.target.value));
-            setPage(1);
+            const nextSize = Number(event.target.value);
+            if (serverPaged) {
+              onPageSizeChange?.(nextSize);
+            } else {
+              setPageSize(nextSize);
+              setPage(1);
+            }
           }}
           className="h-9 w-28 rounded-md border border-slate-200 bg-white px-2 text-sm font-bold"
         >
@@ -101,10 +113,32 @@ export default function ReportTable({ rows, columns, title }) {
         </select>
         <div className="flex items-center gap-2 text-sm font-bold text-slate-600">
           Page {safePage} of {totalPages}
-          <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 p-2 disabled:opacity-40" disabled={safePage === 1}>
+          <button
+            type="button"
+            onClick={() => {
+              if (serverPaged) {
+                onPageChange?.(Math.max(0, safePage - 2));
+              } else {
+                setPage((value) => Math.max(1, value - 1));
+              }
+            }}
+            className="rounded-md border border-slate-200 p-2 disabled:opacity-40"
+            disabled={safePage === 1}
+          >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} className="rounded-md border border-slate-200 p-2 disabled:opacity-40" disabled={safePage === totalPages}>
+          <button
+            type="button"
+            onClick={() => {
+              if (serverPaged) {
+                onPageChange?.(Math.min(totalPages - 1, safePage));
+              } else {
+                setPage((value) => Math.min(totalPages, value + 1));
+              }
+            }}
+            className="rounded-md border border-slate-200 p-2 disabled:opacity-40"
+            disabled={safePage === totalPages}
+          >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>

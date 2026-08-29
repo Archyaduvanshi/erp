@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -12,63 +13,34 @@ import {
   Utensils,
   UserRound,
 } from 'lucide-react';
-import { hostelApi, studentApi } from '../../utils/api';
-import { getFacilityAccessState } from '../../utils/facilityUtils';
+import { hostelApi } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const StudentHostel = () => {
   const navigate = useNavigate();
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
-  const [student, setStudent] = useState(null);
-  const [residents, setResidents] = useState([]);
-  const [loadError, setLoadError] = useState('');
+  const { session } = useAuth();
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!session || session.role !== 'student') {
       navigate('/login');
-      return;
     }
-
-    const loadHostelWorkspace = async () => {
-      try {
-        const [studentResponse, residentResponse] = await Promise.all([
-          studentApi.getById(session.studentId),
-          hostelApi.getResidents(),
-        ]);
-        setStudent(studentResponse);
-        setResidents(residentResponse);
-        setLoadError('');
-      } catch (error) {
-        setLoadError(error.message || 'Unable to load hostel details.');
-      }
-    };
-
-    loadHostelWorkspace();
   }, [navigate, session]);
 
-  const studentName = student
-    ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || student.systemId || 'Student'
-    : 'Student';
+  const hostelQuery = useQuery({
+    queryKey: ['hostel', 'student-me'],
+    queryFn: hostelApi.getMyResident,
+    enabled: Boolean(session && session.role === 'student'),
+    staleTime: 60_000,
+  });
 
-  const hostelAccess = getFacilityAccessState(student, 'hostel');
-
-  const residentRecord = useMemo(() => {
-    if (!student) return null;
-    const studentKeys = [
-      String(student.id || ''),
-      String(student.systemId || ''),
-      String(student.enrollmentNo || ''),
-    ].filter(Boolean);
-    const normalizedStudentName = studentName.trim().toLowerCase();
-
-    return residents.find((record) => {
-      const recordStudentId = String(record.studentId || '');
-      const recordRollNo = String(record.rollNo || '');
-      const recordName = String(record.studentName || '').trim().toLowerCase();
-      return studentKeys.includes(recordStudentId)
-        || studentKeys.includes(recordRollNo)
-        || recordName === normalizedStudentName;
-    }) || null;
-  }, [residents, student, studentName]);
+  const hostelWorkspace = hostelQuery.data || {};
+  const residentRecord = hostelWorkspace.resident || null;
+  const studentName = hostelWorkspace.studentName || hostelWorkspace.enrollmentNo || 'Student';
+  const hostelAccess = {
+    requested: ['yes', 'true'].includes(String(hostelWorkspace.hostelOptIn || '').toLowerCase()),
+    active: Boolean(hostelWorkspace.hostelFacilityActive || residentRecord),
+    status: hostelWorkspace.hostelStatus || 'inactive',
+  };
 
   if (!session || session.role !== 'student') return null;
 
@@ -93,13 +65,13 @@ const StudentHostel = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
+        {hostelQuery.isError ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {hostelQuery.error?.message || 'Unable to load hostel details.'}
           </div>
         ) : null}
 
-        {hostelAccess.active && residentRecord ? (
+        {residentRecord ? (
           <div className="grid gap-8">
             <section className="overflow-hidden rounded-4xl border border-emerald-200/50 bg-[linear-gradient(135deg,#052e16_0%,#166534_36%,#0f766e_100%)] px-7 py-8 text-white shadow-[0_30px_80px_-40px_rgba(6,78,59,0.85)] lg:px-10 lg:py-10">
               <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
@@ -116,7 +88,7 @@ const StudentHostel = () => {
                   <MetricCard label="Room Number" value={residentRecord.roomNumber || 'Pending'} icon={Building2} />
                   <MetricCard label="Bed Number" value={residentRecord.bedNumber || 'Auto'} icon={BedDouble} />
                   <MetricCard label="Monthly Charge" value={`Rs ${residentRecord.monthlyCharge || '0'}`} icon={Home} />
-                  <MetricCard label="Status" value={residentRecord.status || student?.hostelStatus || 'active'} icon={Shield} />
+                  <MetricCard label="Status" value={residentRecord.status || hostelWorkspace.hostelStatus || 'active'} icon={Shield} />
                 </div>
               </div>
             </section>
@@ -127,7 +99,7 @@ const StudentHostel = () => {
                 description="Hostel resident information currently linked to your student account."
               >
                 <InfoRow icon={UserRound} label="Student" value={residentRecord.studentName || studentName} />
-                <InfoRow icon={GraduationCap} label="Class" value={residentRecord.className || student?.assignedClass || 'Not assigned'} />
+                <InfoRow icon={GraduationCap} label="Class" value={residentRecord.className || hostelWorkspace.className || 'Not assigned'} />
                 <InfoRow icon={Home} label="Hostel" value={residentRecord.hostelName || 'Not available'} />
                 <InfoRow icon={Building2} label="Room" value={residentRecord.roomNumber || 'Not available'} />
                 <InfoRow icon={BedDouble} label="Bed" value={residentRecord.bedNumber || 'Auto'} />
@@ -140,9 +112,9 @@ const StudentHostel = () => {
               >
                 <InfoRow icon={CalendarDays} label="Check In Date" value={residentRecord.checkInDate || 'Not available'} />
                 <InfoRow icon={CalendarDays} label="Check Out Date" value={residentRecord.checkOutDate || 'Currently staying'} />
-                <InfoRow icon={Phone} label="Father Contact" value={residentRecord.guardianContact || student?.guardianPhone || 'Not added'} />
+                <InfoRow icon={Phone} label="Father Contact" value={residentRecord.guardianContact || hostelWorkspace.guardianPhone || 'Not added'} />
                 <InfoRow icon={Phone} label="Emergency Contact" value={residentRecord.emergencyContact || 'Not added'} />
-                <InfoRow icon={Shield} label="Status" value={residentRecord.status || student?.hostelStatus || 'active'} />
+                <InfoRow icon={Shield} label="Status" value={residentRecord.status || hostelWorkspace.hostelStatus || 'active'} />
               </InfoPanel>
             </section>
 

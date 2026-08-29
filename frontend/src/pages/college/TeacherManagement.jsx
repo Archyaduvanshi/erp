@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ArrowRight,
@@ -8,10 +9,7 @@ import {
   CalendarCheck2,
   CheckCircle2,
   Download,
-  Eye,
-  EyeOff,
   FileText,
-  IdCard,
   LayoutGrid,
   List,
   Mail,
@@ -29,6 +27,7 @@ import {
 } from 'lucide-react';
 import { teacherApi, uploadApi } from '../../utils/api';
 import { formatSalary } from '../../utils/salaryUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const getToday = () => new Date().toISOString().slice(0, 10);
 
@@ -47,7 +46,6 @@ const createInitialFormData = () => ({
   contractType: '',
   leaveBalance: '',
   salary: '',
-  teacherPortalPassword: '',
   documentType: '',
   otherDocumentName: '',
   fileUploadPath: '',
@@ -59,15 +57,21 @@ const createInitialFormData = () => ({
 
 const TeacherManagement = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('list');
   const [currentStep, setCurrentStep] = useState(1);
-  const [teachers, setTeachers] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [viewMode, setViewMode] = useState('grid');
   const [searchTerm, setSearchTerm] = useState('');
-  const [contractFilter, setContractFilter] = useState('All Contracts');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [contractFilter, setContractFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [specializationFilter, setSpecializationFilter] = useState('');
+  const [sortValue, setSortValue] = useState('createdAt,desc');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
   const [formData, setFormData] = useState(() => createInitialFormData());
-  const [session] = useState(() => JSON.parse(localStorage.getItem('active_session')) || null);
+  const { session } = useAuth();
   const [generatedTeacher, setGeneratedTeacher] = useState(null);
   const [selectedTeacher, setSelectedTeacher] = useState(null);
   const [detailFormData, setDetailFormData] = useState(() => createInitialFormData());
@@ -81,23 +85,51 @@ const TeacherManagement = () => {
   const [pendingDetailPhotoFile, setPendingDetailPhotoFile] = useState(null);
 
   useEffect(() => {
-    const loadTeachers = async () => {
-      try {
-        const apiTeachers = await teacherApi.getAll();
-        setTeachers(apiTeachers);
-        setLoadError('');
-      } catch (error) {
-        setTeachers([]);
-        setLoadError(error.message || 'Unable to load teachers from the server.');
-      }
-    };
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim());
+      setPage(0);
+    }, 350);
 
-    loadTeachers();
-  }, []);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm]);
 
-  const draftEmployeeId = formData.employeeId || buildDraftEmployeeId(session?.instituteName, teachers.length + 1);
-  const draftTeacherId = `TCH-${draftEmployeeId}`;
-  const resolvedPortalPassword = formData.teacherPortalPassword || buildDefaultTeacherPortalPassword(formData);
+  const teachersQuery = useQuery({
+    queryKey: ['teachers', {
+      page,
+      size: pageSize,
+      search: debouncedSearchTerm,
+      status: statusFilter,
+      specialization: specializationFilter,
+      contractType: contractFilter,
+      sort: sortValue,
+    }],
+    queryFn: () => teacherApi.getPage({
+      page,
+      size: pageSize,
+      search: debouncedSearchTerm,
+      status: statusFilter,
+      specialization: specializationFilter,
+      contractType: contractFilter,
+      sort: sortValue,
+    }),
+    staleTime: 30000,
+    placeholderData: keepPreviousData,
+  });
+
+  useEffect(() => {
+    setLoadError(teachersQuery.error?.message || '');
+  }, [teachersQuery.error]);
+
+  const teacherPage = teachersQuery.data || { content: [], page: 0, size: pageSize, totalElements: 0, totalPages: 0 };
+  const teachers = teacherPage.content || [];
+
+  const draftEmployeeId = formData.employeeId || buildDraftEmployeeId(session?.instituteName, (teacherPage.totalElements || 0) + 1);
+  const refreshTeacherQueries = async ({ teacherId } = {}) => {
+    if (teacherId) {
+      await queryClient.invalidateQueries({ queryKey: ['teacher', teacherId] });
+    }
+    await queryClient.invalidateQueries({ queryKey: ['teachers'] });
+  };
 
   const handlePageBack = () => {
     setFormError('');
@@ -195,7 +227,7 @@ const TeacherManagement = () => {
 
   const handleSave = (e) => {
     e?.preventDefault?.();
-    const stepOneValidation = validateTeacherProfileStep(formData, teachers);
+    const stepOneValidation = validateTeacherProfileStep(formData, []);
     const stepTwoValidation = validateTeacherWorkStep(formData);
 
     if (!stepOneValidation.isValid) {
@@ -227,36 +259,23 @@ const TeacherManagement = () => {
 
     try {
       const pendingFormData = prepareTeacherFormDataForSave(formData);
-      const resolvedPortalPassword = pendingFormData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(pendingFormData);
+      const uploadedFormData = await uploadTeacherAssets({
+        ...pendingFormData,
+        documents: formData.documents,
+      }, pendingPhotoFile);
 
       const newTeacher = {
         ...pendingFormData,
+        ...uploadedFormData,
         employeeId: '',
         salary: pendingFormData.salary ? String(pendingFormData.salary) : '',
         paymentHistory: [],
-        teacherPortalPassword: resolvedPortalPassword,
-        teacherSystemId: '',
-        qrCodeData: '',
         status: 'Active',
         attendanceStatus: 'Present',
       };
       const createdTeacher = await teacherApi.create(newTeacher);
-      const uploadedFormData = await uploadTeacherAssets({
-        ...pendingFormData,
-        employeeId: createdTeacher.employeeId,
-        teacherSystemId: createdTeacher.teacherSystemId,
-        teacherPortalPassword: resolvedPortalPassword,
-        documents: formData.documents,
-      }, pendingPhotoFile);
-      const savedTeacher = await teacherApi.update(createdTeacher.id, {
-        ...createdTeacher,
-        ...uploadedFormData,
-        employeeId: createdTeacher.employeeId,
-        teacherSystemId: createdTeacher.teacherSystemId,
-      });
-      const updatedTeachers = [savedTeacher, ...teachers];
-      setTeachers(updatedTeachers);
-      setGeneratedTeacher(savedTeacher);
+      await refreshTeacherQueries({ teacherId: createdTeacher.id });
+      setGeneratedTeacher(createdTeacher);
       setFormData(createInitialFormData());
       setPendingPhotoFile(null);
       setCurrentStep(1);
@@ -277,8 +296,7 @@ const TeacherManagement = () => {
 
     try {
       await teacherApi.delete(teacherId);
-      const updated = teachers.filter((teacher) => teacher.id !== teacherId);
-      setTeachers(updated);
+      await refreshTeacherQueries({ teacherId });
       setLoadError('');
     } catch (error) {
       setLoadError(error.message || 'Unable to delete the teacher record.');
@@ -287,7 +305,11 @@ const TeacherManagement = () => {
 
   const handleOpenTeacher = async (teacherId) => {
     try {
-      const teacher = await teacherApi.getById(teacherId);
+      const teacher = await queryClient.fetchQuery({
+        queryKey: ['teacher', teacherId],
+        queryFn: () => teacherApi.getById(teacherId),
+        staleTime: 30000,
+      });
       setSelectedTeacher(teacher);
       setDetailFormData(mapTeacherToFormData(teacher));
       setPendingDetailDocument(null);
@@ -375,7 +397,7 @@ const TeacherManagement = () => {
 
   const handleUpdateTeacher = async () => {
     if (!selectedTeacher) return;
-    const profileValidation = validateTeacherProfileStep(detailFormData, teachers, selectedTeacher.id);
+    const profileValidation = validateTeacherProfileStep(detailFormData, [], selectedTeacher.id);
     const workValidation = validateTeacherWorkStep(detailFormData);
 
     if (!profileValidation.isValid) {
@@ -396,42 +418,27 @@ const TeacherManagement = () => {
     setIsUpdatingTeacher(true);
     try {
       const pendingDetailFormData = prepareTeacherFormDataForSave(detailFormData);
-      const resolvedPortalPassword = pendingDetailFormData.teacherPortalPassword.trim() || buildDefaultTeacherPortalPassword(pendingDetailFormData);
-      const qrPayload = buildTeacherQrPayload({
+      const uploadedDetailFormData = await uploadTeacherAssets({
         ...pendingDetailFormData,
-        teacherSystemId: selectedTeacher.teacherSystemId,
-        employeeId: selectedTeacher.employeeId,
-        teacherPortalPassword: resolvedPortalPassword,
-      });
+        documents: detailFormData.documents,
+      }, pendingDetailPhotoFile);
 
       const payload = {
         ...pendingDetailFormData,
+        ...uploadedDetailFormData,
         employeeId: selectedTeacher.employeeId,
         salary: pendingDetailFormData.salary ? String(pendingDetailFormData.salary) : '',
         joiningDate: selectedTeacher.joiningDate || getToday(),
         paymentHistory: selectedTeacher.paymentHistory || [],
-        teacherPortalPassword: resolvedPortalPassword,
-        teacherSystemId: selectedTeacher.teacherSystemId,
-        qrCodeData: JSON.stringify(qrPayload),
         status: selectedTeacher.status || 'Active',
         attendanceStatus: selectedTeacher.attendanceStatus || 'Present',
         cardExpiryDate: pendingDetailFormData.cardExpiryDate,
       };
       const updatedTeacher = await teacherApi.update(selectedTeacher.id, payload);
-      const uploadedDetailFormData = await uploadTeacherAssets({
-        ...payload,
-        documents: detailFormData.documents,
-      }, pendingDetailPhotoFile);
-      const refreshedTeacher = await teacherApi.update(updatedTeacher.id, {
-        ...payload,
-        ...uploadedDetailFormData,
-        employeeId: updatedTeacher.employeeId,
-        teacherSystemId: updatedTeacher.teacherSystemId,
-      });
-      const updatedTeachers = teachers.map((teacher) => (teacher.id === refreshedTeacher.id ? refreshedTeacher : teacher));
-      setTeachers(updatedTeachers);
-      setSelectedTeacher(refreshedTeacher);
-      setDetailFormData(mapTeacherToFormData(refreshedTeacher));
+      queryClient.setQueryData(['teacher', updatedTeacher.id], updatedTeacher);
+      await refreshTeacherQueries({ teacherId: updatedTeacher.id });
+      setSelectedTeacher(updatedTeacher);
+      setDetailFormData(mapTeacherToFormData(updatedTeacher));
       setPendingDetailPhotoFile(null);
       setLoadError('');
     } catch (error) {
@@ -441,28 +448,8 @@ const TeacherManagement = () => {
     }
   };
 
-  const availableContracts = ['All Contracts', ...new Set(teachers.map((teacher) => teacher.contractType).filter(Boolean))];
-  const filteredTeachers = teachers.filter((teacher) => {
-    const fullName = `${teacher.firstName} ${teacher.lastName}`.toLowerCase();
-    const searchValue = searchTerm.toLowerCase();
-    const matchesSearch =
-      !searchValue ||
-      fullName.includes(searchValue) ||
-      String(teacher.personalEmail || '').toLowerCase().includes(searchValue) ||
-      String(teacher.employeeId || '').toLowerCase().includes(searchValue) ||
-      String(teacher.address || '').toLowerCase().includes(searchValue) ||
-      String(teacher.city || '').toLowerCase().includes(searchValue) ||
-      String(teacher.state || '').toLowerCase().includes(searchValue) ||
-      String(teacher.pincode || '').toLowerCase().includes(searchValue) ||
-      String(teacher.specialization || '').toLowerCase().includes(searchValue) ||
-      String(teacher.teacherSystemId || '').toLowerCase().includes(searchValue);
-    const matchesContract = contractFilter === 'All Contracts' || teacher.contractType === contractFilter;
-    return matchesSearch && matchesContract;
-  });
-
-  const activeTeachers = teachers.filter((teacher) => teacher.status === 'Active').length;
+  const activeTeachers = teachers.filter((teacher) => String(teacher.status || '').toLowerCase() === 'active').length;
   const fullTimeTeachers = teachers.filter((teacher) => String(teacher.contractType || '').toUpperCase() === 'FULL TIME').length;
-  const uploadedDocs = teachers.reduce((count, teacher) => count + (teacher.documents || []).length, 0);
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f6f8fc_0%,#eef8f5_55%,#fbfcfe_100%)] text-slate-900 selection:bg-emerald-400 selection:text-slate-950">
@@ -520,17 +507,41 @@ const TeacherManagement = () => {
         {activeTab === 'list' ? (
           <DirectoryView
             teachers={teachers}
-            filteredTeachers={filteredTeachers}
+            teacherPage={teacherPage}
+            isLoading={teachersQuery.isLoading || teachersQuery.isFetching}
             activeTeachers={activeTeachers}
             fullTimeTeachers={fullTimeTeachers}
-            uploadedDocs={uploadedDocs}
             viewMode={viewMode}
             setViewMode={setViewMode}
             searchTerm={searchTerm}
             setSearchTerm={setSearchTerm}
             contractFilter={contractFilter}
-            setContractFilter={setContractFilter}
-            availableContracts={availableContracts}
+            setContractFilter={(value) => {
+              setContractFilter(value);
+              setPage(0);
+            }}
+            statusFilter={statusFilter}
+            setStatusFilter={(value) => {
+              setStatusFilter(value);
+              setPage(0);
+            }}
+            specializationFilter={specializationFilter}
+            setSpecializationFilter={(value) => {
+              setSpecializationFilter(value);
+              setPage(0);
+            }}
+            sortValue={sortValue}
+            setSortValue={(value) => {
+              setSortValue(value);
+              setPage(0);
+            }}
+            page={page}
+            setPage={setPage}
+            pageSize={pageSize}
+            setPageSize={(value) => {
+              setPageSize(value);
+              setPage(0);
+            }}
             onCreate={() => {
               setGeneratedTeacher(null);
               setSelectedTeacher(null);
@@ -570,13 +581,11 @@ const TeacherManagement = () => {
             setCurrentStep={setCurrentStep}
             formData={formData}
             setFormData={setFormData}
-            teachers={teachers}
+            teachers={[]}
             handleSave={handleSave}
             formError={formError}
             setFormError={setFormError}
             draftEmployeeId={draftEmployeeId}
-            draftTeacherId={draftTeacherId}
-            resolvedPortalPassword={resolvedPortalPassword}
             handleDocumentAdd={handleDocumentAdd}
             handleDocumentRemove={handleDocumentRemove}
             handleDocumentBrowse={handleDocumentBrowse}
@@ -599,17 +608,26 @@ const TeacherManagement = () => {
 
 const DirectoryView = ({
   teachers,
-  filteredTeachers,
+  teacherPage,
+  isLoading,
   activeTeachers,
   fullTimeTeachers,
-  uploadedDocs,
   viewMode,
   setViewMode,
   searchTerm,
   setSearchTerm,
   contractFilter,
   setContractFilter,
-  availableContracts,
+  statusFilter,
+  setStatusFilter,
+  specializationFilter,
+  setSpecializationFilter,
+  sortValue,
+  setSortValue,
+  page,
+  setPage,
+  pageSize,
+  setPageSize,
   onCreate,
   onDelete,
   onOpenTeacher,
@@ -626,7 +644,7 @@ const DirectoryView = ({
         <div>
           <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Faculty Directory</h3>
           <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-            {filteredTeachers.length} of {teachers.length} records visible
+            {teacherPage.totalElements || 0} records found
           </p>
         </div>
 
@@ -642,15 +660,46 @@ const DirectoryView = ({
           </div>
 
           <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+          >
+            <option value="">All Status</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="On Leave">On Leave</option>
+          </select>
+
+          <select
             value={contractFilter}
             onChange={(e) => setContractFilter(e.target.value)}
             className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
           >
-            {availableContracts.map((contract) => (
-              <option key={contract} value={contract}>
-                {contract}
-              </option>
-            ))}
+            <option value="">All Contracts</option>
+            <option value="FULL TIME">Full Time</option>
+            <option value="PART TIME">Part Time</option>
+            <option value="VISITING">Visiting</option>
+            <option value="CONTRACTUAL">Contractual</option>
+          </select>
+
+          <input
+            value={specializationFilter}
+            onChange={(e) => setSpecializationFilter(e.target.value)}
+            placeholder="Subject / specialization"
+            className="w-52 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+          />
+
+          <select
+            value={sortValue}
+            onChange={(e) => setSortValue(e.target.value)}
+            className="rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+          >
+            <option value="createdAt,desc">Newest Added</option>
+            <option value="createdAt,asc">Oldest Added</option>
+            <option value="name,asc">Name A-Z</option>
+            <option value="name,desc">Name Z-A</option>
+            <option value="employeeId,asc">Employee ID</option>
+            <option value="joiningDate,desc">Joining Date</option>
           </select>
 
           <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
@@ -670,10 +719,12 @@ const DirectoryView = ({
         </div>
       </div>
 
-      {filteredTeachers.length > 0 ? (
+      {isLoading && teachers.length === 0 ? (
+        <TeacherRowsSkeleton viewMode={viewMode} />
+      ) : teachers.length > 0 ? (
         viewMode === 'grid' ? (
           <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {filteredTeachers.map((teacher) => (
+            {teachers.map((teacher) => (
               <TeacherCard key={teacher.id} teacher={teacher} onDelete={onDelete} onOpen={onOpenTeacher} />
             ))}
           </div>
@@ -685,13 +736,13 @@ const DirectoryView = ({
                   <th className="px-6 py-4">Teacher</th>
                   <th className="px-6 py-4">Employee ID</th>
                   <th className="px-6 py-4">Specialization</th>
-                  <th className="px-6 py-4">Salary</th>
                   <th className="px-6 py-4">Contract</th>
+                  <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 bg-white">
-                {filteredTeachers.map((teacher) => (
+                {teachers.map((teacher) => (
                   <tr key={teacher.id} onClick={() => onOpenTeacher(teacher.id)} className="cursor-pointer transition hover:bg-emerald-50/60">
                     <td className="px-6 py-5">
                       <p className="text-sm font-black text-slate-950">{teacher.firstName} {teacher.lastName}</p>
@@ -699,12 +750,12 @@ const DirectoryView = ({
                     </td>
                     <td className="px-6 py-5 text-sm font-semibold text-slate-700">{teacher.employeeId || 'Pending'}</td>
                     <td className="px-6 py-5 text-sm font-semibold text-slate-700">{teacher.specialization || 'Not assigned'}</td>
-                    <td className="px-6 py-5 text-sm font-semibold text-slate-700">{formatSalary(teacher.salary)}</td>
                     <td className="px-6 py-5">
                       <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
                         {teacher.contractType || 'FULL TIME'}
                       </span>
                     </td>
+                    <td className="px-6 py-5 text-sm font-black text-slate-700">{teacher.status || 'Active'}</td>
                     <td className="px-6 py-5 text-right">
                       <button
                         onClick={(e) => {
@@ -729,7 +780,9 @@ const DirectoryView = ({
           </div>
           <h4 className="mt-6 font-serif text-3xl font-black italic tracking-tight text-slate-950">No faculty records yet</h4>
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">
-            Create the first teacher profile to start attendance, document verification, and automatic ID card generation.
+            {searchTerm || statusFilter || contractFilter || specializationFilter
+              ? 'No teachers match these filters. Clear filters or adjust your search.'
+              : 'Create the first teacher profile to start attendance, document verification, and automatic ID card generation.'}
           </p>
           <button
             onClick={onCreate}
@@ -740,6 +793,41 @@ const DirectoryView = ({
           </button>
         </div>
       )}
+      <div className="mt-5 flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Rows</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 outline-none"
+          >
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setPage(Math.max(page - 1, 0))}
+            disabled={page <= 0 || isLoading}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+            Page {(teacherPage.page || 0) + 1} of {Math.max(teacherPage.totalPages || 1, 1)}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage(page + 1)}
+            disabled={page + 1 >= (teacherPage.totalPages || 1) || isLoading}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </section>
   </div>
 );
@@ -754,8 +842,6 @@ const TeacherWizard = ({
   formError,
   setFormError,
   draftEmployeeId,
-  draftTeacherId,
-  resolvedPortalPassword,
   handleDocumentAdd,
   handleDocumentRemove,
   handleDocumentBrowse,
@@ -1032,7 +1118,7 @@ const TeacherWizard = ({
                   )}
                 </div>
                 <div className="mt-8 grid gap-3 text-sm text-slate-300">
-                  <PreviewRow icon={IdCard} value={draftTeacherId} />
+                  <PreviewRow icon={Briefcase} value={draftEmployeeId} />
                   <PreviewRow icon={Mail} value={formData.personalEmail || 'Email not added'} />
                   <PreviewRow icon={Phone} value={formData.mobileNumber || 'Mobile not added'} />
                   <PreviewRow icon={CalendarCheck2} value="JOINING DATE WILL BE SAVED AUTOMATICALLY" />
@@ -1066,8 +1152,7 @@ const TeacherWizard = ({
               <ReviewLine label="Leave Balance" value={formData.leaveBalance ? `${formData.leaveBalance} days` : '-'} />
               <ReviewLine label="Monthly Salary" value={formatSalary(formData.salary)} />
               <ReviewLine label="Joining Date" value="Auto saved on create" />
-              <ReviewLine label="Teacher ID" value={draftTeacherId} />
-              <ReviewLine label="Portal Password" value={resolvedPortalPassword || '-'} />
+              <ReviewLine label="Employee ID" value={draftEmployeeId} />
             </ReviewCard>
 
             <ReviewCard title="Documents & ID">
@@ -1111,15 +1196,39 @@ const StatCard = ({ label, value, tone, icon }) => {
   );
 };
 
+const TeacherRowsSkeleton = ({ viewMode }) => (
+  viewMode === 'grid' ? (
+    <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      {[1, 2, 3, 4, 5, 6].map((item) => (
+        <div key={item} className="h-72 animate-pulse rounded-[1.9rem] border border-slate-200 bg-slate-100" />
+      ))}
+    </div>
+  ) : (
+    <div className="mt-6 overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white">
+      {[1, 2, 3, 4, 5].map((item) => (
+        <div key={item} className="flex animate-pulse items-center gap-4 border-b border-slate-100 px-6 py-5 last:border-0">
+          <div className="h-10 w-10 rounded-xl bg-slate-100" />
+          <div className="h-4 flex-1 rounded bg-slate-100" />
+          <div className="h-4 w-32 rounded bg-slate-100" />
+        </div>
+      ))}
+    </div>
+  )
+);
+
 const TeacherCard = ({ teacher, onDelete, onOpen }) => (
   <article onClick={() => onOpen(teacher.id)} className="group cursor-pointer overflow-hidden rounded-[1.9rem] border border-slate-200/80 bg-white p-6 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.35)] transition hover:-translate-y-1 hover:shadow-[0_24px_50px_-28px_rgba(16,185,129,0.35)]">
     <div className="flex items-start justify-between">
       <div className="flex items-center gap-4">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#d1fae5_0%,#ccfbf1_100%)] text-lg font-black uppercase text-slate-900">
-          {(teacher.firstName?.[0] || 'T') + (teacher.lastName?.[0] || 'R')}
-        </div>
+        {teacher.photoUrl ? (
+          <img src={buildImageKitThumbnail(teacher.photoUrl, 48)} alt={teacher.fullName || `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher'} loading="lazy" className="h-14 w-14 rounded-2xl object-cover" />
+        ) : (
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#d1fae5_0%,#ccfbf1_100%)] text-lg font-black uppercase text-slate-900">
+            {(teacher.firstName?.[0] || 'T') + (teacher.lastName?.[0] || 'R')}
+          </div>
+        )}
         <div>
-          <h4 className="text-lg font-black tracking-tight text-slate-950">{teacher.firstName} {teacher.lastName}</h4>
+          <h4 className="text-lg font-black tracking-tight text-slate-950">{teacher.fullName || `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim()}</h4>
           <p className="mt-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">{teacher.specialization || 'General Faculty'}</p>
         </div>
       </div>
@@ -1139,15 +1248,13 @@ const TeacherCard = ({ teacher, onDelete, onOpen }) => (
       <PreviewRow icon={Mail} value={teacher.personalEmail || 'No email added'} light />
       <PreviewRow icon={Phone} value={teacher.mobileNumber || 'No phone added'} light />
       <PreviewRow icon={Briefcase} value={teacher.employeeId || 'Employee ID pending'} light />
-      <PreviewRow icon={MapPin} value={[teacher.address, teacher.city, teacher.state, teacher.pincode].filter(Boolean).join(', ') || 'Address not added'} light />
-      <PreviewRow icon={Banknote} value={`Salary: ${formatSalary(teacher.salary)}`} light />
-      <PreviewRow icon={ShieldCheck} value={`Portal password: ${teacher.teacherPortalPassword || 'Not set'}`} light />
+      <PreviewRow icon={ShieldCheck} value={`Status: ${teacher.status || 'Active'}`} light />
     </div>
 
     <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
       <div>
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Teacher ID</p>
-        <p className="mt-1 text-sm font-semibold text-slate-700">{teacher.teacherSystemId || 'Auto pending'}</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Employee ID</p>
+        <p className="mt-1 text-sm font-semibold text-slate-700">{teacher.employeeId || 'Auto pending'}</p>
       </div>
       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
         {teacher.contractType || 'FULL TIME'}
@@ -1313,35 +1420,6 @@ function buildDraftEmployeeId(instituteName, sequence) {
   return `${buildInstituteCode(instituteName)}EMP${String(sequence || 1).padStart(4, '0')}`;
 }
 
-function buildDefaultTeacherPortalPassword(formData) {
-  const mobileDigits = digitsOnly(formData.mobileNumber);
-  const firstSixDigits = mobileDigits.length >= 6
-    ? mobileDigits.slice(0, 6)
-    : mobileDigits.padEnd(6, '0');
-  const birthYear = String(formData.dob || '').slice(0, 4) || '0000';
-  return `${firstSixDigits}${birthYear}`;
-}
-
-function buildTeacherQrPayload(teacher) {
-  return {
-    profileType: 'teacher',
-    teacherId: teacher.teacherSystemId,
-    employeeId: teacher.employeeId,
-    fullName: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim(),
-    email: teacher.personalEmail,
-    mobile: teacher.mobileNumber,
-    dob: teacher.dob,
-    specialization: teacher.specialization,
-    experienceYears: teacher.experienceYears,
-    contractType: teacher.contractType,
-    joiningDate: teacher.joiningDate,
-    address: teacher.address,
-    city: teacher.city,
-    state: teacher.state,
-    pincode: teacher.pincode,
-  };
-}
-
 function mapTeacherToFormData(teacher) {
   return {
     ...createInitialFormData(),
@@ -1361,7 +1439,6 @@ function mapTeacherToFormData(teacher) {
     leaveBalance: teacher.leaveBalance || '',
     salary: teacher.salary || '',
     joiningDate: teacher.joiningDate || '',
-    teacherPortalPassword: teacher.teacherPortalPassword || '',
     documentType: teacher.documentType || '',
     otherDocumentName: teacher.otherDocumentName || '',
     fileUploadPath: '',
@@ -1456,6 +1533,15 @@ function createQrImageUrl(value) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'teacher')}`;
 }
 
+function buildImageKitThumbnail(url, size = 48) {
+  if (!url) {
+    return url;
+  }
+
+  const transformation = `tr=w-${size},h-${size},c-at_max`;
+  return url.includes('?') ? `${url}&${transformation}` : `${url}?${transformation}`;
+}
+
 async function downloadQrCode(qrCodeData, teacherName) {
   const qrUrl = createQrImageUrl(qrCodeData);
   const response = await fetch(qrUrl);
@@ -1488,7 +1574,6 @@ function TeacherDetailView({
 }) {
   const qrImage = createQrImageUrl(teacher.qrCodeData);
   const fullName = `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher';
-  const [showPortalPassword, setShowPortalPassword] = useState(false);
   const updateUpperField = (field) => (e) => {
     setFormData({ ...formData, [field]: e.target.value.toUpperCase() });
   };
@@ -1542,7 +1627,6 @@ function TeacherDetailView({
         <div className="mt-8 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-6">
             <ReviewCard title="Identity">
-              <ReviewLine label="Teacher ID" value={teacher.teacherSystemId || '-'} />
               <ReviewLine label="Employee ID" value={teacher.employeeId || '-'} />
               <ReviewLine label="Status" value={teacher.status || 'Active'} />
               <ReviewLine label="Attendance" value={teacher.attendanceStatus || 'Present'} />
@@ -1560,24 +1644,6 @@ function TeacherDetailView({
                 <CreativeSelect label="Contract Type" value={formData.contractType} onChange={(e) => setFormData({ ...formData, contractType: e.target.value })} options={['Select', 'FULL TIME', 'PART TIME', 'VISITING', 'CONTRACTUAL']} />
                 <CreativeInput label="Leave Balance" type="number" value={formData.leaveBalance} onChange={(e) => setFormData({ ...formData, leaveBalance: e.target.value })} placeholder="ENTER LEAVE BALANCE" min="0" />
                 <CreativeInput label="Monthly Salary" type="number" min="0" value={formData.salary} onChange={(e) => setFormData({ ...formData, salary: e.target.value })} placeholder="ENTER MONTHLY SALARY" />
-                <div className="space-y-2.5 md:col-span-2">
-                  <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">Portal Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPortalPassword ? 'text' : 'password'}
-                      value={formData.teacherPortalPassword}
-                      onChange={(e) => setFormData({ ...formData, teacherPortalPassword: e.target.value })}
-                      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 pr-14 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPortalPassword((current) => !current)}
-                      className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-200 hover:text-slate-900"
-                    >
-                      {showPortalPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
                 <div className="md:col-span-2">
                   <CreativeInput label="Address" value={formData.address} onChange={updateUpperField('address')} placeholder="ENTER HOUSE, STREET OR LOCAL AREA" />
                 </div>
@@ -1649,7 +1715,7 @@ function TeacherDetailView({
                 </div>
               )}
               <img src={qrImage} alt="Saved teacher QR code" className="mx-auto mt-6 h-72 w-72 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm" />
-              <p className="mt-4 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">{teacher.teacherSystemId || teacher.employeeId || '-'}</p>
+              <p className="mt-4 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">{teacher.employeeId || '-'}</p>
               <p className="mt-3 text-sm font-semibold text-slate-700">This QR is linked with the saved record and can be downloaded anytime.</p>
             </div>
 
@@ -1680,16 +1746,14 @@ function GeneratedTeacherView({ teacher, onClose }) {
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="rounded-[1.8rem] border border-slate-200 bg-[linear-gradient(180deg,#f8fafc_0%,#ecfdf5_100%)] p-6 text-center">
           <img src={qrImage} alt="Teacher QR" className="mx-auto h-72 w-72 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm" />
-          <p className="mt-4 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">{teacher.teacherSystemId || teacher.employeeId}</p>
+          <p className="mt-4 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">{teacher.employeeId}</p>
           <p className="mt-3 text-sm font-semibold text-slate-700">Form data has been cleared. Scan this QR to access the saved teacher payload.</p>
         </div>
         <div className="space-y-4">
           <ReviewCard title="Teacher Summary">
             <ReviewLine label="Name" value={fullName} />
             <ReviewLine label="Employee ID" value={teacher.employeeId || '-'} />
-            <ReviewLine label="Teacher ID" value={teacher.teacherSystemId || '-'} />
             <ReviewLine label="Specialization" value={teacher.specialization || '-'} />
-            <ReviewLine label="Portal Password" value={teacher.teacherPortalPassword || '-'} />
           </ReviewCard>
           <button
             type="button"

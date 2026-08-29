@@ -14,7 +14,7 @@ public class RegisterInstituteRequest {
     private String type;
 
     @NotBlank(message = "Username is required")
-    @Size(min = 4, max = 50, message = "Username must be between 4 and 50 characters")
+    @Size(min = 4, max = 120, message = "Institution code must be between 4 and 120 characters")
     @Pattern(regexp = "^[A-Za-z0-9]+$", message = "Username can contain only small letters, capital letters, and numbers")
     private String username;
 

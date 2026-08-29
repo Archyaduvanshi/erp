@@ -1,17 +1,26 @@
 package com.erp.backend.student.service;
 
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Pattern;
 
+import com.erp.backend.auth.AuthService;
+import com.erp.backend.curriculum.entity.SchoolClass;
+import com.erp.backend.curriculum.repository.SchoolClassRepository;
 import com.erp.backend.exception.FieldValidationException;
 import com.erp.backend.exception.ResourceNotFoundException;
+import com.erp.backend.fee.service.FeeService;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
+import com.erp.backend.student.dto.StudentClassSummaryResponse;
 import com.erp.backend.student.dto.StudentDocumentPayload;
+import com.erp.backend.student.dto.StudentListResponse;
+import com.erp.backend.student.dto.StudentPageResponse;
 import com.erp.backend.student.dto.StudentPayload;
 import com.erp.backend.student.dto.StudentPortalLoginRequest;
 import com.erp.backend.student.dto.StudentPortalLoginResponse;
@@ -21,6 +30,10 @@ import com.erp.backend.student.entity.Student;
 import com.erp.backend.student.repository.StudentRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -28,19 +41,39 @@ import org.springframework.util.StringUtils;
 public class StudentService {
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^A-Z0-9]");
     private static final Pattern TEN_DIGITS = Pattern.compile("\\d{10}");
+    private static final int DEFAULT_PAGE_SIZE = 25;
+    private static final int MAX_PAGE_SIZE = 100;
+    private static final Set<String> ALLOWED_SORT_FIELDS = Set.of(
+            "createdAt",
+            "firstName",
+            "lastName",
+            "name",
+            "rollNo",
+            "enrollmentNo",
+            "admissionDate"
+    );
 
     private final StudentRepository studentRepository;
     private final InstituteRepository instituteRepository;
+    private final SchoolClassRepository schoolClassRepository;
     private final ObjectMapper objectMapper;
+    private final AuthService authService;
+    private final FeeService feeService;
 
     public StudentService(
             StudentRepository studentRepository,
             InstituteRepository instituteRepository,
-            ObjectMapper objectMapper
+            SchoolClassRepository schoolClassRepository,
+            ObjectMapper objectMapper,
+            AuthService authService,
+            FeeService feeService
     ) {
         this.studentRepository = studentRepository;
         this.instituteRepository = instituteRepository;
+        this.schoolClassRepository = schoolClassRepository;
         this.objectMapper = objectMapper;
+        this.authService = authService;
+        this.feeService = feeService;
     }
 
     public List<StudentResponse> getAllStudents(Long instituteId) {
@@ -51,36 +84,52 @@ public class StudentService {
                 .toList();
     }
 
+    public List<StudentClassSummaryResponse> getClassSummary(Long instituteId) {
+        validateInstitute(instituteId);
+        return studentRepository.findClassSummaries(instituteId);
+    }
+
+    public StudentPageResponse<StudentListResponse> getStudentsPage(
+            Long instituteId,
+            Integer page,
+            Integer size,
+            String assignedClass,
+            String search,
+            String status,
+            String sort
+    ) {
+        validateInstitute(instituteId);
+        Pageable pageable = PageRequest.of(
+                Math.max(page == null ? 0 : page, 0),
+                normalizePageSize(size),
+                parseSort(sort)
+        );
+        Page<StudentListResponse> students = studentRepository.findStudentList(
+                instituteId,
+                blankToEmpty(assignedClass),
+                blankToEmpty(search),
+                blankToEmpty(status),
+                pageable
+        );
+
+        return new StudentPageResponse<>(
+                students.getContent(),
+                students.getNumber(),
+                students.getSize(),
+                students.getTotalElements(),
+                students.getTotalPages()
+        );
+    }
+
     public StudentResponse getStudentById(Long instituteId, Long studentId) {
         return toResponse(findStudent(instituteId, studentId));
     }
 
     public StudentPortalLoginResponse loginStudent(StudentPortalLoginRequest request) {
-        String identifier = request.identifier().trim();
-        String password = request.password().trim();
-
-        Student student = studentRepository
-                .findAllBySystemIdIgnoreCaseOrEnrollmentNoIgnoreCaseOrMobile(identifier, identifier, identifier)
-                .stream()
-                .filter(candidate -> password.equals(resolvePortalPassword(candidate, candidate.getStudentPortalPassword(), candidate.getGuardianPhone(), candidate.getDob())))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Invalid student ID, enrollment number, or phone number, or the password is incorrect."));
-
-        Institute institute = student.getInstitute();
-        return new StudentPortalLoginResponse(
-                institute.getId(),
-                institute.getInstituteName(),
-                institute.getUsername(),
-                institute.getType(),
-                institute.getLogo(),
-                student.getId(),
-                student.getSystemId(),
-                student.getEnrollmentNo(),
-                buildStudentName(student.getFirstName(), student.getLastName())
-        );
+        throw new IllegalArgumentException("Student portal login has moved to the main login. Use your enrollment ID and password.");
     }
 
-    public StudentResponse createStudent(Long instituteId, StudentPayload request) {
+    public synchronized StudentResponse createStudent(Long instituteId, StudentPayload request) {
         Institute institute = validateInstitute(instituteId);
         validateRequiredFields(request);
         validateUniqueness(instituteId, request);
@@ -89,50 +138,63 @@ public class StudentService {
 
         Student student = new Student();
         student.setInstitute(institute);
-        applyStudentPayload(student, request);
+        applyStudentPayload(instituteId, student, request);
+        student.setRollNo(resolveNextRollNo(instituteId, student.getAssignedClass()));
+        student.setQrCodeData(buildFinalQrCodeData(student));
         Student savedStudent = studentRepository.save(student);
-        reassignRollNumbers(instituteId, savedStudent.getAssignedClass());
-        return toResponse(findStudent(instituteId, savedStudent.getId()));
+        authService.upsertStudentAccount(savedStudent, buildInitialPortalPassword(savedStudent), false);
+        feeService.synchronizeChargesForStudent(instituteId, savedStudent.getId());
+        return toResponse(savedStudent);
     }
 
     public StudentResponse updateStudent(Long instituteId, Long studentId, StudentPayload request) {
         Student student = findStudent(instituteId, studentId);
         validateRequiredFields(request);
-        validateUniquenessForUpdate(instituteId, studentId, request);
+        validateUniquenessForUpdate(instituteId, student, request);
         validatePhoto(request);
         validatePhoneNumbers(request);
 
         String previousAssignedClass = student.getAssignedClass();
-        applyStudentPayload(student, request);
-        Student savedStudent = studentRepository.save(student);
-
-        if (StringUtils.hasText(previousAssignedClass) && !previousAssignedClass.equalsIgnoreCase(savedStudent.getAssignedClass())) {
-            reassignRollNumbers(instituteId, previousAssignedClass);
+        applyStudentPayload(instituteId, student, request);
+        if (!Objects.equals(normalizeComparable(previousAssignedClass), normalizeComparable(student.getAssignedClass()))
+                || !StringUtils.hasText(student.getRollNo())) {
+            student.setRollNo(resolveNextRollNo(instituteId, student.getAssignedClass()));
         }
-        reassignRollNumbers(instituteId, savedStudent.getAssignedClass());
-        return toResponse(findStudent(instituteId, savedStudent.getId()));
+        student.setQrCodeData(buildFinalQrCodeData(student));
+        Student savedStudent = studentRepository.save(student);
+        authService.upsertStudentAccount(savedStudent, null, false);
+        if (!Objects.equals(normalizeComparable(previousAssignedClass), normalizeComparable(savedStudent.getAssignedClass()))) {
+            feeService.synchronizeChargesForStudent(instituteId, savedStudent.getId());
+        }
+        return toResponse(savedStudent);
     }
 
     public List<StudentResponse> importStudents(Long instituteId, List<StudentPayload> students) {
         Institute institute = validateInstitute(instituteId);
+        Map<String, Integer> nextRollByClass = new LinkedHashMap<>();
         List<Student> entities = students.stream()
                 .map(payload -> {
                     validateRequiredFields(payload);
                     validatePhoneNumbers(payload);
                     Student student = new Student();
                     student.setInstitute(institute);
-                    applyStudentPayload(student, payload);
+                    applyStudentPayload(instituteId, student, payload);
+                    if (StringUtils.hasText(student.getAssignedClass())) {
+                        int nextRoll = nextRollByClass.computeIfAbsent(
+                                student.getAssignedClass(),
+                                className -> maxRollNo(instituteId, className)
+                        ) + 1;
+                        nextRollByClass.put(student.getAssignedClass(), nextRoll);
+                        student.setRollNo(String.format("%03d", nextRoll));
+                        student.setQrCodeData(buildFinalQrCodeData(student));
+                    }
                     return student;
                 })
                 .toList();
 
         List<Student> savedStudents = studentRepository.saveAll(entities);
-        savedStudents.stream()
-                .map(Student::getAssignedClass)
-                .filter(StringUtils::hasText)
-                .filter(Objects::nonNull)
-                .distinct()
-                .forEach(className -> reassignRollNumbers(instituteId, className));
+        savedStudents.forEach(student -> authService.upsertStudentAccount(student, buildInitialPortalPassword(student), false));
+        feeService.synchronizeChargesForStudents(instituteId, savedStudents.stream().map(Student::getId).toList());
 
         return studentRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId)
                 .stream()
@@ -165,7 +227,9 @@ public class StudentService {
             student.setLibraryMonthlyCharge(trim(request.libraryMonthlyCharge()));
         }
 
-        return toResponse(studentRepository.save(student));
+        Student savedStudent = studentRepository.save(student);
+        feeService.synchronizeChargesForStudent(instituteId, savedStudent.getId());
+        return toResponse(savedStudent);
     }
 
     public void deleteStudent(Long instituteId, Long studentId) {
@@ -179,7 +243,6 @@ public class StudentService {
     }
 
     private Student findStudent(Long instituteId, Long studentId) {
-        validateInstitute(instituteId);
         return studentRepository.findByInstituteIdAndId(instituteId, studentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Student not found with id: " + studentId));
     }
@@ -189,23 +252,28 @@ public class StudentService {
                 && studentRepository.existsByInstituteIdAndEmailIgnoreCase(instituteId, request.email().trim())) {
             throw new IllegalArgumentException("Student already exists with email: " + request.email());
         }
+        String enrollmentNo = sanitizeEnrollmentNo(request.enrollmentNo());
+        if (StringUtils.hasText(enrollmentNo)
+                && studentRepository.existsByInstituteIdAndEnrollmentNoIgnoreCase(instituteId, enrollmentNo)) {
+            throw new IllegalArgumentException("Student already exists with enrollment number: " + enrollmentNo);
+        }
     }
 
-    private void validateUniquenessForUpdate(Long instituteId, Long studentId, StudentPayload request) {
-        if (!StringUtils.hasText(request.email())) {
-            return;
+    private void validateUniquenessForUpdate(Long instituteId, Student existingStudent, StudentPayload request) {
+        String nextEmail = normalizeEmail(request.email());
+        if (StringUtils.hasText(nextEmail)
+                && studentRepository.existsByInstituteIdAndEmailIgnoreCaseAndIdNot(instituteId, nextEmail, existingStudent.getId())) {
+            throw new IllegalArgumentException("Student already exists with email: " + nextEmail);
         }
 
-        studentRepository.findByInstituteIdAndId(instituteId, studentId)
-                .filter(existingStudent -> {
-                    String existingEmail = existingStudent.getEmail();
-                    return !StringUtils.hasText(existingEmail)
-                            || !existingEmail.equalsIgnoreCase(request.email().trim());
-                })
-                .ifPresent(ignored -> validateUniqueness(instituteId, request));
+        String nextEnrollment = sanitizeEnrollmentNo(request.enrollmentNo());
+        if (StringUtils.hasText(nextEnrollment)
+                && studentRepository.existsByInstituteIdAndEnrollmentNoIgnoreCaseAndIdNot(instituteId, nextEnrollment, existingStudent.getId())) {
+            throw new IllegalArgumentException("Student already exists with enrollment number: " + nextEnrollment);
+        }
     }
 
-    private void applyStudentPayload(Student student, StudentPayload request) {
+    private void applyStudentPayload(Long instituteId, Student student, StudentPayload request) {
         student.setFirstName(uppercase(request.firstName()));
         student.setLastName(uppercase(request.lastName()));
         student.setName(buildStudentName(uppercase(request.firstName()), uppercase(request.lastName())));
@@ -228,7 +296,9 @@ public class StudentService {
         student.setAdmissionDate(resolveDate(request.admissionDate(), today));
         student.setAcademicYear(defaultValue(request.academicYear(), buildAcademicYear(student.getAdmissionDate())));
         student.setEnrollmentNo(resolveEnrollmentNo(student, request));
-        student.setClassName(uppercase(request.className()));
+        SchoolClass schoolClass = resolveSchoolClass(instituteId, request);
+        student.setSchoolClass(schoolClass);
+        student.setClassName(schoolClass == null ? uppercase(request.className()) : schoolClass.getName());
         student.setSection(uppercase(request.section()));
         student.setAssignedClass(resolveAssignedClass(request));
         student.setAdmissionCategory(uppercase(request.admissionCategory()));
@@ -239,14 +309,12 @@ public class StudentService {
         student.setHostelStatus(resolveFacilityStatus(request.hostelOptIn(), request.hostelStatus()));
         student.setLibraryStatus(resolveFacilityStatus(request.libraryOptIn(), request.libraryStatus()));
         student.setLibraryMonthlyCharge(null);
-        student.setStudentPortalPassword(resolvePortalPassword(student, request));
         student.setDocumentType(uppercase(request.documentType()));
         student.setOtherDocumentName(uppercase(request.otherDocumentName()));
         student.setFileUploadPath(trim(request.fileUploadPath()));
         student.setDocumentsJson(writeDocuments(normalizeDocuments(request.documents())));
         student.setCardExpiryDate(trim(request.cardExpiryDate()));
         student.setPhotoUrl(trim(request.photoUrl()));
-        student.setSystemId("EDU-" + student.getEnrollmentNo());
         student.setQrCodeData(resolveQrCodeData(student, request));
         student.setStatus(defaultValue(request.status(), "Verified"));
     }
@@ -301,6 +369,7 @@ public class StudentService {
                 student.getAcademicYear(),
                 student.getEnrollmentNo(),
                 student.getRollNo(),
+                student.getSchoolClass() == null ? null : student.getSchoolClass().getId(),
                 student.getClassName(),
                 student.getSection(),
                 student.getAssignedClass(),
@@ -313,7 +382,6 @@ public class StudentService {
                 libraryStatus,
                 student.getLibraryMonthlyCharge(),
                 facilities,
-                student.getStudentPortalPassword(),
                 student.getDocumentType(),
                 student.getOtherDocumentName(),
                 student.getFileUploadPath(),
@@ -321,7 +389,6 @@ public class StudentService {
                 student.getQrCodeData(),
                 student.getCardExpiryDate(),
                 student.getPhotoUrl(),
-                student.getSystemId(),
                 defaultValue(student.getStatus(), "Verified"),
                 student.getCreatedAt(),
                 student.getUpdatedAt()
@@ -384,6 +451,23 @@ public class StudentService {
         }
     }
 
+    private SchoolClass resolveSchoolClass(Long instituteId, StudentPayload request) {
+        if (request.classId() != null) {
+            SchoolClass schoolClass = schoolClassRepository.findByInstituteIdAndId(instituteId, request.classId())
+                    .orElseThrow(() -> new IllegalArgumentException("INVALID_STUDENT_CLASS"));
+            if ("ARCHIVED".equalsIgnoreCase(schoolClass.getStatus())) {
+                throw new IllegalArgumentException("ARCHIVED_STUDENT_CLASS_NOT_ALLOWED");
+            }
+            return schoolClass;
+        }
+        if (!StringUtils.hasText(request.className())) {
+            return null;
+        }
+        return schoolClassRepository.findByInstituteIdAndNormalizedName(instituteId, normalizeClassName(request.className()))
+                .filter(schoolClass -> !"ARCHIVED".equalsIgnoreCase(schoolClass.getStatus()))
+                .orElse(null);
+    }
+
     private void validateRequiredFields(StudentPayload request) {
         Map<String, String> errors = new LinkedHashMap<>();
         requireText(errors, "firstName", request.firstName(), "First name is required.");
@@ -420,13 +504,23 @@ public class StudentService {
     }
 
     private String resolveEnrollmentNo(Student student, StudentPayload request) {
-        if (StringUtils.hasText(student.getEnrollmentNo())) {
-            return student.getEnrollmentNo().trim();
+        String requestedEnrollmentNo = sanitizeEnrollmentNo(request.enrollmentNo());
+        if (StringUtils.hasText(requestedEnrollmentNo)) {
+            return requestedEnrollmentNo;
+        }
+
+        if (StringUtils.hasText(student.getEnrollmentNo()) && student.getEnrollmentNo().trim().toUpperCase().contains("STU")) {
+            return sanitizeEnrollmentNo(student.getEnrollmentNo());
         }
 
         String instituteCode = buildInstituteCode(student.getInstitute().getInstituteName());
         long nextSequence = studentRepository.countByInstituteId(student.getInstitute().getId()) + 1;
-        return instituteCode + "-" + String.format("%04d", nextSequence);
+        String enrollmentNo = formatEnrollmentNo(instituteCode, nextSequence);
+        while (studentRepository.existsByInstituteIdAndEnrollmentNoIgnoreCase(student.getInstitute().getId(), enrollmentNo)) {
+            nextSequence++;
+            enrollmentNo = formatEnrollmentNo(instituteCode, nextSequence);
+        }
+        return enrollmentNo;
     }
 
     private String resolveParentName(String firstName, String lastName, String fallbackName) {
@@ -447,6 +541,10 @@ public class StudentService {
         return null;
     }
 
+    private String normalizeClassName(String value) {
+        return StringUtils.hasText(value) ? value.trim().replaceAll("\\s+", " ").toLowerCase() : "";
+    }
+
     private String resolveFacilityStatus(String optIn, String requestedStatus) {
         if (!"yes".equalsIgnoreCase(optIn)) {
             return "inactive";
@@ -454,38 +552,20 @@ public class StudentService {
         return defaultValue(requestedStatus, "active").toLowerCase();
     }
 
-    private String resolvePortalPassword(Student student, StudentPayload request) {
-        if (StringUtils.hasText(request.studentPortalPassword())) {
-            return request.studentPortalPassword().trim();
-        }
-
-        return resolvePortalPassword(student, null, request.guardianPhone(), request.dob());
-    }
-
-    private String resolvePortalPassword(Student student, String explicitPassword, String guardianPhone, String dob) {
-        if (StringUtils.hasText(explicitPassword)) {
-            return explicitPassword.trim();
-        }
-
-        String guardianDigits = digitsOnly(guardianPhone);
-        String firstSixGuardianDigits = guardianDigits.length() >= 6
-                ? guardianDigits.substring(0, 6)
-                : String.format("%-6s", guardianDigits).replace(' ', '0');
-
-        String birthYear = "0000";
-        if (StringUtils.hasText(dob) && dob.trim().length() >= 4) {
-            birthYear = dob.trim().substring(0, 4);
-        }
-
-        return firstSixGuardianDigits + birthYear;
-    }
-
     private String resolveQrCodeData(Student student, StudentPayload request) {
-        if (StringUtils.hasText(request.qrCodeData())) {
+        if (StringUtils.hasText(student.getQrCodeData()) && StringUtils.hasText(request.qrCodeData())) {
             return request.qrCodeData().trim();
         }
 
-        String documentSummary = normalizeDocuments(request.documents()).stream()
+        return buildFinalQrCodeData(student, normalizeDocuments(request.documents()));
+    }
+
+    private String buildFinalQrCodeData(Student student) {
+        return buildFinalQrCodeData(student, readDocuments(student.getDocumentsJson()));
+    }
+
+    private String buildFinalQrCodeData(Student student, List<StudentDocumentPayload> documents) {
+        String documentSummary = normalizeDocuments(documents).stream()
                 .map(document -> firstNonBlank(document.documentType(), firstNonBlank(document.fileName(), document.fileUploadPath())))
                 .filter(StringUtils::hasText)
                 .toList()
@@ -496,7 +576,6 @@ public class StudentService {
         return String.join("\n",
                 "ERP STUDENT PROFILE",
                 "Name: " + defaultValue(buildStudentName(student.getFirstName(), student.getLastName()), "Student"),
-                "Student ID: " + defaultValue(student.getSystemId(), "N/A"),
                 "Enrollment No: " + defaultValue(student.getEnrollmentNo(), "N/A"),
                 "Class: " + defaultValue(firstNonBlank(student.getAssignedClass(), student.getClassName()), "N/A"),
                 "Section: " + defaultValue(student.getSection(), "N/A"),
@@ -511,6 +590,26 @@ public class StudentService {
                 "Documents: " + documentSummary);
     }
 
+    private String buildInitialPortalPassword(Student student) {
+        return firstSixDigits(student.getMobile(), "Student mobile number") + birthYear(student.getDob(), "Student date of birth");
+    }
+
+    private String firstSixDigits(String value, String label) {
+        String digits = digitsOnly(value);
+        if (digits.length() < 6) {
+            throw new IllegalArgumentException(label + " must have at least 6 digits to generate portal password.");
+        }
+        return digits.substring(0, 6);
+    }
+
+    private String birthYear(String value, String label) {
+        String trimmed = trim(value);
+        if (trimmed == null || trimmed.length() < 4 || !trimmed.substring(0, 4).matches("\\d{4}")) {
+            throw new IllegalArgumentException(label + " must start with a 4 digit year to generate portal password.");
+        }
+        return trimmed.substring(0, 4);
+    }
+
     private String digitsOnly(String value) {
         if (!StringUtils.hasText(value)) {
             return "";
@@ -518,22 +617,20 @@ public class StudentService {
         return value.replaceAll("\\D", "");
     }
 
+    private String sanitizeEnrollmentNo(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return NON_ALPHANUMERIC.matcher(value.trim().toUpperCase()).replaceAll("");
+    }
+
+    private String formatEnrollmentNo(String instituteCode, long sequence) {
+        return instituteCode + "STU" + String.format("%04d", sequence);
+    }
+
     private String buildInstituteCode(String instituteName) {
         if (!StringUtils.hasText(instituteName)) {
             return "INST";
-        }
-
-        String[] words = instituteName.trim().toUpperCase().split("\\s+");
-        StringBuilder initials = new StringBuilder();
-        for (String word : words) {
-            String cleaned = NON_ALPHANUMERIC.matcher(word).replaceAll("");
-            if (!cleaned.isEmpty()) {
-                initials.append(cleaned.charAt(0));
-            }
-        }
-
-        if (initials.length() >= 2) {
-            return initials.substring(0, Math.min(initials.length(), 6));
         }
 
         String compact = NON_ALPHANUMERIC.matcher(instituteName.toUpperCase()).replaceAll("");
@@ -541,26 +638,72 @@ public class StudentService {
             return "INST";
         }
 
-        return compact.substring(0, Math.min(compact.length(), 6));
+        return compact;
     }
 
-    private void reassignRollNumbers(Long instituteId, String assignedClass) {
+    private String resolveNextRollNo(Long instituteId, String assignedClass) {
         if (!StringUtils.hasText(assignedClass)) {
-            return;
+            return null;
         }
 
         List<Student> classStudents = studentRepository
-                .findAllByInstituteIdAndAssignedClassIgnoreCaseOrderByFirstNameAscLastNameAscCreatedAtAsc(instituteId, assignedClass);
+                .findAllByInstituteIdAndAssignedClassIgnoreCaseOrderByCreatedAtAsc(instituteId, assignedClass);
 
-        for (int index = 0; index < classStudents.size(); index++) {
-            classStudents.get(index).setRollNo(String.format("%03d", index + 1));
+        int maxRoll = maxRollNo(classStudents);
+
+        return String.format("%03d", maxRoll + 1);
+    }
+
+    private int maxRollNo(Long instituteId, String assignedClass) {
+        return maxRollNo(studentRepository.findAllByInstituteIdAndAssignedClassIgnoreCaseOrderByCreatedAtAsc(instituteId, assignedClass));
+    }
+
+    private int maxRollNo(List<Student> classStudents) {
+        return classStudents.stream()
+                .map(Student::getRollNo)
+                .map(this::parseRollNo)
+                .max(Comparator.naturalOrder())
+                .orElse(0);
+    }
+
+    private int parseRollNo(String rollNo) {
+        if (!StringUtils.hasText(rollNo)) {
+            return 0;
         }
+        try {
+            return Integer.parseInt(rollNo.trim());
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
 
-        studentRepository.saveAll(classStudents);
+    private int normalizePageSize(Integer size) {
+        if (size == null || size <= 0) {
+            return DEFAULT_PAGE_SIZE;
+        }
+        return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    private Sort parseSort(String requestedSort) {
+        String value = StringUtils.hasText(requestedSort) ? requestedSort.trim() : "createdAt,desc";
+        String[] parts = value.split(",");
+        String field = parts.length > 0 && ALLOWED_SORT_FIELDS.contains(parts[0]) ? parts[0] : "createdAt";
+        Sort.Direction direction = parts.length > 1 && "asc".equalsIgnoreCase(parts[1])
+                ? Sort.Direction.ASC
+                : Sort.Direction.DESC;
+        return Sort.by(direction, field);
+    }
+
+    private String normalizeComparable(String value) {
+        return StringUtils.hasText(value) ? value.trim().toLowerCase() : "";
     }
 
     private String trim(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String blankToEmpty(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
     }
 
     private String uppercase(String value) {

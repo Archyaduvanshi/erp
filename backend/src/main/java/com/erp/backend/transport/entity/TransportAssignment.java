@@ -2,6 +2,7 @@ package com.erp.backend.transport.entity;
 
 import java.time.LocalDateTime;
 
+import com.erp.backend.curriculum.entity.AcademicSession;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.student.entity.Student;
 import jakarta.persistence.Column;
@@ -42,7 +43,20 @@ public class TransportAssignment {
     @JoinColumn(name = "driver_id")
     private TransportDriver driver;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "academic_session_id")
+    private AcademicSession academicSession;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "route_id")
+    private TransportRoute route;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pickup_stop_id")
+    private TransportRouteStop pickupStopRef;
+
     private String pickupStop;
+    private String status = "ACTIVE";
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

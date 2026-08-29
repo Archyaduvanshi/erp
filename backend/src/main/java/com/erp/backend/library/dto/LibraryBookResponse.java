@@ -10,6 +10,10 @@ public record LibraryBookResponse(
         String format,
         String shelfLocation,
         Integer availableQuantity,
+        Integer totalCopies,
+        Integer availableCopies,
+        Integer issuedCopies,
+        String status,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

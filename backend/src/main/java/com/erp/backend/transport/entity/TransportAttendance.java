@@ -43,6 +43,14 @@ public class TransportAttendance {
     @JoinColumn(name = "driver_id", nullable = false)
     private TransportDriver driver;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "route_id")
+    private TransportRoute route;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "route_operation_id")
+    private TransportRouteOperation routeOperation;
+
     @Column(nullable = false)
     private LocalDate attendanceDate;
 
@@ -50,6 +58,12 @@ public class TransportAttendance {
     private String status;
 
     private String markedBy;
+    private Long markedByUserId;
+
+    private String pickupStopSnapshot;
+    private String routeNameSnapshot;
+    private String busNumberSnapshot;
+    private String driverNameSnapshot;
 
     @Column(length = 1000)
     private String notes;

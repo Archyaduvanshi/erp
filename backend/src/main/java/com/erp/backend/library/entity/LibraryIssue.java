@@ -52,11 +52,30 @@ public class LibraryIssue {
 
     private LocalDate returnDate;
 
+    @Column(nullable = false)
+    private String status;
+
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal finePerDay;
 
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal damageCharges;
+
+    @Column(name = "issued_by_account_id")
+    private Long issuedByAccountId;
+
+    @Column(name = "returned_by_account_id")
+    private Long returnedByAccountId;
+
+    @Column(name = "voided_by_account_id")
+    private Long voidedByAccountId;
+
+    private LocalDateTime returnedAt;
+
+    private LocalDateTime voidedAt;
+
+    @Column(columnDefinition = "TEXT")
+    private String voidReason;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

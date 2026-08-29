@@ -24,7 +24,7 @@ public class Institute {
     @Column(nullable = false)
     private String type;
 
-    @Column(nullable = false, unique = true, length = 50)
+    @Column(nullable = false, unique = true, length = 120)
     private String username;
 
     @Column(nullable = false, unique = true)

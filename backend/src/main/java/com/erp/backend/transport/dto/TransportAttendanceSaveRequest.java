@@ -9,6 +9,8 @@ import jakarta.validation.constraints.NotNull;
 
 public record TransportAttendanceSaveRequest(
         @NotNull(message = "Driver is required") Long driverId,
+        Long routeId,
+        Long academicSessionId,
         @NotBlank(message = "Attendance date is required") String date,
         String markedBy,
         @Valid @NotEmpty(message = "At least one student attendance entry is required") List<TransportAttendanceEntryPayload> entries

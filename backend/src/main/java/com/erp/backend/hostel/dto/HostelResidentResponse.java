@@ -1,5 +1,6 @@
 package com.erp.backend.hostel.dto;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public record HostelResidentResponse(
@@ -15,9 +16,9 @@ public record HostelResidentResponse(
         String roomNumber,
         String floorLabel,
         String bedNumber,
-        String checkInDate,
-        String checkOutDate,
-        String monthlyCharge,
+        LocalDate checkInDate,
+        LocalDate checkOutDate,
+        java.math.BigDecimal monthlyCharge,
         String guardianContact,
         String messFood,
         String emergencyContact,

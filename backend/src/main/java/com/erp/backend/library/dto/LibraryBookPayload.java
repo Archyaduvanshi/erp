@@ -24,6 +24,8 @@ public record LibraryBookPayload(
         String shelfLocation,
         @NotNull(message = "Available quantity is required.")
         @Min(value = 1, message = "Available quantity must be at least 1.")
-        Integer availableQuantity
+        Integer availableQuantity,
+        @Min(value = 1, message = "Total copies must be at least 1.")
+        Integer totalCopies
 ) {
 }
