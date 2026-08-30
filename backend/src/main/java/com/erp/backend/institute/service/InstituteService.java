@@ -19,16 +19,18 @@ import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.transaction.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class InstituteService {
-    private static final int MAX_INSTITUTION_CODE_LENGTH = 120;
+    private static final int MAX_REGISTRATION_ATTEMPTS = 25;
 
     private final InstituteRepository instituteRepository;
     private final InstituteMapper instituteMapper;
+    private final InstitutionCodeService institutionCodeService;
     private final PasswordEncoder passwordEncoder;
     private final AuthService authService;
     private final AuthCookieSupport authCookieSupport;
@@ -36,12 +38,14 @@ public class InstituteService {
     public InstituteService(
             InstituteRepository instituteRepository,
             InstituteMapper instituteMapper,
+            InstitutionCodeService institutionCodeService,
             PasswordEncoder passwordEncoder,
             AuthService authService,
             AuthCookieSupport authCookieSupport
     ) {
         this.instituteRepository = instituteRepository;
         this.instituteMapper = instituteMapper;
+        this.institutionCodeService = institutionCodeService;
         this.passwordEncoder = passwordEncoder;
         this.authService = authService;
         this.authCookieSupport = authCookieSupport;
@@ -51,25 +55,8 @@ public class InstituteService {
     public InstituteAuthResponse registerInstitute(RegisterInstituteRequest request, HttpServletResponse servletResponse) {
         validateRegistrationRequest(request);
         validateUniqueness(request);
-        String institutionCode = resolveUniqueInstitutionCode(request);
 
-        Institute institute = new Institute();
-        institute.setInstituteName(normalizeUppercase(request.getInstituteName()));
-        institute.setType(normalizeUppercase(request.getType()));
-        institute.setUsername(institutionCode);
-        institute.setAffiliationNo(normalizeUppercase(request.getAffiliationNo()));
-        institute.setAffiliatedFrom(normalizeUppercase(request.getAffiliatedFrom()));
-        institute.setContact(onlyDigits(request.getContact()));
-        institute.setEmail(request.getEmail().trim().toLowerCase());
-        institute.setWebsite(normalizeOptional(request.getWebsite()));
-        institute.setAddress(normalizeUppercase(request.getAddress()));
-        institute.setState(normalizeUppercase(request.getState()));
-        institute.setCity(normalizeUppercase(request.getCity()));
-        institute.setPincode(onlyDigits(request.getPincode()));
-        institute.setLogo(normalizeOptional(request.getLogo()));
-        institute.setPasswordHash(passwordEncoder.encode(request.getPassword()));
-
-        Institute savedInstitute = instituteRepository.save(institute);
+        Institute savedInstitute = saveWithInstitutionCodeRetry(request);
         UserAccount account = authService.syncAdminAccount(savedInstitute);
         AuthTokenPair tokens = authService.issueSession(account);
         authCookieSupport.setRefreshCookie(servletResponse, tokens.refreshToken());
@@ -164,33 +151,68 @@ public class InstituteService {
         }
     }
 
-    private String resolveUniqueInstitutionCode(RegisterInstituteRequest request) {
-        String baseCode = buildInstitutionCode(request.getUsername());
-        String candidate = baseCode;
-        int suffix = 2;
+    private Institute saveWithInstitutionCodeRetry(RegisterInstituteRequest request) {
+        boolean manualCode = isManualInstitutionCode(request);
+        String manualInstitutionCode = manualCode ? institutionCodeService.normalizeManualCode(request.getUsername()) : null;
+        String baseCode = institutionCodeService.generateBaseCode(request.getInstituteName());
 
-        while (instituteRepository.existsByUsernameIgnoreCase(candidate)) {
-            String suffixText = String.valueOf(suffix);
-            int baseLength = Math.max(1, MAX_INSTITUTION_CODE_LENGTH - suffixText.length());
-            String truncatedBase = baseCode.length() > baseLength ? baseCode.substring(0, baseLength) : baseCode;
-            candidate = truncatedBase + suffixText;
-            suffix++;
+        for (int attempt = 0; attempt < MAX_REGISTRATION_ATTEMPTS; attempt++) {
+            String institutionCode = manualCode
+                    ? manualInstitutionCode
+                    : institutionCodeService.withSuffix(baseCode, attempt);
+            if (manualCode && instituteRepository.existsByUsernameIgnoreCase(institutionCode)) {
+                throw institutionCodeExists();
+            }
+            if (!manualCode && instituteRepository.existsByUsernameIgnoreCase(institutionCode)) {
+                continue;
+            }
+            try {
+                return instituteRepository.saveAndFlush(newInstitute(request, institutionCode));
+            } catch (DataIntegrityViolationException exception) {
+                if (manualCode) {
+                    throw institutionCodeExists();
+                }
+                if (attempt == MAX_REGISTRATION_ATTEMPTS - 1) {
+                    throw exception;
+                }
+            }
         }
 
-        return candidate;
+        throw new IllegalStateException("Unable to generate a unique institution code. Please try again.");
     }
 
-    private String buildInstitutionCode(String value) {
-        String compact = StringUtils.hasText(value)
-                ? value.trim().toUpperCase().replaceAll("[^A-Z0-9]", "")
-                : "";
-        if (!compact.isEmpty()) {
-            return compact.length() > MAX_INSTITUTION_CODE_LENGTH
-                    ? compact.substring(0, MAX_INSTITUTION_CODE_LENGTH)
-                    : compact;
+    private boolean isManualInstitutionCode(RegisterInstituteRequest request) {
+        if (!StringUtils.hasText(request.getUsername())) {
+            return false;
         }
+        String requestedCode = institutionCodeService.normalizeManualCode(request.getUsername());
+        return !requestedCode.equals(institutionCodeService.generateBaseCode(request.getInstituteName()));
+    }
 
-        return "INST";
+    private Institute newInstitute(RegisterInstituteRequest request, String institutionCode) {
+        Institute institute = new Institute();
+        institute.setInstituteName(normalizeUppercase(request.getInstituteName()));
+        institute.setType(normalizeUppercase(request.getType()));
+        institute.setInstitutionCode(institutionCode);
+        institute.setAffiliationNo(normalizeUppercase(request.getAffiliationNo()));
+        institute.setAffiliatedFrom(normalizeUppercase(request.getAffiliatedFrom()));
+        institute.setContact(onlyDigits(request.getContact()));
+        institute.setEmail(request.getEmail().trim().toLowerCase());
+        institute.setWebsite(normalizeOptional(request.getWebsite()));
+        institute.setAddress(normalizeUppercase(request.getAddress()));
+        institute.setState(normalizeUppercase(request.getState()));
+        institute.setCity(normalizeUppercase(request.getCity()));
+        institute.setPincode(onlyDigits(request.getPincode()));
+        institute.setLogo(normalizeOptional(request.getLogo()));
+        institute.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        return institute;
+    }
+
+    private FieldValidationException institutionCodeExists() {
+        return new FieldValidationException(
+                "Institution code is already registered.",
+                Map.of("username", "INSTITUTION_CODE_ALREADY_EXISTS")
+        );
     }
 
     private String normalizeOptional(String value) {

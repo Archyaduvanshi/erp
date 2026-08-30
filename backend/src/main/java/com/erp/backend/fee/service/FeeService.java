@@ -16,6 +16,7 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import com.erp.backend.auth.AuthPrincipal;
+import com.erp.backend.cashbook.service.CashbookService;
 import com.erp.backend.curriculum.entity.AcademicSession;
 import com.erp.backend.curriculum.repository.AcademicSessionRepository;
 import com.erp.backend.exception.ResourceNotFoundException;
@@ -66,6 +67,7 @@ public class FeeService {
     private final FeePaymentRepository feePaymentRepository;
     private final FeePaymentAllocationRepository feePaymentAllocationRepository;
     private final StudentFeeChargeRepository studentFeeChargeRepository;
+    private final CashbookService cashbookService;
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
 
@@ -77,6 +79,7 @@ public class FeeService {
             FeePaymentRepository feePaymentRepository,
             FeePaymentAllocationRepository feePaymentAllocationRepository,
             StudentFeeChargeRepository studentFeeChargeRepository,
+            CashbookService cashbookService,
             EntityManager entityManager,
             ObjectMapper objectMapper
     ) {
@@ -87,6 +90,7 @@ public class FeeService {
         this.feePaymentRepository = feePaymentRepository;
         this.feePaymentAllocationRepository = feePaymentAllocationRepository;
         this.studentFeeChargeRepository = studentFeeChargeRepository;
+        this.cashbookService = cashbookService;
         this.entityManager = entityManager;
         this.objectMapper = objectMapper;
     }
@@ -353,13 +357,13 @@ public class FeeService {
     @Transactional
     public FeePaymentResponse savePayment(Long instituteId, FeePaymentPayload request, AuthPrincipal principal) {
         if (request.studentId() == null) throw new IllegalArgumentException("STUDENT_NOT_FOUND: Student is required.");
-        return recordPayment(instituteId, request.studentId(), request, false);
+        return recordPayment(instituteId, request.studentId(), request, false, principal);
     }
 
     @Transactional
     public FeePaymentResponse saveMyPayment(Long instituteId, Long studentId, FeePaymentPayload request, AuthPrincipal principal) {
         if (studentId == null) throw new IllegalArgumentException("STUDENT_NOT_FOUND: Student identity is required.");
-        return recordPayment(instituteId, studentId, request, true);
+        return recordPayment(instituteId, studentId, request, true, principal);
     }
 
     @Transactional
@@ -373,7 +377,9 @@ public class FeeService {
         payment.setVoidedAt(LocalDateTime.now());
         payment.setVoidedByAccountId(principal == null ? null : principal.accountId());
         payment.setVoidReason(reason);
-        return toPaymentResponse(feePaymentRepository.save(payment));
+        FeePayment saved = feePaymentRepository.save(payment);
+        cashbookService.reverseFeePayment(saved, principal == null ? null : principal.accountId(), reason);
+        return toPaymentResponse(saved);
     }
 
     @Transactional
@@ -395,6 +401,7 @@ public class FeeService {
         if (!feePaymentAllocationRepository.existsByInstituteIdAndPaymentId(instituteId, saved.getId())) {
             saveNormalizedAllocations(validateInstitute(instituteId), session, student, saved, money(saved.getPaidAmount()), saved.getPaymentTarget());
         }
+        cashbookService.postFeePayment(saved, principal == null ? null : principal.accountId());
         return toPaymentResponse(saved);
     }
 
@@ -417,7 +424,7 @@ public class FeeService {
         voidPayment(instituteId, id, "Legacy delete converted to void.", principal);
     }
 
-    private FeePaymentResponse recordPayment(Long instituteId, Long studentId, FeePaymentPayload request, boolean studentSubmitted) {
+    private FeePaymentResponse recordPayment(Long instituteId, Long studentId, FeePaymentPayload request, boolean studentSubmitted, AuthPrincipal principal) {
         if (StringUtils.hasText(request.idempotencyKey())) {
             Optional<FeePayment> existing = feePaymentRepository.findByInstituteIdAndIdempotencyKey(instituteId, request.idempotencyKey().trim());
             if (existing.isPresent()) return toPaymentResponse(existing.get());
@@ -470,6 +477,7 @@ public class FeeService {
             FeePayment saved = feePaymentRepository.saveAndFlush(payment);
             if (!studentSubmitted) {
                 saveNormalizedAllocations(institute, session, student, saved, amount, payment.getPaymentTarget());
+                cashbookService.postFeePayment(saved, principal == null ? null : principal.accountId());
             }
             return toPaymentResponse(saved);
         } catch (DataIntegrityViolationException exception) {

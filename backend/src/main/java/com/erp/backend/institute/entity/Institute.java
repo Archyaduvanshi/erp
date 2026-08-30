@@ -99,6 +99,14 @@ public class Institute {
         this.username = username;
     }
 
+    public String getInstitutionCode() {
+        return username;
+    }
+
+    public void setInstitutionCode(String institutionCode) {
+        this.username = institutionCode;
+    }
+
     public String getAffiliationNo() {
         return affiliationNo;
     }

@@ -24,6 +24,7 @@ const FEATURE_ROUTE_MAP = {
   examinations: '/college/examinations',
   timetable: '/college/timetable',
   salary: '/college/salary',
+  cashbook: '/college/cashbook',
   notices: '/college/notices',
   holidays: '/college/holidays',
 };
@@ -411,6 +412,8 @@ export const studentApi = {
 
 export const teacherApi = {
   getAll: () => request('/teachers', withInstituteHeaders()),
+
+  getMyDashboard: () => request('/teachers/me/dashboard', withPortalHeaders('teacher')),
 
   getOptions: (status = 'Active') => request(`/teachers/options?status=${encodeURIComponent(status)}`, withInstituteHeaders()),
 
@@ -861,6 +864,66 @@ export const salaryApi = {
   getMyPayrollPeriods: (filters = {}) => request(`/salary/teacher/me/payroll-periods${toQueryString(filters)}`, withPortalHeaders('teacher')),
 
   getMyPayments: (filters = {}) => request(`/salary/teacher/me/payments${toQueryString(filters)}`, withPortalHeaders('teacher')),
+};
+
+export const cashbookApi = {
+  getOverview: (filters = {}) => request(`/cashbook/overview${toQueryString(filters)}`, withInstituteHeaders()),
+
+  getTrend: (filters = {}) => request(`/cashbook/trend${toQueryString(filters)}`, withInstituteHeaders()),
+
+  getCategoryBreakdown: (filters = {}) => request(`/cashbook/categories/breakdown${toQueryString(filters)}`, withInstituteHeaders()),
+
+  getPaymentModes: (filters = {}) => request(`/cashbook/payment-modes${toQueryString(filters)}`, withInstituteHeaders()),
+
+  getTransactions: (filters = {}) => request(`/cashbook/transactions${toQueryString(filters)}`, withInstituteHeaders()),
+
+  exportTransactions: (filters = {}) => request(`/cashbook/transactions/export${toQueryString(filters)}`, withInstituteHeaders()),
+
+  getAccounts: () => request('/cashbook/accounts', withInstituteHeaders()),
+
+  createAccount: (payload) =>
+    request('/cashbook/accounts', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  getCategories: () => request('/cashbook/categories', withInstituteHeaders()),
+
+  createCategory: (payload) =>
+    request('/cashbook/categories', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  addIncome: (payload) =>
+    request('/cashbook/income', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  addExpense: (payload) =>
+    request('/cashbook/expenses', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  addRefund: (payload) =>
+    request('/cashbook/refunds', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  transfer: (payload) =>
+    request('/cashbook/transfers', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  voidEntry: (id, payload) =>
+    request(`/cashbook/entries/${id}/void`, withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
 };
 
 export const timetableApi = {

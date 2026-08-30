@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -15,9 +16,7 @@ import {
   Settings,
   UserRound,
 } from 'lucide-react';
-import { academicSessionApi, attendanceApi, noticeApi, salaryApi, teacherApi } from '../../utils/api';
-import { getCurrentMonthSalaryStatus, normalizeTeacherSalary } from '../../utils/salaryUtils';
-import { formatNoticeDate } from '../../utils/noticeUtils';
+import { teacherApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
 const FEATURE_CARDS = {
@@ -39,31 +38,21 @@ const FEATURE_CARDS = {
 const TeacherDashboard = () => {
   const navigate = useNavigate();
   const { session, logout } = useAuth();
-  const [teacherProfile, setTeacherProfile] = useState(null);
-  const [attendanceTargets, setAttendanceTargets] = useState([]);
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [salaryPayments, setSalaryPayments] = useState([]);
-  const [notices, setNotices] = useState([]);
-  const [loadError, setLoadError] = useState('');
+  const dashboardQuery = useQuery({
+    queryKey: ['teacher', 'dashboard'],
+    queryFn: teacherApi.getMyDashboard,
+    enabled: session?.role === 'teacher',
+    staleTime: 60 * 1000,
+  });
 
-  const teacher = useMemo(() => {
-    if (!session || session.role !== 'teacher') return null;
-    return teacherProfile ? attachSalaryPayments(normalizeTeacherSalary(teacherProfile), salaryPayments) : null;
-  }, [salaryPayments, session, teacherProfile]);
-
-  const teacherName = teacher
-    ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.employeeId || 'Teacher'
-    : 'Teacher';
-
-  const assignedStudentCount = useMemo(
-    () => attendanceTargets.reduce((sum, target) => sum + (Number(target.studentCount) || 0), 0),
-    [attendanceTargets],
-  );
-
-  const today = new Date().toISOString().split('T')[0];
-  const todayAttendanceCount = attendanceRecords.filter((record) => record.date === today && record.status === 'Present').length;
-  const currentSalaryStatus = getCurrentMonthSalaryStatus(teacher);
-  const portalNotices = notices;
+  const dashboard = dashboardQuery.data || {};
+  const teacherName = dashboard.teacherName || 'Teacher';
+  const assignedStudentCount = Number(dashboard.assignedStudentCount) || 0;
+  const todayAttendanceCount = Number(dashboard.todayPresent) || 0;
+  const salaryStatus = String(dashboard.salaryStatus || 'NOT_GENERATED').toUpperCase();
+  const salaryPaid = salaryStatus === 'PAID' || Number(dashboard.salaryOutstanding || 0) <= 0 && Number(dashboard.salaryNetPayable || 0) > 0;
+  const portalNotices = Array.isArray(dashboard.latestNotices) ? dashboard.latestNotices : [];
+  const noticeCount = Number(dashboard.noticeCount) || 0;
   const assignedFeatureCards = useMemo(() => (
     (session?.assignedFeatures || [])
       .filter((feature) => feature?.enabled && FEATURE_CARDS[feature.feature])
@@ -79,48 +68,6 @@ const TeacherDashboard = () => {
       navigate('/login');
     }
   }, [navigate, session]);
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const sessions = await academicSessionApi.getAll();
-        const activeSession = sessions.find((item) => item.current) || sessions[0] || null;
-        const month = today.slice(0, 7);
-        const [teacherResponse, targetResponse, noticeResponse, salarySummaryResponse] = await Promise.all([
-          teacherApi.getById(session.teacherId),
-          activeSession ? attendanceApi.getMyTeacherTargets(activeSession.id) : Promise.resolve([]),
-          noticeApi.getPortalAll({ page: 0, size: 5 }),
-          salaryApi.getMySummary({ monthKey: month }),
-        ]);
-        const monthlyResponses = activeSession
-          ? await Promise.all(targetResponse.map((target) => attendanceApi.getClassMonthly({
-              academicSessionId: activeSession.id,
-              classId: target.classId,
-              sectionId: target.sectionId,
-              month,
-              teacherId: session.teacherId,
-            })))
-          : [];
-        setTeacherProfile(teacherResponse);
-        setAttendanceTargets(targetResponse);
-        setAttendanceRecords(flattenMonthlyAttendance(monthlyResponses));
-        setNotices(Array.isArray(noticeResponse?.content) ? noticeResponse.content : noticeResponse);
-        setSalaryPayments(salarySummaryResponse?.latestPayments || []);
-        setLoadError('');
-      } catch (error) {
-        setTeacherProfile(null);
-        setAttendanceTargets([]);
-        setAttendanceRecords([]);
-        setNotices([]);
-        setSalaryPayments([]);
-        setLoadError(error.message || 'Unable to load dashboard data.');
-      }
-    };
-
-    if (session?.role === 'teacher') {
-      loadData();
-    }
-  }, [session, today]);
 
   if (!session || session.role !== 'teacher') return null;
 
@@ -162,9 +109,9 @@ const TeacherDashboard = () => {
       </header>
 
       <div className="mx-auto max-w-screen-2xl px-6 pt-16 md:px-12 lg:px-20">
-        {loadError ? (
+        {dashboardQuery.error ? (
           <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
+            {dashboardQuery.error.message || 'Unable to load dashboard data.'}
           </div>
         ) : null}
         <div className="mb-10 px-4 text-center">
@@ -173,7 +120,7 @@ const TeacherDashboard = () => {
             Teacher Dashboard
           </h1>
           <p className="mt-4 text-sm font-semibold text-slate-500">
-            {session.instituteName} | {teacher?.employeeId || 'Employee ID pending'} | {teacher?.specialization || 'Subject not assigned'}
+            {session.instituteName} | {dashboard.employeeId || 'Employee ID pending'} | {dashboard.specialization || 'Subject not assigned'}
           </p>
         </div>
 
@@ -190,9 +137,9 @@ const TeacherDashboard = () => {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <MetricCard label="Attendance Today" value={todayAttendanceCount} icon={CheckCircle2} />
-              <MetricCard label="Students In Class" value={assignedStudentCount} icon={CalendarDays} />
-              <MetricCard label="Salary This Month" value={currentSalaryStatus?.isPaid ? 'Paid' : 'Pending'} icon={Banknote} />
-              <MetricCard label="Notices" value={portalNotices.length} icon={Megaphone} />
+              <MetricCard label="Assigned Students" value={assignedStudentCount} icon={CalendarDays} />
+              <MetricCard label="Salary This Month" value={salaryPaid ? 'Paid' : 'Pending'} icon={Banknote} />
+              <MetricCard label="Notices" value={noticeCount} icon={Megaphone} />
             </div>
           </div>
         </section>
@@ -200,6 +147,7 @@ const TeacherDashboard = () => {
         <section className="mb-12 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-10 lg:grid-cols-3">
           <NoticeSummaryCard
             notices={portalNotices}
+            noticeCount={noticeCount}
             onClick={() => navigate('/teacher/notices')}
           />
           <ModuleCard
@@ -229,13 +177,13 @@ const TeacherDashboard = () => {
           <ModuleCard
             icon={<UserRound className="text-teal-700" size={42} />}
             title="My Profile"
-            desc={`Employee ID ${teacher?.employeeId || 'Pending'} | Salary ${currentSalaryStatus?.isPaid ? 'paid' : 'pending'} this month`}
+            desc={`Employee ID ${dashboard.employeeId || 'Pending'} | Salary ${salaryPaid ? 'paid' : 'pending'} this month`}
             onClick={() => navigate('/teacher/profile')}
           />
           <ModuleCard
             icon={<Banknote className="text-emerald-700" size={42} />}
             title="My Salary"
-            desc={`See whether ${currentSalaryStatus?.monthKey ? 'this month' : 'your'} salary is paid or pending.`}
+            desc={`See whether ${dashboard.salaryMonthKey ? 'this month' : 'your'} salary is paid or pending.`}
             onClick={() => navigate('/teacher/salary')}
           />
           {assignedFeatureCards.map((feature) => {
@@ -271,7 +219,7 @@ const MetricCard = ({ label, value, icon }) => (
   </div>
 );
 
-const NoticeSummaryCard = ({ notices, onClick }) => (
+const NoticeSummaryCard = ({ notices, noticeCount, onClick }) => (
   <button
     type="button"
     onClick={onClick}
@@ -282,7 +230,7 @@ const NoticeSummaryCard = ({ notices, onClick }) => (
         <Megaphone size={26} />
       </div>
       <span className="rounded-full bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white">
-        {notices.length} Live
+        {noticeCount} Live
       </span>
     </div>
     <h3 className="mt-6 text-2xl font-black tracking-tight text-slate-900">Notice</h3>
@@ -305,47 +253,5 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
     <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{desc}</p>
   </button>
 );
-
-const flattenMonthlyAttendance = (monthlyResponses = []) => (
-  monthlyResponses.flatMap((monthResponse) => (
-    (monthResponse?.students || []).flatMap((student) => (
-      Object.entries(student.days || {}).map(([date, status]) => ({
-        id: `${student.studentId}-${date}`,
-        date,
-        studentId: student.studentId,
-        status,
-      }))
-    ))
-  ))
-);
-
-const attachSalaryPayments = (teacher, salaryPayments = []) => {
-  if (!teacher) return null;
-  const paymentMap = new Map();
-  (Array.isArray(teacher.paymentHistory) ? teacher.paymentHistory : []).forEach((payment) => {
-    if (payment?.monthKey) paymentMap.set(payment.monthKey, payment);
-  });
-  salaryPayments.forEach((payment) => {
-    if (!payment?.monthKey) return;
-    paymentMap.set(payment.monthKey, {
-      monthKey: payment.monthKey,
-      baseSalary: Number(payment.baseSalary) || 0,
-      previousPendingAmount: Number(payment.previousPendingAmount) || 0,
-      bonusAmount: Number(payment.bonusAmount) || 0,
-      advanceAmount: Number(payment.advanceAmount) || 0,
-      leaveDeductionAmount: Number(payment.leaveDeductionAmount) || 0,
-      amount: Number(payment.totalAmount ?? payment.amount) || 0,
-      totalAmount: Number(payment.totalAmount ?? payment.amount) || 0,
-      paidOn: payment.paidOn || '',
-      settledMonthKeys: Array.isArray(payment.settledMonthKeys) ? payment.settledMonthKeys : [],
-      note: payment.note || '',
-    });
-  });
-
-  return {
-    ...teacher,
-    paymentHistory: [...paymentMap.values()],
-  };
-};
 
 export default TeacherDashboard;

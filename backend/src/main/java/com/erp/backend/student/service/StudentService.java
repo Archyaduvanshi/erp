@@ -17,6 +17,7 @@ import com.erp.backend.exception.ResourceNotFoundException;
 import com.erp.backend.fee.service.FeeService;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
+import com.erp.backend.institute.service.InstitutionCodeService;
 import com.erp.backend.student.dto.StudentClassSummaryResponse;
 import com.erp.backend.student.dto.StudentDocumentPayload;
 import com.erp.backend.student.dto.StudentListResponse;
@@ -59,6 +60,7 @@ public class StudentService {
     private final ObjectMapper objectMapper;
     private final AuthService authService;
     private final FeeService feeService;
+    private final InstitutionCodeService institutionCodeService;
 
     public StudentService(
             StudentRepository studentRepository,
@@ -66,7 +68,8 @@ public class StudentService {
             SchoolClassRepository schoolClassRepository,
             ObjectMapper objectMapper,
             AuthService authService,
-            FeeService feeService
+            FeeService feeService,
+            InstitutionCodeService institutionCodeService
     ) {
         this.studentRepository = studentRepository;
         this.instituteRepository = instituteRepository;
@@ -74,6 +77,7 @@ public class StudentService {
         this.objectMapper = objectMapper;
         this.authService = authService;
         this.feeService = feeService;
+        this.institutionCodeService = institutionCodeService;
     }
 
     public List<StudentResponse> getAllStudents(Long instituteId) {
@@ -513,7 +517,7 @@ public class StudentService {
             return sanitizeEnrollmentNo(student.getEnrollmentNo());
         }
 
-        String instituteCode = buildInstituteCode(student.getInstitute().getInstituteName());
+        String instituteCode = institutionCodeService.tenantPrefix(student.getInstitute().getInstitutionCode());
         long nextSequence = studentRepository.countByInstituteId(student.getInstitute().getId()) + 1;
         String enrollmentNo = formatEnrollmentNo(instituteCode, nextSequence);
         while (studentRepository.existsByInstituteIdAndEnrollmentNoIgnoreCase(student.getInstitute().getId(), enrollmentNo)) {
@@ -626,19 +630,6 @@ public class StudentService {
 
     private String formatEnrollmentNo(String instituteCode, long sequence) {
         return instituteCode + "STU" + String.format("%04d", sequence);
-    }
-
-    private String buildInstituteCode(String instituteName) {
-        if (!StringUtils.hasText(instituteName)) {
-            return "INST";
-        }
-
-        String compact = NON_ALPHANUMERIC.matcher(instituteName.toUpperCase()).replaceAll("");
-        if (compact.isEmpty()) {
-            return "INST";
-        }
-
-        return compact;
     }
 
     private String resolveNextRollNo(Long instituteId, String assignedClass) {

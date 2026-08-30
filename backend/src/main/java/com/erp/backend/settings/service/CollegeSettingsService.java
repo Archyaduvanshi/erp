@@ -1,6 +1,5 @@
 package com.erp.backend.settings.service;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -147,6 +146,7 @@ public class CollegeSettingsService {
             return new UnifiedLoginResponse(
                     adminInstitute.getId(),
                     adminInstitute.getUsername(),
+                    adminInstitute.getInstitutionCode(),
                     adminInstitute.getInstituteName(),
                     adminInstitute.getType(),
                     "admin",
@@ -170,6 +170,7 @@ public class CollegeSettingsService {
             return new UnifiedLoginResponse(
                     institute.getId(),
                     institute.getUsername(),
+                    institute.getInstitutionCode(),
                     institute.getInstituteName(),
                     institute.getType(),
                     "teacher",
@@ -193,6 +194,7 @@ public class CollegeSettingsService {
             return new UnifiedLoginResponse(
                     institute.getId(),
                     institute.getUsername(),
+                    institute.getInstitutionCode(),
                     institute.getInstituteName(),
                     institute.getType(),
                     "student",
@@ -300,6 +302,9 @@ public class CollegeSettingsService {
                 accountIdentifier = submittedIdentifier.substring(separatorIndex + 1).trim();
             }
         }
+        if (StringUtils.hasText(institutionCode) && "admin".equalsIgnoreCase(accountIdentifier)) {
+            accountIdentifier = institutionCode;
+        }
 
         Institute institute = resolveInstitute(institutionCode, submittedIdentifier);
         return new LoginIdentifier(institute, accountIdentifier);
@@ -310,20 +315,7 @@ public class CollegeSettingsService {
             return instituteRepository.findByUsernameIgnoreCase(institutionCode)
                     .orElseThrow(() -> new IllegalArgumentException("Invalid username, enrollment ID, teacher ID, or password."));
         }
-        String normalizedIdentifier = submittedIdentifier.trim().toLowerCase();
-        return instituteRepository.findAll().stream()
-                .filter(institute -> StringUtils.hasText(institute.getUsername()))
-                .sorted(Comparator.comparingInt((Institute institute) -> institute.getUsername().length()).reversed())
-                .filter(institute -> {
-                    String code = institute.getUsername().trim().toLowerCase();
-                    if (!normalizedIdentifier.startsWith(code)) {
-                        return false;
-                    }
-                    String suffix = normalizedIdentifier.substring(code.length());
-                    return suffix.startsWith("emp") || suffix.startsWith("stu");
-                })
-                .findFirst()
-                .orElse(null);
+        throw new IllegalArgumentException("Institution code is required.");
     }
 
     private int firstSeparator(String value) {

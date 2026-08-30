@@ -3,11 +3,13 @@ package com.erp.backend.teacher.controller;
 import java.util.List;
 
 import com.erp.backend.auth.AuthPrincipal;
+import com.erp.backend.teacher.dto.TeacherDashboardResponse;
 import com.erp.backend.teacher.dto.TeacherPayload;
 import com.erp.backend.teacher.dto.TeacherOptionResponse;
 import com.erp.backend.teacher.dto.TeacherPortalLoginRequest;
 import com.erp.backend.teacher.dto.TeacherPortalLoginResponse;
 import com.erp.backend.teacher.dto.TeacherResponse;
+import com.erp.backend.teacher.service.TeacherDashboardService;
 import com.erp.backend.teacher.service.TeacherService;
 import com.erp.backend.timetable.dto.TeacherTimetableResponse;
 import com.erp.backend.timetable.service.TimetableService;
@@ -32,10 +34,16 @@ public class TeacherController {
 
     private final TeacherService teacherService;
     private final TimetableService timetableService;
+    private final TeacherDashboardService teacherDashboardService;
 
-    public TeacherController(TeacherService teacherService, TimetableService timetableService) {
+    public TeacherController(
+            TeacherService teacherService,
+            TimetableService timetableService,
+            TeacherDashboardService teacherDashboardService
+    ) {
         this.teacherService = teacherService;
         this.timetableService = timetableService;
+        this.teacherDashboardService = teacherDashboardService;
     }
 
     @PostMapping(value = "/portal-login", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -85,6 +93,11 @@ public class TeacherController {
             @RequestParam(required = false) Long academicSessionId
     ) {
         return timetableService.getTeacherTimetable(principal.instituteId(), principal.teacherId(), academicSessionId);
+    }
+
+    @GetMapping("/me/dashboard")
+    public TeacherDashboardResponse getMyDashboard(@AuthenticationPrincipal AuthPrincipal principal) {
+        return teacherDashboardService.getDashboard(principal);
     }
 
     @GetMapping("/{id}")

@@ -47,8 +47,9 @@ const ForgotPassword = () => {
           value={formData.institutionCode}
           onChange={(event) => setFormData((current) => ({
             ...current,
-            institutionCode: event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''),
+            institutionCode: event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20),
           }))}
+          required
         />
         <InputGroup
           label="Username / Enrollment ID / Teacher ID"

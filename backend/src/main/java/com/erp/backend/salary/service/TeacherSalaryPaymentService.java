@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 import com.erp.backend.attendance.entity.TeacherAttendanceRecord;
 import com.erp.backend.attendance.repository.TeacherAttendanceRecordRepository;
+import com.erp.backend.cashbook.service.CashbookService;
 import com.erp.backend.curriculum.entity.AcademicSession;
 import com.erp.backend.curriculum.repository.AcademicSessionRepository;
 import com.erp.backend.exception.ResourceNotFoundException;
@@ -69,6 +70,7 @@ public class TeacherSalaryPaymentService {
     private final SalaryPaymentAllocationRepository paymentAllocationRepository;
     private final TeacherAttendanceRecordRepository teacherAttendanceRecordRepository;
     private final NoticeService noticeService;
+    private final CashbookService cashbookService;
     private final EntityManager entityManager;
 
     public TeacherSalaryPaymentService(
@@ -82,6 +84,7 @@ public class TeacherSalaryPaymentService {
             SalaryPaymentAllocationRepository paymentAllocationRepository,
             TeacherAttendanceRecordRepository teacherAttendanceRecordRepository,
             NoticeService noticeService,
+            CashbookService cashbookService,
             EntityManager entityManager
     ) {
         this.instituteRepository = instituteRepository;
@@ -94,6 +97,7 @@ public class TeacherSalaryPaymentService {
         this.paymentAllocationRepository = paymentAllocationRepository;
         this.teacherAttendanceRecordRepository = teacherAttendanceRecordRepository;
         this.noticeService = noticeService;
+        this.cashbookService = cashbookService;
         this.entityManager = entityManager;
     }
 
@@ -221,6 +225,7 @@ public class TeacherSalaryPaymentService {
             saved.setSettledMonthKeys(joinMonthKeys(paymentAllocationRepository.findSettledMonthKeysByPayment(instituteId, saved.getId())));
             saved = salaryPaymentRepository.saveAndFlush(saved);
             createSalaryNotice(instituteId, teacher, saved);
+            cashbookService.postSalaryPayment(saved, accountId);
             return toPaymentResponse(saved);
         } catch (DataIntegrityViolationException exception) {
             if (StringUtils.hasText(request.idempotencyKey())) {
@@ -251,6 +256,7 @@ public class TeacherSalaryPaymentService {
                     recalculatePeriod(period, period.getTeacher());
                     payrollPeriodRepository.save(period);
                 });
+        cashbookService.reverseSalaryPayment(saved, accountId, request == null ? "Salary payment voided." : request.reason());
         return toPaymentResponse(saved);
     }
 

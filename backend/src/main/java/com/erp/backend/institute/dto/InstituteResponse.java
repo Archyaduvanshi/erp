@@ -8,6 +8,7 @@ public class InstituteResponse {
     private String instituteName;
     private String type;
     private String username;
+    private String institutionCode;
     private String affiliationNo;
     private String affiliatedFrom;
     private String contact;
@@ -50,6 +51,14 @@ public class InstituteResponse {
 
     public void setUsername(String username) {
         this.username = username;
+    }
+
+    public String getInstitutionCode() {
+        return institutionCode;
+    }
+
+    public void setInstitutionCode(String institutionCode) {
+        this.institutionCode = institutionCode;
     }
 
     public String getAffiliationNo() {

@@ -7,12 +7,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import com.erp.backend.auth.AuthService;
 import com.erp.backend.exception.ResourceNotFoundException;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
+import com.erp.backend.institute.service.InstitutionCodeService;
 import com.erp.backend.salary.entity.TeacherSalaryProfile;
 import com.erp.backend.salary.repository.TeacherSalaryProfileRepository;
 import com.erp.backend.teacher.dto.TeacherDocumentPayload;
@@ -38,9 +38,8 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class TeacherService {
-    private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^A-Z0-9]");
-    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
-    private static final Pattern ONE_OR_TWO_DIGITS = Pattern.compile("^\\d{1,2}$");
+    private static final java.util.regex.Pattern EMAIL_PATTERN = java.util.regex.Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final java.util.regex.Pattern ONE_OR_TWO_DIGITS = java.util.regex.Pattern.compile("^\\d{1,2}$");
     private static final int DEFAULT_PAGE_SIZE = 20;
     private static final int MAX_PAGE_SIZE = 100;
     private static final Set<String> ALLOWED_SORT_FIELDS = Set.of(
@@ -57,19 +56,22 @@ public class TeacherService {
     private final TeacherSalaryProfileRepository salaryProfileRepository;
     private final ObjectMapper objectMapper;
     private final AuthService authService;
+    private final InstitutionCodeService institutionCodeService;
 
     public TeacherService(
             TeacherRepository teacherRepository,
             InstituteRepository instituteRepository,
             TeacherSalaryProfileRepository salaryProfileRepository,
             ObjectMapper objectMapper,
-            AuthService authService
+            AuthService authService,
+            InstitutionCodeService institutionCodeService
     ) {
         this.teacherRepository = teacherRepository;
         this.instituteRepository = instituteRepository;
         this.salaryProfileRepository = salaryProfileRepository;
         this.objectMapper = objectMapper;
         this.authService = authService;
+        this.institutionCodeService = institutionCodeService;
     }
 
     public List<TeacherResponse> getAllTeachers(Long instituteId) {
@@ -481,7 +483,7 @@ public class TeacherService {
             return request.employeeId().trim();
         }
 
-        String instituteCode = buildInstituteCode(teacher.getInstitute().getInstituteName());
+        String instituteCode = institutionCodeService.tenantPrefix(teacher.getInstitute().getInstitutionCode());
         long nextSequence = teacherRepository.countByInstituteId(teacher.getInstitute().getId()) + 1;
         return instituteCode + "EMP" + String.format("%04d", nextSequence);
     }
@@ -564,19 +566,6 @@ public class TeacherService {
             return "";
         }
         return value.replaceAll("\\D", "");
-    }
-
-    private String buildInstituteCode(String instituteName) {
-        if (!StringUtils.hasText(instituteName)) {
-            return "INST";
-        }
-
-        String compact = NON_ALPHANUMERIC.matcher(instituteName.toUpperCase()).replaceAll("");
-        if (compact.isEmpty()) {
-            return "INST";
-        }
-
-        return compact;
     }
 
     private String trim(String value) {

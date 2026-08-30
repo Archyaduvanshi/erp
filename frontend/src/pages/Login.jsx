@@ -30,6 +30,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [formData, setFormData] = useState({
+    institutionCode: '',
     username: '',
     password: ''
   });
@@ -57,6 +58,7 @@ const Login = () => {
     const credential = formData.username.trim();
     try {
       const user = await settingsApi.login({
+        institutionCode: formData.institutionCode.trim(),
         username: credential,
         password: formData.password,
       });
@@ -111,7 +113,7 @@ const Login = () => {
               User Login
             </h1>
             <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">
-              Enter admin username, teacher ID, or student enrollment ID
+              Enter institution code with admin username, teacher ID, or student enrollment ID
             </p>
           </div>
 
@@ -123,10 +125,22 @@ const Login = () => {
           )}
 
           <form onSubmit={handleLogin} className="space-y-8">
+            <InputGroup
+              label="Institution Code"
+              icon={ShieldCheck}
+              placeholder="DPS02"
+              value={formData.institutionCode}
+              onChange={(e) => {
+                setFormData({...formData, institutionCode: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20)});
+                setFieldErrors((current) => ({ ...current, institutionCode: '' }));
+              }}
+              error={fieldErrors.institutionCode}
+              required
+            />
             <InputGroup 
               label="Username / Enrollment ID / Teacher ID"
               icon={User} 
-              placeholder="victor, VICTOREMP0001, or VICTORSTU0001"
+              placeholder="admin, DPS02EMP0001, or DPS02STU0001"
               value={formData.username}
               onChange={(e) => {
                 setFormData({...formData, username: e.target.value});
@@ -219,6 +233,7 @@ const buildSession = (user) => ({
   authenticated: true,
   id: user.id,
   username: user.username,
+  institutionCode: user.institutionCode || user.username,
   instituteName: user.instituteName,
   type: user.type,
   role: user.role,

@@ -123,7 +123,7 @@ const TeacherManagement = () => {
   const teacherPage = teachersQuery.data || { content: [], page: 0, size: pageSize, totalElements: 0, totalPages: 0 };
   const teachers = teacherPage.content || [];
 
-  const draftEmployeeId = formData.employeeId || buildDraftEmployeeId(session?.instituteName, (teacherPage.totalElements || 0) + 1);
+  const draftEmployeeId = formData.employeeId || buildDraftEmployeeId(session?.institutionCode || session?.username, (teacherPage.totalElements || 0) + 1);
   const refreshTeacherQueries = async ({ teacherId } = {}) => {
     if (teacherId) {
       await queryClient.invalidateQueries({ queryKey: ['teacher', teacherId] });
@@ -1400,24 +1400,13 @@ function digitsOnly(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
-function buildInstituteCode(instituteName) {
-  const cleanedWords = String(instituteName || '')
-    .trim()
-    .toUpperCase()
-    .split(/\s+/)
-    .map((word) => word.replace(/[^A-Z0-9]/g, ''))
-    .filter(Boolean);
-
-  if (cleanedWords.length >= 2) {
-    return cleanedWords.map((word) => word[0]).join('').slice(0, 6);
-  }
-
-  const compact = String(instituteName || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return compact.slice(0, 6) || 'INST';
+function buildInstituteCode(institutionCode) {
+  const compact = String(institutionCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return compact.slice(0, 20) || 'INST';
 }
 
-function buildDraftEmployeeId(instituteName, sequence) {
-  return `${buildInstituteCode(instituteName)}EMP${String(sequence || 1).padStart(4, '0')}`;
+function buildDraftEmployeeId(institutionCode, sequence) {
+  return `${buildInstituteCode(institutionCode)}EMP${String(sequence || 1).padStart(4, '0')}`;
 }
 
 function mapTeacherToFormData(teacher) {

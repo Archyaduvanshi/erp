@@ -14,6 +14,7 @@ public class InstituteMapper {
         response.setInstituteName(institute.getInstituteName());
         response.setType(institute.getType());
         response.setUsername(institute.getUsername());
+        response.setInstitutionCode(institute.getInstitutionCode());
         response.setAffiliationNo(institute.getAffiliationNo());
         response.setAffiliatedFrom(institute.getAffiliatedFrom());
         response.setContact(institute.getContact());
@@ -32,6 +33,7 @@ public class InstituteMapper {
         InstituteAuthResponse response = new InstituteAuthResponse();
         response.setId(institute.getId());
         response.setUsername(institute.getUsername());
+        response.setInstitutionCode(institute.getInstitutionCode());
         response.setInstituteName(institute.getInstituteName());
         response.setType(institute.getType());
         response.setRole("admin");

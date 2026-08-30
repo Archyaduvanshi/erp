@@ -27,6 +27,7 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         FEATURE_ROUTES.put("/api/library", "library");
         FEATURE_ROUTES.put("/api/hostel", "hostel");
         FEATURE_ROUTES.put("/api/fees", "fees");
+        FEATURE_ROUTES.put("/api/cashbook", "cashbook");
         FEATURE_ROUTES.put("/api/transport", "transport");
         FEATURE_ROUTES.put("/api/attendance", "attendance");
         FEATURE_ROUTES.put("/api/marks", "examinations");

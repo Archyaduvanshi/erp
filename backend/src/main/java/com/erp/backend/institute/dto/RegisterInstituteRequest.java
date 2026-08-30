@@ -3,7 +3,6 @@ package com.erp.backend.institute.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 
 public class RegisterInstituteRequest {
 
@@ -13,9 +12,7 @@ public class RegisterInstituteRequest {
     @NotBlank(message = "Institute type is required")
     private String type;
 
-    @NotBlank(message = "Username is required")
-    @Size(min = 4, max = 120, message = "Institution code must be between 4 and 120 characters")
-    @Pattern(regexp = "^[A-Za-z0-9]+$", message = "Username can contain only small letters, capital letters, and numbers")
+    @Pattern(regexp = "^$|^[A-Za-z0-9]+$", message = "Institution code can contain only letters and numbers")
     private String username;
 
     @NotBlank(message = "Affiliation number is required")

@@ -5,6 +5,7 @@ import java.util.List;
 public record UnifiedLoginResponse(
         Long id,
         String username,
+        String institutionCode,
         String instituteName,
         String type,
         String role,

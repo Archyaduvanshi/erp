@@ -67,6 +67,7 @@ const featureAccessOptions = [
   { value: 'library', label: 'Library Management' },
   { value: 'hostel', label: 'Hostel Management' },
   { value: 'fees', label: 'Fees Management' },
+  { value: 'cashbook', label: 'Cashbook & Finance' },
   { value: 'transport', label: 'Transport Management' },
   { value: 'attendance', label: 'Attendance Management' },
   { value: 'courses', label: 'Course & Subject' },
@@ -208,6 +209,7 @@ const SettingsManagement = () => {
       acceptLogin({
         ...session,
         username: updatedInstitute.username,
+        institutionCode: updatedInstitute.institutionCode || updatedInstitute.username,
         instituteName: updatedInstitute.instituteName,
         type: updatedInstitute.type,
         logo: updatedInstitute.logo,
@@ -409,6 +411,12 @@ const SettingsManagement = () => {
                 <PanelTitle icon={Landmark} title="Institution Profile" description="Update the details shown across the admin dashboard and local session." />
                 <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                   <TextInput label="Institution Name" value={profileForm.instituteName} onChange={(e) => updateProfileField('instituteName', e.target.value)} error={fieldErrors.instituteName} />
+                  <TextInput
+                    label="Institution Code"
+                    value={institute?.institutionCode || institute?.username || session?.institutionCode || session?.username || ''}
+                    helper="Permanent institutional identifier used for login and generated ERP IDs."
+                    readOnly
+                  />
                   <SelectInput label="Institution Type" value={profileForm.type} onChange={(e) => updateProfileField('type', e.target.value)} options={['College', 'School', 'University', 'Institute']} error={fieldErrors.type} />
                   <TextInput label="Affiliation No." value={profileForm.affiliationNo} onChange={(e) => updateProfileField('affiliationNo', e.target.value)} error={fieldErrors.affiliationNo} />
                   <TextInput label="Affiliated From" value={profileForm.affiliatedFrom} onChange={(e) => updateProfileField('affiliatedFrom', e.target.value)} error={fieldErrors.affiliatedFrom} />
@@ -632,7 +640,7 @@ const PanelTitle = ({ icon: Icon, title, description }) => (
   </div>
 );
 
-const TextInput = ({ label, error = '', ...props }) => (
+const TextInput = ({ label, error = '', helper = '', ...props }) => (
   <div className="space-y-2">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <input
@@ -641,6 +649,7 @@ const TextInput = ({ label, error = '', ...props }) => (
       }`}
       {...props}
     />
+    {helper ? <p className="text-[10px] font-bold leading-5 text-slate-400">{helper}</p> : null}
     {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : null}
   </div>
 );

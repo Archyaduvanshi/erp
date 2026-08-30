@@ -26,9 +26,25 @@ const DIGIT_FIELDS = {
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 const PASSWORD_MESSAGE = 'Password must be at least 8 characters with 1 uppercase letter, 1 lowercase letter, 1 number, and 1 symbol.';
 
+const STOP_WORDS = new Set(['THE', 'OF', 'AND']);
+
 const buildInstitutionCode = (name = '') => {
-  const compact = String(name).toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return compact || 'INST';
+  const normalized = String(name)
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const words = normalized.split(' ').filter(Boolean);
+  const meaningfulWords = words.filter((word) => !STOP_WORDS.has(word));
+  const selectedWords = meaningfulWords.length ? meaningfulWords : words;
+  let code = selectedWords.map((word) => word[0]).join('');
+  if (code.length < 3) {
+    code = (selectedWords.find(Boolean) || '').slice(0, 8);
+  }
+  if (code.length < 3) {
+    code = `${code}INST`.slice(0, 3);
+  }
+  return code.slice(0, 20) || 'INST';
 };
 
 const RegisterInstitute = () => {
@@ -82,7 +98,7 @@ const RegisterInstitute = () => {
     }
 
     if (field === 'username') {
-      nextValue = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 120);
+      nextValue = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20);
       setInstitutionCodeEdited(true);
     }
 
@@ -123,6 +139,10 @@ const RegisterInstitute = () => {
 
     if (formData.username && !/^[A-Za-z0-9]+$/.test(formData.username)) {
       errors.username = 'Institution code can contain only letters and numbers.';
+    }
+
+    if (formData.username && (formData.username.length < 3 || formData.username.length > 20)) {
+      errors.username = 'Institution code must be between 3 and 20 characters.';
     }
 
     if (formData.password && !PASSWORD_PATTERN.test(formData.password)) {
@@ -265,7 +285,16 @@ const RegisterInstitute = () => {
               </div>
 
               <div className="grid md:grid-cols-3 gap-6">
-                <InputGroup label="Institution Code" icon={User} placeholder="VICTOR" value={formData.username} onChange={(e) => updateField('username', e.target.value)} error={fieldErrors.username} required />
+                <InputGroup
+                  label="Institution Code"
+                  icon={User}
+                  placeholder="DPS"
+                  value={formData.username}
+                  onChange={(e) => updateField('username', e.target.value)}
+                  error={fieldErrors.username}
+                  helper="Automatically generated from your institution name. This permanent code is used for login and generated ERP IDs."
+                  required
+                />
                 <InputGroup label="Affiliation No." icon={Hash} placeholder="REG-12345" value={formData.affiliationNo} onChange={(e) => updateField('affiliationNo', e.target.value)} error={fieldErrors.affiliationNo} required />
                 <InputGroup label={formData.type === 'School' ? 'Board' : 'University'} icon={School} placeholder="e.g. CBSE / AKTU" value={formData.affiliatedFrom} onChange={(e) => updateField('affiliatedFrom', e.target.value)} error={fieldErrors.affiliatedFrom} required />
               </div>
@@ -390,7 +419,7 @@ const PasswordToggle = ({ isVisible, onClick }) => (
   </button>
 );
 
-const InputGroup = ({ label, icon: Icon, type = "text", error, endAction, ...props }) => (
+const InputGroup = ({ label, icon: Icon, type = "text", error, helper, endAction, ...props }) => (
   <div className="space-y-2 text-left">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
     <div className="relative group">
@@ -404,6 +433,7 @@ const InputGroup = ({ label, icon: Icon, type = "text", error, endAction, ...pro
       />
       {endAction}
     </div>
+    {helper && <p className="text-[10px] font-bold leading-5 text-slate-400">{helper}</p>}
     {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );

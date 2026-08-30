@@ -21,6 +21,7 @@ const FEATURE_ROUTE_MAP = {
   examinations: '/college/examinations',
   timetable: '/college/timetable',
   salary: '/college/salary',
+  cashbook: '/college/cashbook',
   notices: '/college/notices',
   holidays: '/college/holidays',
 };
@@ -40,6 +41,7 @@ const HostelManagement = lazy(() => import('./pages/college/HostelManagement'));
 const FeeManagement = lazy(() => import('./pages/college/FeeManagement'));
 const TimetableManagement = lazy(() => import('./pages/college/TimetableManagement'));
 const SalaryManagement = lazy(() => import('./pages/college/SalaryManagement'));
+const CashbookManagement = lazy(() => import('./pages/college/CashbookManagement'));
 const HolidayManagement = lazy(() => import('./pages/college/HolidayManagement'));
 const NoticeManagement = lazy(() => import('./pages/college/NoticeManagement'));
 const SettingsManagement = lazy(() => import('./pages/college/SettingsManagement'));
@@ -94,6 +96,7 @@ function App() {
           <Route path="/college/fees" element={<RequireCollegeAccess><FeeManagement /></RequireCollegeAccess>} />
           <Route path="/college/salary" element={<RequireCollegeAccess><SalaryManagement /></RequireCollegeAccess>} />
           <Route path="/college/salary/:teacherId" element={<RequireCollegeAccess><SalaryManagement /></RequireCollegeAccess>} />
+          <Route path="/college/cashbook" element={<RequireCollegeAccess><CashbookManagement /></RequireCollegeAccess>} />
           <Route path="/college/timetable" element={<RequireCollegeAccess><TimetableManagement /></RequireCollegeAccess>} />
           <Route path="/college/holidays" element={<RequireCollegeAccess><HolidayManagement /></RequireCollegeAccess>} />
           <Route path="/college/notices" element={<RequireCollegeAccess><NoticeManagement /></RequireCollegeAccess>} />

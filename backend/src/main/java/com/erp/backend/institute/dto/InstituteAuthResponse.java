@@ -4,6 +4,7 @@ public class InstituteAuthResponse {
 
     private Long id;
     private String username;
+    private String institutionCode;
     private String instituteName;
     private String type;
     private String role;
@@ -24,6 +25,14 @@ public class InstituteAuthResponse {
 
     public void setUsername(String username) {
         this.username = username;
+    }
+
+    public String getInstitutionCode() {
+        return institutionCode;
+    }
+
+    public void setInstitutionCode(String institutionCode) {
+        this.institutionCode = institutionCode;
     }
 
     public String getInstituteName() {

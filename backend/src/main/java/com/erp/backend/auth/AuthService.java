@@ -6,7 +6,6 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Base64;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -442,10 +441,10 @@ public class AuthService {
                 accountIdentifier = accountIdentifier.substring(separatorIndex + 1).trim();
             }
         }
-        Institute institute = resolveInstitute(selectedInstitutionCode, identifier == null ? "" : identifier.trim());
-        if (StringUtils.hasText(selectedInstitutionCode)) {
-            institute = instituteRepository.findByUsernameIgnoreCase(selectedInstitutionCode).orElse(null);
+        if (StringUtils.hasText(selectedInstitutionCode) && "admin".equalsIgnoreCase(accountIdentifier)) {
+            accountIdentifier = selectedInstitutionCode;
         }
+        Institute institute = resolveInstitute(selectedInstitutionCode, identifier == null ? "" : identifier.trim());
         return new LoginIdentifier(institute, accountIdentifier);
     }
 
@@ -453,20 +452,7 @@ public class AuthService {
         if (StringUtils.hasText(institutionCode)) {
             return instituteRepository.findByUsernameIgnoreCase(institutionCode).orElse(null);
         }
-        String normalizedIdentifier = submittedIdentifier.trim().toLowerCase();
-        return instituteRepository.findAll().stream()
-                .filter(institute -> StringUtils.hasText(institute.getUsername()))
-                .sorted(Comparator.comparingInt((Institute institute) -> institute.getUsername().length()).reversed())
-                .filter(institute -> {
-                    String code = institute.getUsername().trim().toLowerCase();
-                    if (!normalizedIdentifier.startsWith(code)) {
-                        return false;
-                    }
-                    String suffix = normalizedIdentifier.substring(code.length());
-                    return suffix.startsWith("emp") || suffix.startsWith("stu");
-                })
-                .findFirst()
-                .orElse(null);
+        return null;
     }
 
     private int firstSeparator(String value) {

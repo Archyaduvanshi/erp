@@ -17,6 +17,7 @@ import {
   Settings,
   Shield,
   Users,
+  Wallet,
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -185,6 +186,13 @@ const Dashboard = () => {
             title="Salary Management"
             desc="Set teacher salary, revise compensation, and mark monthly salary payments"
             onClick={() => navigate('/college/salary')}
+          />
+
+          <ModuleCard
+            icon={<Wallet className="text-cyan-700" size={42} />}
+            title="Cashbook & Finance"
+            desc="Track all school income, expenses, fee collections, salary payouts, cash/bank balances, vouchers, refunds and financial transactions from one place."
+            onClick={() => navigate('/college/cashbook')}
           />
 
           <ModuleCard
