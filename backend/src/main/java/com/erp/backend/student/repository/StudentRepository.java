@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import com.erp.backend.attendance.dto.AttendanceStudentResponse;
+import com.erp.backend.curriculum.dto.SectionOccupancyRow;
 import com.erp.backend.fee.dto.FeeStudentSearchResponse;
 import com.erp.backend.hostel.dto.HostelStudentSearchResponse;
 import com.erp.backend.student.dto.StudentClassSummaryResponse;
@@ -50,6 +51,46 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
     boolean existsByInstituteIdAndEnrollmentNoIgnoreCaseAndIdNot(Long instituteId, String enrollmentNo, Long id);
 
     long countByInstituteId(Long instituteId);
+
+    @Query("""
+            select count(s)
+            from Student s
+            where s.institute.id = :instituteId
+              and s.classSection.id = :sectionId
+              and lower(coalesce(s.status, 'verified')) not in ('archived', 'inactive', 'left', 'transferred', 'cancelled')
+            """)
+    long countSeatConsumingByInstituteIdAndSectionId(
+            @Param("instituteId") Long instituteId,
+            @Param("sectionId") Long sectionId
+    );
+
+    @Query("""
+            select count(s)
+            from Student s
+            where s.institute.id = :instituteId
+              and s.classSection.id = :sectionId
+              and s.id <> :studentId
+              and lower(coalesce(s.status, 'verified')) not in ('archived', 'inactive', 'left', 'transferred', 'cancelled')
+            """)
+    long countSeatConsumingByInstituteIdAndSectionIdExcludingStudent(
+            @Param("instituteId") Long instituteId,
+            @Param("sectionId") Long sectionId,
+            @Param("studentId") Long studentId
+    );
+
+    @Query("""
+            select new com.erp.backend.curriculum.dto.SectionOccupancyRow(
+                sec.id,
+                count(s.id)
+            )
+            from ClassSection sec
+            left join Student s on s.classSection = sec
+                and s.institute.id = :instituteId
+                and lower(coalesce(s.status, 'verified')) not in ('archived', 'inactive', 'left', 'transferred', 'cancelled')
+            where sec.institute.id = :instituteId
+            group by sec.id
+            """)
+    List<SectionOccupancyRow> findSectionOccupancy(@Param("instituteId") Long instituteId);
 
     @Query("""
             select new com.erp.backend.student.dto.StudentClassSummaryResponse(

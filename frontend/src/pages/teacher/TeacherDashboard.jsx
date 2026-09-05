@@ -79,7 +79,7 @@ const TeacherDashboard = () => {
             <div className="rounded-lg bg-emerald-600 p-1.5 shadow-sm">
               <GraduationCap size={20} className="text-white" />
             </div>
-            <span className="hidden font-black uppercase italic tracking-tighter text-emerald-800 sm:block sm:text-xl">EduStream</span>
+            <span className="hidden font-black uppercase italic tracking-tighter text-emerald-800 sm:block sm:text-xl">VidyantraErp</span>
           </div>
 
           <div className="flex items-center gap-4 lg:gap-8">

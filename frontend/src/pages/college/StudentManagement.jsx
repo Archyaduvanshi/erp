@@ -22,7 +22,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { settingsApi, studentApi, uploadApi } from '../../utils/api';
+import { academicSessionApi, curriculumApi, settingsApi, studentApi, uploadApi } from '../../utils/api';
 
 const initialFormData = {
   firstName: '',
@@ -48,6 +48,8 @@ const initialFormData = {
   category: '',
   admissionDate: '',
   academicYear: '',
+  classId: '',
+  sectionId: '',
   className: '',
   section: '',
   assignedClass: '',
@@ -141,6 +143,38 @@ const StudentManagement = () => {
     staleTime: 15 * 60 * 1000,
   });
 
+  const academicSessionsQuery = useQuery({
+    queryKey: ['student-form-academic-sessions'],
+    queryFn: academicSessionApi.getAll,
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const activeAcademicSession = useMemo(() => (
+    (academicSessionsQuery.data || []).find((session) => session.current) || (academicSessionsQuery.data || [])[0] || null
+  ), [academicSessionsQuery.data]);
+  const activeAcademicSessionId = activeAcademicSession?.id || '';
+
+  const classOptionsQuery = useQuery({
+    queryKey: ['curriculum', 'class-options', activeAcademicSessionId],
+    queryFn: () => curriculumApi.getClassOptions(activeAcademicSessionId),
+    enabled: Boolean(activeAcademicSessionId),
+    staleTime: 60_000,
+  });
+
+  const sectionOptionsQuery = useQuery({
+    queryKey: ['curriculum', 'section-options', activeAcademicSessionId, formData.classId],
+    queryFn: () => curriculumApi.getSectionOptions(formData.classId),
+    enabled: Boolean(activeAcademicSessionId && formData.classId && activeTab === 'add'),
+    staleTime: 30_000,
+  });
+
+  const detailSectionOptionsQuery = useQuery({
+    queryKey: ['curriculum', 'section-options', activeAcademicSessionId, detailFormData.classId],
+    queryFn: () => curriculumApi.getSectionOptions(detailFormData.classId),
+    enabled: Boolean(activeAcademicSessionId && detailFormData.classId && activeTab === 'detail'),
+    staleTime: 30_000,
+  });
+
   const classSummaryQuery = useQuery({
     queryKey: ['student-class-summary'],
     queryFn: () => studentApi.getClassSummary(),
@@ -176,9 +210,9 @@ const StudentManagement = () => {
   }, [academicYearQuery.data]);
 
   useEffect(() => {
-    const error = academicYearQuery.error || classSummaryQuery.error || studentsQuery.error;
+    const error = academicYearQuery.error || academicSessionsQuery.error || classOptionsQuery.error || sectionOptionsQuery.error || detailSectionOptionsQuery.error || classSummaryQuery.error || studentsQuery.error;
     setLoadError(error?.message || '');
-  }, [academicYearQuery.error, classSummaryQuery.error, studentsQuery.error]);
+  }, [academicYearQuery.error, academicSessionsQuery.error, classOptionsQuery.error, sectionOptionsQuery.error, detailSectionOptionsQuery.error, classSummaryQuery.error, studentsQuery.error]);
 
   const classSummaries = useMemo(() => (
     (classSummaryQuery.data || []).map((summary) => ({
@@ -202,6 +236,9 @@ const StudentManagement = () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['student-class-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['students'] }),
+      queryClient.invalidateQueries({ queryKey: ['curriculum', 'class-options'] }),
+      queryClient.invalidateQueries({ queryKey: ['curriculum', 'section-options'] }),
+      queryClient.invalidateQueries({ queryKey: ['curriculum-classes'] }),
     ]);
   };
 
@@ -697,6 +734,8 @@ const StudentManagement = () => {
               clearFieldError={(field) => setFieldErrors((current) => ({ ...current, [field]: '' }))}
               fieldErrors={fieldErrors}
               currentAcademicYear={currentAcademicYear}
+              classOptions={classOptionsQuery.data || []}
+              sectionOptions={detailSectionOptionsQuery.data || []}
               onBack={() => {
                 setSelectedStudent(null);
                 setDetailFormData(initialFormData);
@@ -733,6 +772,9 @@ const StudentManagement = () => {
               draftEnrollmentNo={draftEnrollmentNo}
               draftAssignedClass={draftAssignedClass}
               currentAcademicYear={currentAcademicYear}
+              classOptions={classOptionsQuery.data || []}
+              sectionOptions={sectionOptionsQuery.data || []}
+              sectionsLoading={sectionOptionsQuery.isLoading || sectionOptionsQuery.isFetching}
               handleDocumentAdd={handleDocumentAdd}
               handleDocumentRemove={handleDocumentRemove}
               handleDocumentBrowse={handleDocumentBrowse}
@@ -1049,6 +1091,9 @@ const EnrollmentWizard = ({
   draftEnrollmentNo,
   draftAssignedClass,
   currentAcademicYear,
+  classOptions,
+  sectionOptions,
+  sectionsLoading,
   handleDocumentAdd,
   handleDocumentRemove,
   handleDocumentBrowse,
@@ -1160,15 +1205,34 @@ const EnrollmentWizard = ({
         <div>
           <FormHeader eyebrow="Step 03" title="Admission management" desc="Track the student transition from applicant to enrolled student with institutional assignment data." />
           <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <CreativeInput label="Class" value={formData.className} onChange={(e) => {
-              const className = normalizeStudentFieldValue('className', e.target.value);
-              setFormData({ ...formData, className, assignedClass: [className, formData.section].filter(Boolean).join(' / ') });
-              clearFieldError('className');
-            }} placeholder="B.Tech CSE" error={fieldErrors.className} />
-            <CreativeSelect label="Section" value={formData.section} onChange={(e) => {
-              setFormData({ ...formData, section: e.target.value === 'Select' ? '' : e.target.value, assignedClass: [formData.className, e.target.value === 'Select' ? '' : e.target.value].filter(Boolean).join(' / ') });
-              clearFieldError('section');
-            }} options={SECTION_OPTIONS} error={fieldErrors.section} />
+            <CurriculumClassSelect
+              label="Class"
+              value={formData.classId}
+              classes={classOptions}
+              error={fieldErrors.className || fieldErrors.classId}
+              onChange={(classId) => {
+                const selected = classOptions.find((item) => String(item.id) === String(classId));
+                const className = selected?.name || '';
+                setFormData({ ...formData, classId, sectionId: '', className, section: '', assignedClass: className });
+                clearFieldError('className');
+                clearFieldError('classId');
+              }}
+            />
+            <CurriculumSectionSelect
+              label="Section"
+              value={formData.sectionId}
+              sections={sectionOptions}
+              loading={sectionsLoading}
+              error={fieldErrors.section || fieldErrors.sectionId}
+              disabled={!formData.classId}
+              onChange={(sectionId) => {
+                const selected = sectionOptions.find((item) => String(item.sectionId) === String(sectionId));
+                const section = selected?.name || '';
+                setFormData({ ...formData, sectionId, section, assignedClass: [formData.className, section].filter(Boolean).join(' / ') });
+                clearFieldError('section');
+                clearFieldError('sectionId');
+              }}
+            />
             <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
             <CreativeInput label="Academic Year" value={formData.academicYear || currentAcademicYear} onChange={(e) => updateFormField('academicYear', e.target.value)} placeholder={currentAcademicYear} />
             <CreativeSelect
@@ -1561,6 +1625,47 @@ const CreativeSelect = ({ label, options, error, ...props }) => (
   </div>
 );
 
+const CurriculumClassSelect = ({ label, value, classes, error, onChange }) => (
+  <div className="space-y-2.5">
+    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <select
+      value={value || ''}
+      onChange={(event) => onChange(event.target.value)}
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white focus:ring-4 ${error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-cyan-500 focus:ring-cyan-100'}`}
+    >
+      <option value="">Select</option>
+      {(classes || []).map((option) => (
+        <option key={option.id} value={option.id}>{option.name}</option>
+      ))}
+    </select>
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
+  </div>
+);
+
+const CurriculumSectionSelect = ({ label, value, sections, loading, error, disabled, allowCurrentFullSectionName, onChange }) => (
+  <div className="space-y-2.5">
+    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <select
+      value={value || ''}
+      disabled={disabled || loading}
+      onChange={(event) => onChange(event.target.value)}
+      className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60 ${error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-cyan-500 focus:ring-cyan-100'}`}
+    >
+      <option value="">{loading ? 'Loading...' : 'Select'}</option>
+      {(sections || []).map((section) => {
+        const isCurrent = allowCurrentFullSectionName && String(section.name || '').toUpperCase() === String(allowCurrentFullSectionName || '').toUpperCase();
+        const isFull = Boolean(section.full) && !isCurrent;
+        return (
+          <option key={section.sectionId} value={section.sectionId} disabled={isFull || section.status === 'INACTIVE'}>
+            {section.name} - {isFull ? `Full (${section.studentCount || 0}/${section.capacity || 30})` : `${section.studentCount || 0}/${section.capacity || 30}`}
+          </option>
+        );
+      })}
+    </select>
+    {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
+  </div>
+);
+
 const DocumentUploadField = ({ label, value, onBrowse, error }) => (
   <div className="space-y-2.5 md:col-span-2">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
@@ -1880,6 +1985,8 @@ function mapStudentToFormData(student) {
     category: student.category || '',
     admissionDate: student.admissionDate || '',
     academicYear: student.academicYear || '',
+    classId: student.classId || '',
+    sectionId: student.sectionId || '',
     className: student.className || '',
     section: student.section || '',
     assignedClass: student.assignedClass || '',
@@ -2025,8 +2132,11 @@ function StudentDetailView({
   formData,
   setFormData,
   updateFormField,
+  clearFieldError,
   fieldErrors,
   currentAcademicYear,
+  classOptions,
+  sectionOptions,
   onBack,
   onSave,
   isSaving,
@@ -2107,15 +2217,34 @@ function StudentDetailView({
                 <CreativeSelect label="Category" value={formData.category} onChange={(e) => updateFormField('category', e.target.value)} options={CATEGORY_OPTIONS} error={fieldErrors.category} />
                 <CreativeInput label="Previous School" value={formData.prevSchool} onChange={(e) => updateFormField('prevSchool', e.target.value)} />
                 <CreativeInput label="Registration Date" type="date" value={formData.regDate} onChange={(e) => setFormData({ ...formData, regDate: e.target.value })} />
-                <CreativeInput label="Class" value={formData.className} onChange={(e) => {
-                  const className = normalizeStudentFieldValue('className', e.target.value);
-                  setFormData({ ...formData, className, assignedClass: [className, formData.section].filter(Boolean).join(' / ') });
-                  clearFieldError('className');
-                }} error={fieldErrors.className} />
-                <CreativeSelect label="Section" value={formData.section} onChange={(e) => {
-                  setFormData({ ...formData, section: e.target.value, assignedClass: [formData.className, e.target.value].filter(Boolean).join(' / ') });
-                  clearFieldError('section');
-                }} options={SECTION_OPTIONS.filter((option) => option !== 'Select')} error={fieldErrors.section} />
+                <CurriculumClassSelect
+                  label="Class"
+                  value={formData.classId}
+                  classes={classOptions}
+                  error={fieldErrors.className || fieldErrors.classId}
+                  onChange={(classId) => {
+                    const selected = classOptions.find((item) => String(item.id) === String(classId));
+                    const className = selected?.name || '';
+                    setFormData({ ...formData, classId, sectionId: '', className, section: '', assignedClass: className });
+                    clearFieldError('className');
+                    clearFieldError('classId');
+                  }}
+                />
+                <CurriculumSectionSelect
+                  label="Section"
+                  value={formData.sectionId}
+                  sections={sectionOptions}
+                  error={fieldErrors.section || fieldErrors.sectionId}
+                  disabled={!formData.classId}
+                  allowCurrentFullSectionName={student.section}
+                  onChange={(sectionId) => {
+                    const selected = sectionOptions.find((item) => String(item.sectionId) === String(sectionId));
+                    const section = selected?.name || '';
+                    setFormData({ ...formData, sectionId, section, assignedClass: [formData.className, section].filter(Boolean).join(' / ') });
+                    clearFieldError('section');
+                    clearFieldError('sectionId');
+                  }}
+                />
                 <CreativeSelect label="Admission Category" value={formData.admissionCategory} onChange={(e) => updateFormField('admissionCategory', e.target.value)} options={ADMISSION_CATEGORY_OPTIONS} error={fieldErrors.admissionCategory} />
                 <CreativeInput label="Academic Year" value={formData.academicYear || currentAcademicYear} onChange={(e) => updateFormField('academicYear', e.target.value)} />
                 <CreativeSelect label="Transport Requested" value={formData.transportOptIn} onChange={(e) => setFormData({ ...formData, transportOptIn: e.target.value, transportStatus: e.target.value === 'yes' ? formData.transportStatus : 'inactive' })} options={['yes', 'no']} />

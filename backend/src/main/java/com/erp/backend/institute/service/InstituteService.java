@@ -152,26 +152,16 @@ public class InstituteService {
     }
 
     private Institute saveWithInstitutionCodeRetry(RegisterInstituteRequest request) {
-        boolean manualCode = isManualInstitutionCode(request);
-        String manualInstitutionCode = manualCode ? institutionCodeService.normalizeManualCode(request.getUsername()) : null;
         String baseCode = institutionCodeService.generateBaseCode(request.getInstituteName());
 
         for (int attempt = 0; attempt < MAX_REGISTRATION_ATTEMPTS; attempt++) {
-            String institutionCode = manualCode
-                    ? manualInstitutionCode
-                    : institutionCodeService.withSuffix(baseCode, attempt);
-            if (manualCode && instituteRepository.existsByUsernameIgnoreCase(institutionCode)) {
-                throw institutionCodeExists();
-            }
-            if (!manualCode && instituteRepository.existsByUsernameIgnoreCase(institutionCode)) {
+            String institutionCode = institutionCodeService.withSuffix(baseCode, attempt);
+            if (instituteRepository.existsByUsernameIgnoreCase(institutionCode)) {
                 continue;
             }
             try {
                 return instituteRepository.saveAndFlush(newInstitute(request, institutionCode));
             } catch (DataIntegrityViolationException exception) {
-                if (manualCode) {
-                    throw institutionCodeExists();
-                }
                 if (attempt == MAX_REGISTRATION_ATTEMPTS - 1) {
                     throw exception;
                 }
@@ -179,14 +169,6 @@ public class InstituteService {
         }
 
         throw new IllegalStateException("Unable to generate a unique institution code. Please try again.");
-    }
-
-    private boolean isManualInstitutionCode(RegisterInstituteRequest request) {
-        if (!StringUtils.hasText(request.getUsername())) {
-            return false;
-        }
-        String requestedCode = institutionCodeService.normalizeManualCode(request.getUsername());
-        return !requestedCode.equals(institutionCodeService.generateBaseCode(request.getInstituteName()));
     }
 
     private Institute newInstitute(RegisterInstituteRequest request, String institutionCode) {
@@ -206,13 +188,6 @@ public class InstituteService {
         institute.setLogo(normalizeOptional(request.getLogo()));
         institute.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         return institute;
-    }
-
-    private FieldValidationException institutionCodeExists() {
-        return new FieldValidationException(
-                "Institution code is already registered.",
-                Map.of("username", "INSTITUTION_CODE_ALREADY_EXISTS")
-        );
     }
 
     private String normalizeOptional(String value) {

@@ -36,8 +36,11 @@ public interface ClassSubjectRepository extends JpaRepository<ClassSubject, Long
             select new com.erp.backend.curriculum.dto.CurriculumClassSummaryResponse(
                 c.id,
                 c.name,
+                c.code,
+                coalesce(c.displayOrder, 0),
                 count(distinct cs.id),
-                count(cb.id),
+                count(distinct cb.id),
+                count(distinct sec.id),
                 c.status
             )
             from SchoolClass c
@@ -45,10 +48,13 @@ public interface ClassSubjectRepository extends JpaRepository<ClassSubject, Long
                 and cs.institute.id = :instituteId
                 and cs.academicSession.id = :academicSessionId
             left join CourseBook cb on cb.classSubject = cs
+            left join ClassSection sec on sec.schoolClass = c
+                and sec.institute.id = :instituteId
+                and sec.status <> 'ARCHIVED'
             where c.institute.id = :instituteId
               and c.status <> 'ARCHIVED'
-            group by c.id, c.name, c.status
-            order by c.name asc
+            group by c.id, c.name, c.code, c.displayOrder, c.status
+            order by coalesce(c.displayOrder, 0) asc, c.name asc
             """)
     List<CurriculumClassSummaryResponse> findClassSummaries(
             @Param("instituteId") Long instituteId,

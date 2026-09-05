@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { academicSessionApi, classSubjectApi, curriculumApi, subjectApi } from '../../utils/api';
 
 const subjectTypes = ['CORE', 'ELECTIVE', 'OPTIONAL', 'ACTIVITY'];
@@ -40,8 +41,19 @@ const initialBookForm = {
   notes: '',
 };
 
+const initialClassForm = {
+  name: '',
+  code: '',
+  sections: [{ name: 'A', maxStudents: 30 }],
+  newSection: '',
+  newSectionCapacity: 30,
+  displayOrder: '',
+  status: 'ACTIVE',
+};
+
 const CourseSubjectManagement = () => {
   const navigate = useNavigate();
+  const { session, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [selectedClass, setSelectedClass] = useState(null);
@@ -51,6 +63,10 @@ const CourseSubjectManagement = () => {
   const [statusFilter, setStatusFilter] = useState('ACTIVE');
   const [expandedSubjectId, setExpandedSubjectId] = useState(null);
   const [subjectFormOpen, setSubjectFormOpen] = useState(false);
+  const [classFormOpen, setClassFormOpen] = useState(false);
+  const [sectionFormOpen, setSectionFormOpen] = useState(false);
+  const [classForm, setClassForm] = useState(initialClassForm);
+  const [sectionForm, setSectionForm] = useState({ id: '', name: '', maxStudents: 30 });
   const [subjectForm, setSubjectForm] = useState(initialSubjectForm);
   const [bookFormSubjectId, setBookFormSubjectId] = useState(null);
   const [bookForm, setBookForm] = useState(initialBookForm);
@@ -59,6 +75,8 @@ const CourseSubjectManagement = () => {
   const sessionsQuery = useQuery({
     queryKey: ['academic-sessions'],
     queryFn: academicSessionApi.getAll,
+    enabled: Boolean(session?.authenticated) && !authLoading,
+    retry: false,
     staleTime: 15 * 60 * 1000,
   });
 
@@ -71,27 +89,32 @@ const CourseSubjectManagement = () => {
   const classSummaryQuery = useQuery({
     queryKey: ['curriculum-classes', academicSessionId],
     queryFn: () => curriculumApi.getClassSummaries(academicSessionId),
-    enabled: Boolean(academicSessionId),
+    enabled: Boolean(session?.authenticated) && !authLoading && Boolean(academicSessionId),
+    retry: false,
     staleTime: 10 * 60 * 1000,
   });
 
   const subjectMasterQuery = useQuery({
     queryKey: ['subject-master'],
     queryFn: subjectApi.getAll,
+    enabled: Boolean(session?.authenticated) && !authLoading,
+    retry: false,
     staleTime: 15 * 60 * 1000,
   });
 
   const classSubjectsQuery = useQuery({
     queryKey: ['class-subjects', selectedClass?.classId, academicSessionId],
     queryFn: () => classSubjectApi.getByClass(selectedClass.classId, academicSessionId),
-    enabled: Boolean(selectedClass?.classId && academicSessionId),
+    enabled: Boolean(session?.authenticated) && !authLoading && Boolean(selectedClass?.classId && academicSessionId),
+    retry: false,
     staleTime: 10 * 60 * 1000,
   });
 
   const booksQuery = useQuery({
     queryKey: ['class-subject-books', expandedSubjectId],
     queryFn: () => classSubjectApi.getBooks(expandedSubjectId),
-    enabled: Boolean(expandedSubjectId),
+    enabled: Boolean(session?.authenticated) && !authLoading && Boolean(expandedSubjectId),
+    retry: false,
     staleTime: 10 * 60 * 1000,
   });
 
@@ -112,6 +135,14 @@ const CourseSubjectManagement = () => {
     });
   }, [classSubjectsQuery.data, statusFilter, subjectSearch, typeFilter]);
 
+  React.useEffect(() => {
+    if (!selectedClass?.classId) return;
+    const latest = (classSummaryQuery.data || []).find((item) => item.classId === selectedClass.classId);
+    if (latest && latest !== selectedClass) {
+      setSelectedClass(latest);
+    }
+  }, [classSummaryQuery.data, selectedClass]);
+
   const addSubjectMutation = useMutation({
     mutationFn: (payload) => classSubjectApi.create(payload),
     onSuccess: async () => {
@@ -125,6 +156,30 @@ const CourseSubjectManagement = () => {
       setLoadError('');
     },
     onError: (error) => setLoadError(error.message || 'Unable to save subject.'),
+  });
+
+  const addClassMutation = useMutation({
+    mutationFn: (payload) => curriculumApi.createClass(payload),
+    onSuccess: async () => {
+      setClassForm(initialClassForm);
+      setClassFormOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] });
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save class.'),
+  });
+
+  const addSectionMutation = useMutation({
+    mutationFn: (payload) => payload.id
+      ? curriculumApi.updateSection(selectedClass.classId, payload.id, payload)
+      : curriculumApi.createSection(selectedClass.classId, payload),
+    onSuccess: async () => {
+      setSectionForm({ id: '', name: '', maxStudents: 30 });
+      setSectionFormOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['curriculum-classes', academicSessionId] });
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to save section.'),
   });
 
   const archiveSubjectMutation = useMutation({
@@ -197,6 +252,66 @@ const CourseSubjectManagement = () => {
     });
   };
 
+  const handleClassSubmit = (event) => {
+    event.preventDefault();
+    const sections = classForm.sections
+      .map((section) => ({ name: String(section.name || '').trim(), maxStudents: Math.max(Number(section.maxStudents) || 30, 1) }))
+      .filter((section) => section.name);
+    const uniqueSections = new Set(sections.map((section) => section.name.toUpperCase()));
+    if (!classForm.name.trim()) {
+      setLoadError('CLASS_NAME_REQUIRED: Class name is required.');
+      return;
+    }
+    if (uniqueSections.size !== sections.length) {
+      setLoadError('DUPLICATE_SECTION: Duplicate section label.');
+      return;
+    }
+    addClassMutation.mutate({
+      name: classForm.name,
+      code: classForm.code,
+      academicSessionId: academicSessionId ? Number(academicSessionId) : null,
+      sections,
+      displayOrder: classForm.displayOrder === '' ? null : Number(classForm.displayOrder),
+      status: classForm.status,
+    });
+  };
+
+  const handleSectionSubmit = (event) => {
+    event.preventDefault();
+    if (!selectedClass) return;
+    if (!sectionForm.name.trim()) {
+      setLoadError('SECTION_NAME_REQUIRED: Section name is required.');
+      return;
+    }
+    addSectionMutation.mutate({
+      id: sectionForm.id || undefined,
+      name: sectionForm.name.trim().toUpperCase(),
+      maxStudents: Math.max(Number(sectionForm.maxStudents) || 30, 1),
+      status: 'ACTIVE',
+    });
+  };
+
+  const addSectionChip = () => {
+    const section = classForm.newSection.trim();
+    if (!section) return;
+    const exists = classForm.sections.some((item) => item.name.trim().toUpperCase() === section.toUpperCase());
+    if (exists) {
+      setLoadError('DUPLICATE_SECTION: Duplicate section label.');
+      return;
+    }
+    setLoadError('');
+    setClassForm((current) => ({
+      ...current,
+      sections: [...current.sections, { name: section.toUpperCase(), maxStudents: Math.max(Number(current.newSectionCapacity) || 30, 1) }],
+      newSection: '',
+      newSectionCapacity: 30,
+    }));
+  };
+
+  const removeSectionChip = (section) => {
+    setClassForm((current) => ({ ...current, sections: current.sections.filter((item) => item.name !== section) }));
+  };
+
   const handleBookSubmit = (event, classSubjectId) => {
     event.preventDefault();
     saveBookMutation.mutate({ classSubjectId, payload: bookForm });
@@ -229,8 +344,8 @@ const CourseSubjectManagement = () => {
               {selectedClass ? 'Classes' : 'Back'}
             </button>
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-600">Course & Subject Management</p>
-              <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{selectedClass ? selectedClass.className : 'Curriculum Studio'}</h1>
+                <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-600">Classes, Sections & Subjects</p>
+                <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{selectedClass ? selectedClass.className : 'Curriculum Studio'}</h1>
             </div>
           </div>
           <select value={String(academicSessionId || '')} onChange={(event) => handleSessionChange(event.target.value)} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100">
@@ -248,12 +363,16 @@ const CourseSubjectManagement = () => {
               <div>
                 <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Class Directory</h3>
                 <p className="mt-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                  {visibleClasses.length} classes | curriculum summary
+                  {visibleClasses.length} classes | section capacity and subject summary
                 </p>
               </div>
               <div className="w-full max-w-md">
                 <SearchInput value={classSearch} onChange={setClassSearch} placeholder="Search class..." />
               </div>
+              <button type="button" onClick={() => setClassFormOpen(true)} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600">
+                <Plus size={15} />
+                Add Class
+              </button>
             </div>
             {classSummaryQuery.isLoading ? (
               <SkeletonGrid />
@@ -264,7 +383,21 @@ const CourseSubjectManagement = () => {
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <p className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{classItem.className}</p>
-                        <p className="mt-2 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">{classItem.subjectCount || 0} Subjects | {classItem.bookCount || 0} Books</p>
+                        <p className="mt-2 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                          {classItem.sectionCount || 0} Sections | {classItem.studentCount || 0}/{classItem.totalCapacity || 0} Students | {classItem.subjectCount || 0} Subjects
+                        </p>
+                        <p className="mt-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+                          Available Seats: {classItem.availableSeats || 0} | Books: {classItem.bookCount || 0}
+                        </p>
+                        {Array.isArray(classItem.sections) && classItem.sections.length ? (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {classItem.sections.slice(0, 4).map((section) => (
+                              <span key={section.id || section.name} className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] ${section.full ? 'border-rose-100 bg-rose-50 text-rose-700' : 'border-cyan-100 bg-white text-cyan-700'}`}>
+                                {section.name} {section.full ? 'Full' : `${section.studentCount || 0}/${section.maxStudents || section.capacity || 30}`}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                       <span className="rounded-2xl bg-white p-3 text-slate-400 shadow-sm transition group-hover:bg-cyan-50 group-hover:text-cyan-700">
                         <ChevronRight className="h-5 w-5" />
@@ -286,9 +419,40 @@ const CourseSubjectManagement = () => {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={copyFromPreviousSession} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"><Copy size={15} /> Copy Previous</button>
+                <button type="button" onClick={() => setSectionFormOpen(true)} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"><Plus size={15} /> Add Section</button>
                 <button type="button" onClick={() => setSubjectFormOpen(true)} className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600"><Plus size={15} /> Add Subject</button>
               </div>
             </div>
+
+            {Array.isArray(selectedClass.sections) && selectedClass.sections.length ? (
+              <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {selectedClass.sections.map((section) => (
+                  <div key={section.id || section.name} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-slate-950">Section {section.name}</p>
+                        <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                          {section.studentCount || 0}/{section.maxStudents || 30} Students
+                        </p>
+                      </div>
+                      <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${section.full ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                        {section.full ? 'Full' : `${section.availableSeats || 0} Seats`}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSectionForm({ id: section.id, name: section.name, maxStudents: section.maxStudents || 30 });
+                        setSectionFormOpen(true);
+                      }}
+                      className="mt-4 rounded-full border border-slate-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"
+                    >
+                      Edit Capacity
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_180px_180px]">
               <SearchInput value={subjectSearch} onChange={setSubjectSearch} placeholder="Search subject..." />
@@ -322,9 +486,122 @@ const CourseSubjectManagement = () => {
           </section>
         )}
       </main>
+      {classFormOpen ? (
+        <ClassFormModal
+          form={classForm}
+          setForm={setClassForm}
+          sessions={sessions}
+          academicSessionId={academicSessionId}
+          addSectionChip={addSectionChip}
+          removeSectionChip={removeSectionChip}
+          onSubmit={handleClassSubmit}
+          onClose={() => setClassFormOpen(false)}
+          saving={addClassMutation.isPending}
+        />
+      ) : null}
+      {sectionFormOpen ? (
+        <SimpleSectionModal
+          form={sectionForm}
+          setForm={setSectionForm}
+          onSubmit={handleSectionSubmit}
+          onClose={() => {
+            setSectionFormOpen(false);
+            setSectionForm({ id: '', name: '', maxStudents: 30 });
+          }}
+          saving={addSectionMutation.isPending}
+        />
+      ) : null}
     </div>
   );
 };
+
+const SimpleSectionModal = ({ form, setForm, onSubmit, onClose, saving }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 px-4 py-8 backdrop-blur-sm">
+    <form onSubmit={onSubmit} className="w-full max-w-lg rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_30px_90px_-35px_rgba(15,23,42,0.55)]">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-cyan-600">Manage Sections</p>
+          <h3 className="mt-1 font-serif text-2xl font-black italic tracking-tight text-slate-950">{form.id ? 'Edit Section' : 'Add Section'}</h3>
+        </div>
+        <button type="button" onClick={onClose} className="rounded-2xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-rose-600"><X size={16} /></button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Input label="Section Name" value={form.name} onChange={(value) => setForm({ ...form, name: value.toUpperCase() })} required />
+        <Input label="Max Students" type="number" value={form.maxStudents} onChange={(value) => setForm({ ...form, maxStudents: value })} required />
+      </div>
+      <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <button type="button" onClick={onClose} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-slate-300">Cancel</button>
+        <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600 disabled:opacity-50"><Save size={15} /> {saving ? 'Saving...' : form.id ? 'Update Section' : 'Save Section'}</button>
+      </div>
+    </form>
+  </div>
+);
+
+const ClassFormModal = ({ form, setForm, sessions, academicSessionId, addSectionChip, removeSectionChip, onSubmit, onClose, saving }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 px-4 py-8 backdrop-blur-sm">
+    <form onSubmit={onSubmit} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_30px_90px_-35px_rgba(15,23,42,0.55)]">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-cyan-600">Classes, Sections & Subjects</p>
+          <h3 className="mt-1 font-serif text-2xl font-black italic tracking-tight text-slate-950">Add New Class</h3>
+        </div>
+        <button type="button" onClick={onClose} className="rounded-2xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-rose-600"><X size={16} /></button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Input label="Class Name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} required />
+        <Input label="Class Code" value={form.code} onChange={(value) => setForm({ ...form, code: value.toUpperCase() })} />
+        <Select label="Academic Session" value={String(academicSessionId || '')} onChange={() => {}}>
+          {sessions.map((session) => <option key={session.id} value={session.id}>{session.name}</option>)}
+        </Select>
+        <Input label="Display Order" type="number" value={form.displayOrder} onChange={(value) => setForm({ ...form, displayOrder: value })} />
+        <Select label="Status" value={form.status} onChange={(value) => setForm({ ...form, status: value })}>
+          <option value="ACTIVE">ACTIVE</option>
+          <option value="INACTIVE">INACTIVE</option>
+        </Select>
+        <div className="md:col-span-2">
+          <span className="mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-slate-700">Sections</span>
+          <div className="rounded-[1.5rem] border-2 border-slate-200 bg-slate-50 p-3">
+            <div className="mb-3 flex flex-wrap gap-2">
+              {form.sections.map((section) => (
+                <span key={section.name} className="inline-flex items-center gap-2 rounded-full border border-cyan-100 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-700">
+                  {section.name} | {section.maxStudents || 30}
+                  <button type="button" onClick={() => removeSectionChip(section.name)} className="text-slate-400 transition hover:text-rose-600"><X size={12} /></button>
+                </span>
+              ))}
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                value={form.newSection}
+                onChange={(event) => setForm({ ...form, newSection: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addSectionChip();
+                  }
+                }}
+                placeholder="A, B, C..."
+                className="min-h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100"
+              />
+              <input
+                type="number"
+                min="1"
+                value={form.newSectionCapacity}
+                onChange={(event) => setForm({ ...form, newSectionCapacity: event.target.value })}
+                placeholder="30"
+                className="min-h-11 w-full rounded-2xl border-2 border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 sm:w-28"
+              />
+              <button type="button" onClick={addSectionChip} className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-cyan-300 hover:text-cyan-700"><Plus size={15} /> Add Section</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <button type="button" onClick={onClose} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-slate-300">Cancel</button>
+        <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white shadow-lg shadow-slate-300 transition hover:bg-cyan-600 disabled:opacity-50"><Save size={15} /> {saving ? 'Saving...' : 'Save Class'}</button>
+      </div>
+    </form>
+  </div>
+);
 
 const SubjectTable = ({ subjects, expandedSubjectId, setExpandedSubjectId, books, booksLoading, bookFormSubjectId, setBookFormSubjectId, bookForm, setBookForm, onBookSubmit, onBookDelete, onArchive, savingBook }) => (
   <div className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-[0_16px_45px_-32px_rgba(15,23,42,0.35)]">

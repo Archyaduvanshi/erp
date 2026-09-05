@@ -586,15 +586,6 @@ public class TeacherSalaryPaymentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + instituteId));
     }
 
-    private AcademicSession resolveAcademicSession(Long instituteId, LocalDate date) {
-        return academicSessionRepository.findAllByInstituteIdOrderByCurrentDescNameDesc(instituteId).stream()
-                .filter(session -> (session.getStartDate() == null || !session.getStartDate().isAfter(date))
-                        && (session.getEndDate() == null || !session.getEndDate().isBefore(date)))
-                .findFirst()
-                .or(() -> academicSessionRepository.findFirstByInstituteIdAndCurrentTrueOrderByUpdatedAtDesc(instituteId))
-                .orElse(null);
-    }
-
     private AcademicSession resolveAcademicSession(PayrollGenerationContext context, LocalDate date) {
         return context.academicSessions().stream()
                 .filter(session -> (session.getStartDate() == null || !session.getStartDate().isAfter(date))
@@ -611,12 +602,6 @@ public class TeacherSalaryPaymentService {
     private BigDecimal allocatedToPeriod(TeacherPayrollPeriod period) {
         if (period.getId() == null) return ZERO;
         return money(paymentAllocationRepository.sumAllocatedToPayrollPeriod(period.getInstitute().getId(), period.getId()));
-    }
-
-    private BigDecimal salaryAmount(Institute institute, Teacher teacher, LocalDate payrollDate) {
-        TeacherSalaryProfile profile = resolveSalaryProfile(institute, teacher, payrollDate);
-        if (profile != null) return money(profile.getBaseSalary());
-        return legacySalaryAmount(teacher);
     }
 
     private BigDecimal salaryAmount(PayrollGenerationContext context, Teacher teacher, LocalDate payrollDate) {
@@ -730,11 +715,6 @@ public class TeacherSalaryPaymentService {
     private String joinMonthKeys(List<String> values) {
         if (values == null || values.isEmpty()) return "";
         return String.join(",", values.stream().filter(StringUtils::hasText).map(String::trim).distinct().toList());
-    }
-
-    private List<String> parseMonthKeys(String value) {
-        if (!StringUtils.hasText(value)) return List.of();
-        return Arrays.stream(value.split(",")).map(String::trim).filter(StringUtils::hasText).toList();
     }
 
     private String buildTeacherName(Teacher teacher) {

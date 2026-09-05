@@ -45,6 +45,11 @@ public class SchoolClass {
     @Column(nullable = false)
     private String normalizedName;
 
+    @Column(length = 40)
+    private String code;
+
+    private Integer displayOrder = 0;
+
     @Column(nullable = false)
     private String status = "ACTIVE";
 

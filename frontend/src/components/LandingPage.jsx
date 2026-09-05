@@ -18,7 +18,7 @@ const LandingPage = () => {
             <div className="bg-linear-to-br from-blue-700 to-indigo-600 p-2 rounded-xl shadow-lg shadow-blue-100">
               <GraduationCap className="text-white" size={26} />
             </div>
-            <span className="text-2xl font-black tracking-tighter uppercase italic text-slate-900">EduStream <span className="text-blue-600 text-sm align-top">SaaS</span></span>
+            <span className="text-2xl font-black tracking-tighter uppercase italic text-slate-900">VidyantraErp <span className="text-blue-600 text-sm align-top">SaaS</span></span>
           </Link>
           
           <div className="hidden lg:flex gap-10 font-bold text-[10px] text-slate-400 uppercase tracking-[0.2em]">
@@ -176,7 +176,7 @@ const LandingPage = () => {
           <div className="max-w-sm">
             <div className="flex items-center gap-2 mb-8">
               <GraduationCap className="text-blue-500" size={32} />
-              <span className="text-2xl font-black italic tracking-tighter uppercase">EduStream</span>
+              <span className="text-2xl font-black italic tracking-tighter uppercase">VidyantraErp</span>
             </div>
             <p className="text-slate-400 text-sm leading-relaxed mb-8 font-medium">
               The professional SaaS platform for modern education. Complete data isolation for 
@@ -190,7 +190,7 @@ const LandingPage = () => {
           </div>
         </div>
         <div className="max-w-7xl mx-auto pt-8 border-t border-slate-800 flex justify-between items-center text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-           <p>© 2026 EduStream SaaS Platform</p>
+           <p>© 2026 VidyantraErp SaaS Platform</p>
            <div className="flex gap-8">
              <span>Terms</span>
              <span>Security</span>

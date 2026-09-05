@@ -53,6 +53,7 @@ public class FeePayment {
     private String mode;
     private String paymentStatus;
     private String paymentTarget;
+    private String paymentOrigin = "MANUAL";
 
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal paidAmount;
@@ -68,6 +69,7 @@ public class FeePayment {
     private BigDecimal balanceRemaining;
     private String downloadLink;
     private String idempotencyKey;
+    private Long gatewayAttemptId;
     private LocalDateTime voidedAt;
     private Long voidedByAccountId;
 

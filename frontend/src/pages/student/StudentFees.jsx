@@ -205,7 +205,7 @@ const StudentFees = () => {
         paidAmount,
         idempotencyKey: crypto.randomUUID(),
         paymentTarget: 'due_auto',
-        coverageLabel: 'Online payment auto-adjusted',
+        coverageLabel: 'Manual payment auto-adjusted',
         activeFromMonth: '',
         billedMonthsCount: 0,
         billingType: 'overall_payment',
@@ -289,7 +289,7 @@ const StudentFees = () => {
           <section className="space-y-8">
             <Panel
               title="Student Fee Collection"
-              description="Payable amount verify karein, online payment proof submit karein, aur receipt database me save karein."
+              description="Payable amount verify karein, manual payment proof submit karein, aur receipt database me save karein."
             >
               <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSavePayment}>
                 <div className="md:col-span-2">
@@ -370,8 +370,14 @@ const StudentFees = () => {
                   onChange={(e) => setPaymentForm({ ...paymentForm, paidAmount: e.target.value })}
                   placeholder="25000"
                 />
-                <div className="md:col-span-2">
-                  <PrimaryButton type="submit" icon={CreditCard} label="Tap To Pay" disabled={!student || customPaymentAmount <= 0 || !paymentForm.transactionId.trim()} />
+                <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
+                  <PrimaryButton
+                    type="submit"
+                    icon={Landmark}
+                    label="Submit Manual Payment"
+                    disabled={!student || customPaymentAmount <= 0 || !paymentForm.transactionId.trim() || savePaymentMutation.isPending}
+                    variant="soft"
+                  />
                 </div>
               </form>
               <div className="mt-8 max-w-md">
@@ -458,11 +464,16 @@ const SearchInput = ({ value, onChange, placeholder }) => (
   </div>
 );
 
-const PrimaryButton = ({ type, icon: Icon, label, disabled = false }) => (
+const PrimaryButton = ({ type, icon: Icon, label, disabled = false, onClick, variant = 'solid' }) => (
   <button
     type={type}
     disabled={disabled}
-    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+    onClick={onClick}
+    className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] transition disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 ${
+      variant === 'soft'
+        ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-white'
+        : 'bg-slate-950 text-white hover:bg-emerald-600'
+    }`}
   >
     <Icon size={15} />
     {label}

@@ -93,7 +93,7 @@ const TeacherSalary = () => {
             <div className="rounded-2xl bg-emerald-600 p-2 shadow-sm">
               <GraduationCap size={18} className="text-white" />
             </div>
-            <span className="hidden font-black uppercase italic tracking-tighter text-emerald-900 sm:block sm:text-xl">EduStream</span>
+            <span className="hidden font-black uppercase italic tracking-tighter text-emerald-900 sm:block sm:text-xl">VidyantraErp</span>
           </div>
 
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">

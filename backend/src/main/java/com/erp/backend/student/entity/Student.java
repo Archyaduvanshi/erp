@@ -3,6 +3,7 @@ package com.erp.backend.student.entity;
 import java.time.LocalDateTime;
 
 import com.erp.backend.curriculum.entity.SchoolClass;
+import com.erp.backend.curriculum.entity.ClassSection;
 import com.erp.backend.institute.entity.Institute;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -52,6 +53,10 @@ public class Student {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "class_id")
     private SchoolClass schoolClass;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "section_id")
+    private ClassSection classSection;
 
     @Column(nullable = false)
     private String firstName;

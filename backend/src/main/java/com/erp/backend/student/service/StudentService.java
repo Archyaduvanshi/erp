@@ -10,8 +10,10 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import com.erp.backend.auth.AuthService;
+import com.erp.backend.curriculum.entity.ClassSection;
 import com.erp.backend.curriculum.entity.SchoolClass;
 import com.erp.backend.curriculum.repository.SchoolClassRepository;
+import com.erp.backend.curriculum.service.SectionCapacityService;
 import com.erp.backend.exception.FieldValidationException;
 import com.erp.backend.exception.ResourceNotFoundException;
 import com.erp.backend.fee.service.FeeService;
@@ -36,6 +38,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -61,6 +64,7 @@ public class StudentService {
     private final AuthService authService;
     private final FeeService feeService;
     private final InstitutionCodeService institutionCodeService;
+    private final SectionCapacityService sectionCapacityService;
 
     public StudentService(
             StudentRepository studentRepository,
@@ -69,7 +73,8 @@ public class StudentService {
             ObjectMapper objectMapper,
             AuthService authService,
             FeeService feeService,
-            InstitutionCodeService institutionCodeService
+            InstitutionCodeService institutionCodeService,
+            SectionCapacityService sectionCapacityService
     ) {
         this.studentRepository = studentRepository;
         this.instituteRepository = instituteRepository;
@@ -78,6 +83,7 @@ public class StudentService {
         this.authService = authService;
         this.feeService = feeService;
         this.institutionCodeService = institutionCodeService;
+        this.sectionCapacityService = sectionCapacityService;
     }
 
     public List<StudentResponse> getAllStudents(Long instituteId) {
@@ -133,7 +139,8 @@ public class StudentService {
         throw new IllegalArgumentException("Student portal login has moved to the main login. Use your enrollment ID and password.");
     }
 
-    public synchronized StudentResponse createStudent(Long instituteId, StudentPayload request) {
+    @Transactional
+    public StudentResponse createStudent(Long instituteId, StudentPayload request) {
         Institute institute = validateInstitute(instituteId);
         validateRequiredFields(request);
         validateUniqueness(instituteId, request);
@@ -151,6 +158,7 @@ public class StudentService {
         return toResponse(savedStudent);
     }
 
+    @Transactional
     public StudentResponse updateStudent(Long instituteId, Long studentId, StudentPayload request) {
         Student student = findStudent(instituteId, studentId);
         validateRequiredFields(request);
@@ -173,30 +181,28 @@ public class StudentService {
         return toResponse(savedStudent);
     }
 
+    @Transactional
     public List<StudentResponse> importStudents(Long instituteId, List<StudentPayload> students) {
         Institute institute = validateInstitute(instituteId);
         Map<String, Integer> nextRollByClass = new LinkedHashMap<>();
-        List<Student> entities = students.stream()
-                .map(payload -> {
-                    validateRequiredFields(payload);
-                    validatePhoneNumbers(payload);
-                    Student student = new Student();
-                    student.setInstitute(institute);
-                    applyStudentPayload(instituteId, student, payload);
-                    if (StringUtils.hasText(student.getAssignedClass())) {
-                        int nextRoll = nextRollByClass.computeIfAbsent(
-                                student.getAssignedClass(),
-                                className -> maxRollNo(instituteId, className)
-                        ) + 1;
-                        nextRollByClass.put(student.getAssignedClass(), nextRoll);
-                        student.setRollNo(String.format("%03d", nextRoll));
-                        student.setQrCodeData(buildFinalQrCodeData(student));
-                    }
-                    return student;
-                })
-                .toList();
-
-        List<Student> savedStudents = studentRepository.saveAll(entities);
+        List<Student> savedStudents = new java.util.ArrayList<>();
+        for (StudentPayload payload : students) {
+            validateRequiredFields(payload);
+            validatePhoneNumbers(payload);
+            Student student = new Student();
+            student.setInstitute(institute);
+            applyStudentPayload(instituteId, student, payload);
+            if (StringUtils.hasText(student.getAssignedClass())) {
+                int nextRoll = nextRollByClass.computeIfAbsent(
+                        student.getAssignedClass(),
+                        className -> maxRollNo(instituteId, className)
+                ) + 1;
+                nextRollByClass.put(student.getAssignedClass(), nextRoll);
+                student.setRollNo(String.format("%03d", nextRoll));
+                student.setQrCodeData(buildFinalQrCodeData(student));
+            }
+            savedStudents.add(studentRepository.saveAndFlush(student));
+        }
         savedStudents.forEach(student -> authService.upsertStudentAccount(student, buildInitialPortalPassword(student), false));
         feeService.synchronizeChargesForStudents(instituteId, savedStudents.stream().map(Student::getId).toList());
 
@@ -301,10 +307,18 @@ public class StudentService {
         student.setAcademicYear(defaultValue(request.academicYear(), buildAcademicYear(student.getAdmissionDate())));
         student.setEnrollmentNo(resolveEnrollmentNo(student, request));
         SchoolClass schoolClass = resolveSchoolClass(instituteId, request);
+        ClassSection classSection = sectionCapacityService.lockAndValidateAvailableSeat(
+                instituteId,
+                schoolClass,
+                request.sectionId(),
+                request.section(),
+                student.getId()
+        );
         student.setSchoolClass(schoolClass);
-        student.setClassName(schoolClass == null ? uppercase(request.className()) : schoolClass.getName());
-        student.setSection(uppercase(request.section()));
-        student.setAssignedClass(resolveAssignedClass(request));
+        student.setClassSection(classSection);
+        student.setClassName(schoolClass.getName());
+        student.setSection(classSection.getName());
+        student.setAssignedClass(resolveAssignedClass(schoolClass.getName(), classSection.getName()));
         student.setAdmissionCategory(uppercase(request.admissionCategory()));
         student.setTransportOptIn(defaultValue(request.transportOptIn(), "no"));
         student.setHostelOptIn(defaultValue(request.hostelOptIn(), "no"));
@@ -374,6 +388,7 @@ public class StudentService {
                 student.getEnrollmentNo(),
                 student.getRollNo(),
                 student.getSchoolClass() == null ? null : student.getSchoolClass().getId(),
+                student.getClassSection() == null ? null : student.getClassSection().getId(),
                 student.getClassName(),
                 student.getSection(),
                 student.getAssignedClass(),
@@ -462,6 +477,9 @@ public class StudentService {
             if ("ARCHIVED".equalsIgnoreCase(schoolClass.getStatus())) {
                 throw new IllegalArgumentException("ARCHIVED_STUDENT_CLASS_NOT_ALLOWED");
             }
+            if ("INACTIVE".equalsIgnoreCase(schoolClass.getStatus())) {
+                throw new IllegalArgumentException("INACTIVE_STUDENT_CLASS_NOT_ALLOWED");
+            }
             return schoolClass;
         }
         if (!StringUtils.hasText(request.className())) {
@@ -532,15 +550,12 @@ public class StudentService {
         return StringUtils.hasText(combinedName) ? combinedName : fallbackName;
     }
 
-    private String resolveAssignedClass(StudentPayload request) {
-        if (StringUtils.hasText(request.className()) && StringUtils.hasText(request.section())) {
-            return request.className().trim().toUpperCase() + " / " + request.section().trim().toUpperCase();
+    private String resolveAssignedClass(String className, String section) {
+        if (StringUtils.hasText(className) && StringUtils.hasText(section)) {
+            return className.trim().toUpperCase() + " / " + section.trim().toUpperCase();
         }
-        if (StringUtils.hasText(request.className())) {
-            return request.className().trim().toUpperCase();
-        }
-        if (StringUtils.hasText(request.assignedClass())) {
-            return request.assignedClass().trim().toUpperCase();
+        if (StringUtils.hasText(className)) {
+            return className.trim().toUpperCase();
         }
         return null;
     }

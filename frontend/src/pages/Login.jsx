@@ -3,9 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { GraduationCap, Lock, User, ArrowRight, ShieldCheck, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { setAccessToken, settingsApi } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
-import { activateDemoSession, demoCredentials, getSchoolDemoSummary, seedDemoData } from '../utils/demoData';
 
-const schoolDemoSummary = getSchoolDemoSummary();
 const FEATURE_ROLES = [
   { value: 'admissionStudent', label: 'Admission Student', route: '/college/students' },
   { value: 'teacherFeature', label: 'Teacher Management', route: '/college/teachers', accessKey: 'teacher' },
@@ -30,22 +28,9 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [formData, setFormData] = useState({
-    institutionCode: '',
     username: '',
     password: ''
   });
-
-  const handleLoadDemo = () => {
-    seedDemoData();
-    const demoInstitution = activateDemoSession('sunrise_demo');
-    setError('');
-    setFieldErrors({});
-
-    if (demoInstitution) {
-      acceptLogin(demoInstitution);
-      navigate('/college');
-    }
-  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -58,7 +43,6 @@ const Login = () => {
     const credential = formData.username.trim();
     try {
       const user = await settingsApi.login({
-        institutionCode: formData.institutionCode.trim(),
         username: credential,
         password: formData.password,
       });
@@ -86,13 +70,13 @@ const Login = () => {
           <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-900/40 group-hover:scale-110 transition-transform">
             <GraduationCap className="text-white" size={26} />
           </div>
-          <span className="text-2xl font-black tracking-tighter uppercase italic">EduStream</span>
+          <span className="text-2xl font-black tracking-tighter uppercase italic">VidyantraErp</span>
         </Link>
 
         <div className="relative z-10">
           <h2 className="text-4xl font-black mb-6 leading-tight tracking-tighter">
             Welcome Back to <br/> 
-            <span className="text-blue-500 font-serif italic text-5xl">EduStream.</span>
+            <span className="text-blue-500 font-serif italic text-5xl">VidyantraErp.</span>
           </h2>
           <p className="text-slate-400 font-bold text-sm uppercase tracking-widest leading-relaxed">
             Access your secure institutional environment to manage **Students**, **Staff**, 
@@ -101,7 +85,7 @@ const Login = () => {
         </div>
 
         <p className="text-slate-500 mt-3 text-[10px] font-black uppercase tracking-[0.3em] relative z-10">
-          © 2026 EduStream SaaS Platform
+          © 2026 VidyantraErp SaaS Platform
         </p>
       </div>
 
@@ -113,7 +97,7 @@ const Login = () => {
               User Login
             </h1>
             <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">
-              Enter institution code with admin username, teacher ID, or student enrollment ID
+              Enter admin username, teacher ID, or student enrollment ID
             </p>
           </div>
 
@@ -125,18 +109,6 @@ const Login = () => {
           )}
 
           <form onSubmit={handleLogin} className="space-y-8">
-            <InputGroup
-              label="Institution Code"
-              icon={ShieldCheck}
-              placeholder="DPS02"
-              value={formData.institutionCode}
-              onChange={(e) => {
-                setFormData({...formData, institutionCode: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20)});
-                setFieldErrors((current) => ({ ...current, institutionCode: '' }));
-              }}
-              error={fieldErrors.institutionCode}
-              required
-            />
             <InputGroup 
               label="Username / Enrollment ID / Teacher ID"
               icon={User} 
@@ -191,30 +163,6 @@ const Login = () => {
               <ArrowRight size={18} className={`transition-transform ${isLoggingIn ? '' : 'group-hover:translate-x-1'}`} />
             </button>
           </form>
-
-          <div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50/60 p-5 text-left">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-700">Demo Workspace</p>
-            <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">
-              Load realistic sample data for students, teachers, transport, and attendance. The school workspace now includes LKG to Class 12 with {schoolDemoSummary.totalSections} sections, {schoolDemoSummary.totalStudents} students, and {schoolDemoSummary.totalTeachers} teachers.
-            </p>
-            <button
-              type="button"
-              onClick={handleLoadDemo}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-blue-700"
-            >
-              Load School Demo Data And Login
-            </button>
-            <div className="mt-4 space-y-2">
-              {demoCredentials.map((demo) => (
-                <div key={demo.username} className="rounded-2xl border border-white bg-white px-4 py-3">
-                  <p className="text-xs font-black text-slate-900">{demo.instituteName}</p>
-                  <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                    {demo.type} | {demo.username} | {demo.password}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
 
           <div className="mt-12 pt-8 border-t border-slate-100 text-center">
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Need a new Workspace?</p>

@@ -67,7 +67,6 @@ const CashbookManagement = () => {
     openingBalance: '0',
     openingDate: new Date().toISOString().slice(0, 10),
   });
-
   const sharedFilters = useMemo(() => ({
     dateFrom: filters.dateFrom,
     dateTo: filters.dateTo,

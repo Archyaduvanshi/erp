@@ -46,7 +46,7 @@ const ComingSoonPage = ({ title, description, backTo, backLabel = 'Back To Dashb
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-lg shadow-sky-200">
               <GraduationCap size={20} />
             </div>
-            <span className="hidden text-sm font-black uppercase italic tracking-tight text-slate-900 sm:inline">EduStream</span>
+            <span className="hidden text-sm font-black uppercase italic tracking-tight text-slate-900 sm:inline">VidyantraErp</span>
           </div>
         </div>
       </header>

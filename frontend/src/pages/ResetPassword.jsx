@@ -45,7 +45,7 @@ const ResetPassword = () => {
       <div className="w-full max-w-lg rounded-[2rem] border border-slate-100 bg-white p-8 shadow-2xl shadow-slate-200/60">
         <Link to="/" className="mb-10 inline-flex items-center gap-3 text-slate-950">
           <span className="rounded-2xl bg-blue-600 p-2 text-white"><GraduationCap size={24} /></span>
-          <span className="text-xl font-black uppercase italic tracking-tight">EduStream</span>
+          <span className="text-xl font-black uppercase italic tracking-tight">VidyantraErp</span>
         </Link>
         <div className="mb-8">
           <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">

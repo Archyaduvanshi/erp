@@ -12,12 +12,19 @@ import com.erp.backend.course.dto.CourseBookResponse;
 import com.erp.backend.course.entity.CourseBook;
 import com.erp.backend.course.repository.CourseBookRepository;
 import com.erp.backend.curriculum.dto.AcademicSessionResponse;
+import com.erp.backend.curriculum.dto.ClassOptionResponse;
+import com.erp.backend.curriculum.dto.ClassCreatePayload;
+import com.erp.backend.curriculum.dto.ClassResponse;
 import com.erp.backend.curriculum.dto.ClassSubjectBulkPayload;
 import com.erp.backend.curriculum.dto.ClassSubjectPayload;
 import com.erp.backend.curriculum.dto.ClassSubjectResponse;
 import com.erp.backend.curriculum.dto.CopyCurriculumRequest;
 import com.erp.backend.curriculum.dto.CourseBookResourcePayload;
 import com.erp.backend.curriculum.dto.CurriculumClassSummaryResponse;
+import com.erp.backend.curriculum.dto.SectionCreatePayload;
+import com.erp.backend.curriculum.dto.SectionOccupancyResponse;
+import com.erp.backend.curriculum.dto.SectionOccupancyRow;
+import com.erp.backend.curriculum.dto.SectionResponse;
 import com.erp.backend.curriculum.dto.SubjectResponse;
 import com.erp.backend.curriculum.entity.AcademicSession;
 import com.erp.backend.curriculum.entity.ClassSection;
@@ -53,6 +60,7 @@ public class CurriculumService {
     private final ClassSectionRepository classSectionRepository;
     private final SubjectRepository subjectRepository;
     private final ClassSubjectRepository classSubjectRepository;
+    private final SectionCapacityService sectionCapacityService;
 
     public CurriculumService(
             InstituteRepository instituteRepository,
@@ -63,7 +71,8 @@ public class CurriculumService {
             SchoolClassRepository schoolClassRepository,
             ClassSectionRepository classSectionRepository,
             SubjectRepository subjectRepository,
-            ClassSubjectRepository classSubjectRepository
+            ClassSubjectRepository classSubjectRepository,
+            SectionCapacityService sectionCapacityService
     ) {
         this.instituteRepository = instituteRepository;
         this.collegeSettingsRepository = collegeSettingsRepository;
@@ -74,6 +83,7 @@ public class CurriculumService {
         this.classSectionRepository = classSectionRepository;
         this.subjectRepository = subjectRepository;
         this.classSubjectRepository = classSubjectRepository;
+        this.sectionCapacityService = sectionCapacityService;
     }
 
     @Transactional
@@ -91,7 +101,154 @@ public class CurriculumService {
         Institute institute = validateInstitute(instituteId);
         AcademicSession session = resolveSession(institute, academicSessionId);
         materializeLegacyCurriculum(institute, session);
-        return classSubjectRepository.findClassSummaries(instituteId, session.getId());
+        Map<Long, Long> occupancyBySectionId = studentRepository.findSectionOccupancy(instituteId).stream()
+                .collect(java.util.stream.Collectors.toMap(SectionOccupancyRow::sectionId, SectionOccupancyRow::studentCount));
+        Map<Long, List<SectionResponse>> sectionsByClassId = classSectionRepository.findAllByInstituteIdOrderBySchoolClassIdAscNameAsc(instituteId).stream()
+                .filter(section -> !"ARCHIVED".equalsIgnoreCase(defaultValue(section.getStatus(), "")))
+                .collect(java.util.stream.Collectors.groupingBy(
+                        section -> section.getSchoolClass().getId(),
+                        java.util.stream.Collectors.mapping(section -> toSectionResponse(section, occupancyBySectionId.getOrDefault(section.getId(), 0L)), java.util.stream.Collectors.toList())
+                ));
+        return classSubjectRepository.findClassSummaries(instituteId, session.getId()).stream()
+                .map(row -> {
+                    List<SectionResponse> sections = sectionsByClassId.getOrDefault(row.classId(), List.of());
+                    long studentCount = sections.stream().mapToLong(section -> section.studentCount() == null ? 0L : section.studentCount()).sum();
+                    int totalCapacity = sections.stream().mapToInt(section -> section.maxStudents() == null ? 0 : section.maxStudents()).sum();
+                    return new CurriculumClassSummaryResponse(
+                            row.classId(),
+                            row.className(),
+                            row.classCode(),
+                            row.displayOrder(),
+                            row.subjectCount(),
+                            row.bookCount(),
+                            row.sectionCount(),
+                            studentCount,
+                            totalCapacity,
+                            Math.max(totalCapacity - Math.toIntExact(Math.min(studentCount, Integer.MAX_VALUE)), 0),
+                            sections,
+                            row.status()
+                    );
+                })
+                .toList();
+    }
+
+    @Transactional
+    public List<CurriculumClassSummaryResponse> getClassSummaryRows(Long instituteId, Long academicSessionId) {
+        return getClassSummaries(instituteId, academicSessionId);
+    }
+
+    @Transactional
+    public List<ClassOptionResponse> getClassOptions(Long instituteId, Long academicSessionId) {
+        Institute institute = validateInstitute(instituteId);
+        resolveSession(institute, academicSessionId);
+        return schoolClassRepository.findAllByInstituteIdOrderByNameAsc(instituteId).stream()
+                .filter(schoolClass -> "ACTIVE".equalsIgnoreCase(defaultValue(schoolClass.getStatus(), "ACTIVE")))
+                .sorted(java.util.Comparator.comparing((SchoolClass schoolClass) -> schoolClass.getDisplayOrder() == null ? 0 : schoolClass.getDisplayOrder())
+                        .thenComparing(SchoolClass::getName, String.CASE_INSENSITIVE_ORDER))
+                .map(schoolClass -> new ClassOptionResponse(schoolClass.getId(), schoolClass.getName(), schoolClass.getCode()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<SectionOccupancyResponse> getSectionOptions(Long instituteId, Long classId) {
+        validateClass(instituteId, classId);
+        Map<Long, Long> occupancyBySectionId = studentRepository.findSectionOccupancy(instituteId).stream()
+                .collect(java.util.stream.Collectors.toMap(SectionOccupancyRow::sectionId, SectionOccupancyRow::studentCount));
+        return classSectionRepository.findAllByInstituteIdAndSchoolClassIdAndStatusNotIgnoreCaseOrderByNameAsc(instituteId, classId, "ARCHIVED")
+                .stream()
+                .map(section -> toSectionOccupancyResponse(section, occupancyBySectionId.getOrDefault(section.getId(), 0L)))
+                .toList();
+    }
+
+    @Transactional
+    public ClassResponse createClass(Long instituteId, ClassCreatePayload request) {
+        Institute institute = validateInstitute(instituteId);
+        AcademicSession session = resolveSession(institute, request.academicSessionId());
+        String className = canonicalClassName(cleanRequired(request.name(), "CLASS_NAME_REQUIRED: Class name is required.", "name"));
+        String normalizedName = normalizeKey(className);
+        if (schoolClassRepository.findByInstituteIdAndNormalizedName(instituteId, normalizedName).isPresent()) {
+            throw new FieldValidationException("CLASS_ALREADY_EXISTS: Class already exists.", Map.of("name", "Class already exists."));
+        }
+        String code = clean(request.code());
+        if (StringUtils.hasText(code) && schoolClassRepository.findByInstituteIdAndCodeIgnoreCase(instituteId, code).isPresent()) {
+            throw new FieldValidationException("CLASS_CODE_ALREADY_EXISTS: Class code already exists.", Map.of("code", "Class code already exists."));
+        }
+        String status = defaultValue(request.status(), "ACTIVE").toUpperCase(Locale.ROOT);
+        if (!Set.of("ACTIVE", "INACTIVE").contains(status)) {
+            throw new FieldValidationException("INVALID_CLASS_STATUS: Class status must be ACTIVE or INACTIVE.", Map.of("status", "Invalid class status."));
+        }
+
+        List<SectionCreatePayload> sectionsPayload = sanitizeSections(request.sections());
+        SchoolClass schoolClass = new SchoolClass();
+        schoolClass.setInstitute(institute);
+        schoolClass.setName(className);
+        schoolClass.setNormalizedName(normalizedName);
+        schoolClass.setCode(StringUtils.hasText(code) ? code.toUpperCase(Locale.ROOT) : null);
+        schoolClass.setDisplayOrder(request.displayOrder() == null ? nextClassDisplayOrder(instituteId) : Math.max(request.displayOrder(), 0));
+        schoolClass.setStatus(status);
+        SchoolClass savedClass = schoolClassRepository.saveAndFlush(schoolClass);
+
+        List<ClassSection> sections = sectionsPayload.stream().map(payload -> {
+            ClassSection section = new ClassSection();
+            section.setInstitute(institute);
+            section.setSchoolClass(savedClass);
+            section.setName(clean(payload.name()).toUpperCase(Locale.ROOT));
+            section.setNormalizedName(normalizeKey(payload.name()));
+            section.setMaxStudents(sectionCapacityService.normalizeCapacity(payload.maxStudents()));
+            section.setStatus(defaultValue(payload.status(), "ACTIVE").toUpperCase(Locale.ROOT));
+            return section;
+        }).toList();
+        if (!sections.isEmpty()) {
+            classSectionRepository.saveAll(sections);
+        }
+        return toClassResponse(savedClass, session, classSectionRepository.findAllByInstituteIdAndSchoolClassIdOrderByNameAsc(instituteId, savedClass.getId()));
+    }
+
+    @Transactional
+    public SectionOccupancyResponse createSection(Long instituteId, Long classId, SectionCreatePayload request) {
+        Institute institute = validateInstitute(instituteId);
+        SchoolClass schoolClass = validateClass(instituteId, classId);
+        String sectionName = cleanRequired(request.name(), "SECTION_NAME_REQUIRED: Section name is required.", "name").toUpperCase(Locale.ROOT);
+        String normalizedName = normalizeKey(sectionName);
+        classSectionRepository.findByInstituteIdAndSchoolClassIdAndNormalizedName(instituteId, classId, normalizedName)
+                .filter(section -> !"ARCHIVED".equalsIgnoreCase(defaultValue(section.getStatus(), "ACTIVE")))
+                .ifPresent(section -> {
+                    throw new FieldValidationException("SECTION_ALREADY_EXISTS: Section already exists.", Map.of("name", "Section already exists."));
+                });
+        ClassSection section = new ClassSection();
+        section.setInstitute(institute);
+        section.setSchoolClass(schoolClass);
+        section.setName(sectionName);
+        section.setNormalizedName(normalizedName);
+        section.setMaxStudents(sectionCapacityService.normalizeCapacity(request.maxStudents()));
+        section.setStatus(defaultValue(request.status(), "ACTIVE").toUpperCase(Locale.ROOT));
+        ClassSection saved = classSectionRepository.save(section);
+        return toSectionOccupancyResponse(saved, 0L);
+    }
+
+    @Transactional
+    public SectionOccupancyResponse updateSection(Long instituteId, Long classId, Long sectionId, SectionCreatePayload request) {
+        validateClass(instituteId, classId);
+        ClassSection section = classSectionRepository.findByInstituteIdAndId(instituteId, sectionId)
+                .filter(item -> item.getSchoolClass() != null && item.getSchoolClass().getId().equals(classId))
+                .orElseThrow(() -> new ResourceNotFoundException("SECTION_NOT_FOUND: Section not found."));
+        String sectionName = cleanRequired(request.name(), "SECTION_NAME_REQUIRED: Section name is required.", "name").toUpperCase(Locale.ROOT);
+        String normalizedName = normalizeKey(sectionName);
+        classSectionRepository.findByInstituteIdAndSchoolClassIdAndNormalizedName(instituteId, classId, normalizedName)
+                .filter(existing -> !existing.getId().equals(sectionId))
+                .filter(existing -> !"ARCHIVED".equalsIgnoreCase(defaultValue(existing.getStatus(), "ACTIVE")))
+                .ifPresent(existing -> {
+                    throw new FieldValidationException("SECTION_ALREADY_EXISTS: Section already exists.", Map.of("name", "Section already exists."));
+                });
+        int capacity = sectionCapacityService.normalizeCapacity(request.maxStudents());
+        sectionCapacityService.validateCapacityChange(instituteId, sectionId, capacity);
+        section.setName(sectionName);
+        section.setNormalizedName(normalizedName);
+        section.setMaxStudents(capacity);
+        section.setStatus(defaultValue(request.status(), section.getStatus()).toUpperCase(Locale.ROOT));
+        ClassSection saved = classSectionRepository.save(section);
+        long students = studentRepository.countSeatConsumingByInstituteIdAndSectionId(instituteId, saved.getId());
+        return toSectionOccupancyResponse(saved, students);
     }
 
     @Transactional
@@ -415,9 +572,35 @@ public class CurriculumService {
                     section.setSchoolClass(schoolClass);
                     section.setName(sectionName);
                     section.setNormalizedName(normalizedSection);
+                    section.setMaxStudents(30);
                     section.setStatus("ACTIVE");
                     return classSectionRepository.save(section);
                 });
+    }
+
+    private List<SectionCreatePayload> sanitizeSections(List<SectionCreatePayload> sections) {
+        if (sections == null || sections.isEmpty()) {
+            return List.of();
+        }
+        Set<String> normalized = new LinkedHashSet<>();
+        List<SectionCreatePayload> cleanSections = new java.util.ArrayList<>();
+        for (SectionCreatePayload section : sections) {
+            if (section == null) continue;
+            String cleanName = clean(section.name());
+            if (!StringUtils.hasText(cleanName)) {
+                continue;
+            }
+            String key = normalizeKey(cleanName);
+            if (!normalized.add(key)) {
+                throw new FieldValidationException("DUPLICATE_SECTION: Duplicate section label.", Map.of("sections", "Duplicate section: " + cleanName));
+            }
+            cleanSections.add(new SectionCreatePayload(cleanName.toUpperCase(Locale.ROOT), sectionCapacityService.normalizeCapacity(section.maxStudents()), defaultValue(section.status(), "ACTIVE")));
+        }
+        return cleanSections;
+    }
+
+    private Integer nextClassDisplayOrder(Long instituteId) {
+        return Math.max(schoolClassRepository.findMaxDisplayOrder(instituteId), 0) + 1;
     }
 
     private Subject resolveSubject(Institute institute, Long subjectId, String subjectName, String subjectCode) {
@@ -512,6 +695,37 @@ public class CurriculumService {
         return new SubjectResponse(subject.getId(), subject.getName(), subject.getCode(), subject.getStatus(), subject.getDescription());
     }
 
+    private ClassResponse toClassResponse(SchoolClass schoolClass, AcademicSession session, List<ClassSection> sections) {
+        List<SectionResponse> sectionResponses = sections.stream().map(this::toSectionResponse).toList();
+        return new ClassResponse(
+                schoolClass.getId(),
+                schoolClass.getName(),
+                schoolClass.getCode(),
+                session.getId(),
+                session.getName(),
+                schoolClass.getStatus(),
+                schoolClass.getDisplayOrder(),
+                (long) sectionResponses.size(),
+                sectionResponses
+        );
+    }
+
+    private SectionResponse toSectionResponse(ClassSection section) {
+        return toSectionResponse(section, 0L);
+    }
+
+    private SectionResponse toSectionResponse(ClassSection section, Long studentCount) {
+        int capacity = sectionCapacityService.normalizeCapacity(section.getMaxStudents());
+        int availableSeats = Math.max(capacity - Math.toIntExact(Math.min(studentCount, Integer.MAX_VALUE)), 0);
+        return new SectionResponse(section.getId(), section.getName(), section.getStatus(), capacity, studentCount, availableSeats, studentCount >= capacity);
+    }
+
+    private SectionOccupancyResponse toSectionOccupancyResponse(ClassSection section, Long studentCount) {
+        int capacity = sectionCapacityService.normalizeCapacity(section.getMaxStudents());
+        int availableSeats = Math.max(capacity - Math.toIntExact(Math.min(studentCount, Integer.MAX_VALUE)), 0);
+        return new SectionOccupancyResponse(section.getId(), section.getSchoolClass().getId(), section.getName(), capacity, studentCount, availableSeats, studentCount >= capacity, section.getStatus());
+    }
+
     private Institute validateInstitute(Long instituteId) {
         return instituteRepository.findById(instituteId)
                 .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + instituteId));
@@ -566,7 +780,11 @@ public class CurriculumService {
     }
 
     private String normalizeKey(String value) {
-        return clean(value).toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
+        return normalizeKeyStatic(value);
+    }
+
+    public static String normalizeKeyStatic(String value) {
+        return StringUtils.hasText(value) ? value.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", " ") : "";
     }
 
     private String defaultValue(String value, String fallback) {

@@ -64,6 +64,18 @@ export const AuthProvider = ({ children }) => {
     refreshSession();
   }, []);
 
+  useEffect(() => {
+    const handleSessionCleared = () => {
+      sessionVersionRef.current += 1;
+      setAccessToken('');
+      setSession(null);
+      setIsLoading(false);
+    };
+
+    window.addEventListener('erp:auth-session-cleared', handleSessionCleared);
+    return () => window.removeEventListener('erp:auth-session-cleared', handleSessionCleared);
+  }, []);
+
   const value = useMemo(() => ({
     session,
     isLoading,

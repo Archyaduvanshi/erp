@@ -458,6 +458,7 @@ public class FeeService {
         payment.setMode(defaultValue(request.mode(), studentSubmitted ? "UPI" : "Cash"));
         payment.setPaymentStatus(studentSubmitted ? PENDING_VERIFICATION : COMPLETED);
         payment.setPaymentTarget(defaultValue(request.paymentTarget(), "due_auto"));
+        payment.setPaymentOrigin("MANUAL");
         payment.setPaidAmount(amount);
         payment.setPaymentDate(request.paymentDate() == null ? LocalDate.now() : request.paymentDate());
         payment.setCoverageLabel(defaultValue(request.coverageLabel(), studentSubmitted ? "Online payment pending verification" : "Overall payment auto-adjusted"));
@@ -808,6 +809,7 @@ public class FeeService {
                 defaultValue(payment.getMode(), "UPI"),
                 defaultValue(payment.getPaymentStatus(), COMPLETED),
                 defaultValue(payment.getPaymentTarget(), "due_auto"),
+                defaultValue(payment.getPaymentOrigin(), "MANUAL"),
                 money(payment.getPaidAmount()),
                 payment.getPaymentDate(),
                 payment.getCoverageLabel(),
@@ -819,6 +821,7 @@ public class FeeService {
                 money(payment.getBalanceRemaining()),
                 payment.getDownloadLink(),
                 payment.getIdempotencyKey(),
+                payment.getGatewayAttemptId(),
                 "UNKNOWN",
                 readStringList(payment.getCoveredMonthsJson()),
                 readStringList(payment.getResolvedMonthsJson()),

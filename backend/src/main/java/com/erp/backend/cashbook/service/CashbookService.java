@@ -438,16 +438,23 @@ public class CashbookService {
 
     @Transactional
     public void postFeePayment(FeePayment payment, Long accountId) {
+        postFeePayment(payment, null, accountId);
+    }
+
+    @Transactional
+    public void postFeePayment(FeePayment payment, Long financialAccountId, Long actorAccountId) {
         if (payment == null || payment.getId() == null || !isCompleted(payment.getPaymentStatus())) return;
         Long instituteId = payment.getInstitute().getId();
         if (entryRepository.findByInstituteIdAndSourceTypeAndSourceIdAndReversalOfEntryIsNull(instituteId, "FEE_PAYMENT", payment.getId()).isPresent()) return;
         Institute institute = validateInstitute(instituteId);
-        FinancialAccount account = resolveAccount(institute, payment.getMode());
+        FinancialAccount account = financialAccountId == null
+                ? resolveAccount(institute, payment.getMode())
+                : findAccount(instituteId, financialAccountId);
         FinancialCategory category = ensureCategory(institute, "INCOME", categoryCodeForFee(payment), categoryLabelForFee(payment), true);
         CashbookEntry entry = buildEntry(institute, payment.getAcademicSession(), account, category, "FEE_PAYMENT", "INCOME",
                 category.getCode(), category.getName(), money(payment.getPaidAmount()),
                 payment.getPaymentDate(), payment.getMode(), "Student #" + payment.getStudentId(),
-                firstText(payment.getReceiptNumber(), payment.getTransactionId()), payment.getCoverageLabel(), accountId);
+                firstText(payment.getReceiptNumber(), payment.getTransactionId()), payment.getCoverageLabel(), actorAccountId);
         entry.setSourceId(payment.getId());
         saveIdempotent(entry);
     }

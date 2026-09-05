@@ -105,7 +105,7 @@ const PortalNotices = ({ role }) => {
             <div className={`rounded-lg ${headerClasses.logo} p-1.5 shadow-sm`}>
               <GraduationCap size={20} className="text-white" />
             </div>
-            <span className={`hidden font-black uppercase italic tracking-tighter ${headerClasses.brand} sm:block sm:text-xl`}>EduStream</span>
+            <span className={`hidden font-black uppercase italic tracking-tighter ${headerClasses.brand} sm:block sm:text-xl`}>VidyantraErp</span>
           </div>
 
           <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] ${headerClasses.badge}`}>

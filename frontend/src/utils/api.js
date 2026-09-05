@@ -7,7 +7,10 @@ const resolveApiBaseUrl = () => {
 
 const API_BASE_URL = resolveApiBaseUrl();
 export const DAILY_ATTENDANCE_PERIOD_NUMBER = 1;
-let accessToken = '';
+const AUTH_SESSION_STORAGE_KEY = 'erp.auth.session';
+const ACCESS_TOKEN_STORAGE_KEY = 'erp.auth.accessToken';
+const AUTH_SESSION_CLEARED_EVENT = 'erp:auth-session-cleared';
+let accessToken = readStoredAccessToken();
 let refreshPromise = null;
 let cachedSession = null;
 const ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60;
@@ -30,11 +33,26 @@ const FEATURE_ROUTE_MAP = {
 };
 
 const readStoredSession = () => {
-  return null;
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 };
 
 const clearStoredAuthSession = () => {
   cachedSession = null;
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+    window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    window.dispatchEvent(new Event(AUTH_SESSION_CLEARED_EVENT));
+  } catch {
+    // Browser storage can be unavailable in private/restricted contexts.
+  }
 };
 
 const toQueryString = (params = {}) => {
@@ -64,7 +82,30 @@ export const warmApi = () => {
 
 export const setAccessToken = (token = '') => {
   accessToken = token || '';
+  if (typeof window === 'undefined') return;
+  try {
+    if (accessToken) {
+      window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
+      window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
+    } else {
+      window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Keep the in-memory token even when browser storage is blocked.
+  }
 };
+
+function readStoredAccessToken() {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)
+      || window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)
+      || '';
+  } catch {
+    return '';
+  }
+}
 
 async function request(path, options = {}) {
   return requestWithAuth(path, options, true);
@@ -195,7 +236,17 @@ export function persistAuthSession(session) {
     role: String(session.role || activeSession.role || '').toLowerCase(),
     assignedFeatures: session.assignedFeatures || activeSession.assignedFeatures || [],
   };
+  if (nextSession.accessToken) {
+    setAccessToken(nextSession.accessToken);
+  }
   cachedSession = nextSession;
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+    } catch {
+      // Browser storage can be unavailable in private/restricted contexts.
+    }
+  }
   return nextSession;
 }
 
@@ -702,6 +753,41 @@ export const curriculumApi = {
     const query = params.toString();
     return request(`/curriculum/classes${query ? `?${query}` : ''}`, withInstituteHeaders());
   },
+
+  getClassSummaryRows: (academicSessionId) => {
+    const params = new URLSearchParams();
+    if (academicSessionId) params.set('academicSessionId', academicSessionId);
+    const query = params.toString();
+    return request(`/curriculum/classes/summary${query ? `?${query}` : ''}`, withInstituteHeaders());
+  },
+
+  getClassOptions: (academicSessionId) => {
+    const params = new URLSearchParams();
+    if (academicSessionId) params.set('academicSessionId', academicSessionId);
+    const query = params.toString();
+    return request(`/curriculum/classes/options${query ? `?${query}` : ''}`, withInstituteHeaders());
+  },
+
+  createClass: (payload) =>
+    request('/curriculum/classes', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  getSectionOptions: (classId) =>
+    request(`/curriculum/classes/${classId}/sections/options`, withInstituteHeaders()),
+
+  createSection: (classId, payload) =>
+    request(`/curriculum/classes/${classId}/sections`, withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  updateSection: (classId, sectionId, payload) =>
+    request(`/curriculum/classes/${classId}/sections/${sectionId}`, withInstituteHeaders({
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })),
 
   copy: (payload) =>
     request('/curriculum/copy', withInstituteHeaders({

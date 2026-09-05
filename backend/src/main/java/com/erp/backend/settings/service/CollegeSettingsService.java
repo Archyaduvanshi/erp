@@ -315,7 +315,7 @@ public class CollegeSettingsService {
             return instituteRepository.findByUsernameIgnoreCase(institutionCode)
                     .orElseThrow(() -> new IllegalArgumentException("Invalid username, enrollment ID, teacher ID, or password."));
         }
-        throw new IllegalArgumentException("Institution code is required.");
+        return null;
     }
 
     private int firstSeparator(String value) {

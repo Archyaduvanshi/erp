@@ -28,6 +28,7 @@ public record StudentResponse(
         String enrollmentNo,
         String rollNo,
         Long classId,
+        Long sectionId,
         String className,
         String section,
         String assignedClass,

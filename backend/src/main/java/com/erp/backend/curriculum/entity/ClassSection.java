@@ -53,6 +53,9 @@ public class ClassSection {
     private String normalizedName;
 
     @Column(nullable = false)
+    private Integer maxStudents = 30;
+
+    @Column(nullable = false)
     private String status = "ACTIVE";
 
     @Column(nullable = false, updatable = false)
