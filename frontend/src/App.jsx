@@ -64,6 +64,7 @@ const TeacherTimetable = lazy(() => import('./pages/teacher/Timetable'));
 const PortalNotices = lazy(() => import('./pages/portal/PortalNotices'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 
 function App() {
   useEffect(() => {
@@ -81,6 +82,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/change-password" element={<RequirePasswordChange><ChangePassword /></RequirePasswordChange>} />
           
           {/* College Admin Dashboard */}
           <Route path="/college" element={<RequireCollegeAccess><Dashboard /></RequireCollegeAccess>} />
@@ -152,6 +154,7 @@ const RequireCollegeAccess = ({ children, adminOnly = false }) => {
   if (isLoading) return <RouteLoading />;
   if (!session) return <Navigate to="/login" replace />;
   if (!session.authenticated) return <Navigate to="/login" replace />;
+  if (session.mustChangePassword) return <Navigate to="/change-password" replace state={{ from: location }} />;
   if (session.role === 'admin') return children;
   if (adminOnly) return <Navigate to={session.allowedPath || '/login'} replace />;
   if (session.role === 'feature') {
@@ -175,12 +178,25 @@ const RequireCollegeAccess = ({ children, adminOnly = false }) => {
 };
 
 const RequirePortalAccess = ({ children, role }) => {
+  const location = useLocation();
   const { session, isLoading } = useAuth();
 
   if (isLoading) return <RouteLoading />;
   if (!session?.authenticated) return <Navigate to="/login" replace />;
+  if (session.mustChangePassword) return <Navigate to="/change-password" replace state={{ from: location }} />;
   if (session.role !== role) {
     return <Navigate to={session.role === 'teacher' ? '/teacher' : session.role === 'student' ? '/student' : '/login'} replace />;
+  }
+  return children;
+};
+
+const RequirePasswordChange = ({ children }) => {
+  const { session, isLoading } = useAuth();
+
+  if (isLoading) return <RouteLoading />;
+  if (!session?.authenticated) return <Navigate to="/login" replace />;
+  if (!session.mustChangePassword) {
+    return <Navigate to={session.role === 'teacher' ? '/teacher' : session.role === 'student' ? '/student' : '/college'} replace />;
   }
   return children;
 };

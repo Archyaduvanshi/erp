@@ -49,7 +49,7 @@ const Login = () => {
       setAccessToken(user.accessToken || '');
       const session = buildSession(user);
       acceptLogin(session);
-      navigate(resolveLoginRoute(user));
+      navigate(user.mustChangePassword ? '/change-password' : resolveLoginRoute(user));
     } catch (apiError) {
       setIsLoggingIn(false);
       setError(apiError.message);
