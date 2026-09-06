@@ -1,6 +1,8 @@
 package com.erp.backend.auth;
 
 import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -14,6 +16,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Component
 public class OriginValidator {
+    private static final List<String> BUILT_IN_TRUSTED_ORIGINS = List.of(
+            "https://erpfrontend-kohl.vercel.app"
+    );
     private final Set<String> trustedOrigins;
     private final Set<String> trustedOriginPatterns;
 
@@ -21,12 +26,14 @@ public class OriginValidator {
             @Value("${app.cors.allowed-origins:}") String allowedOrigins,
             @Value("${app.cors.allowed-origin-patterns:}") String allowedOriginPatterns
     ) {
-        this.trustedOrigins = Arrays.stream(allowedOrigins.split(","))
-                .map(String::trim)
+        Set<String> origins = new LinkedHashSet<>(BUILT_IN_TRUSTED_ORIGINS);
+        origins.addAll(Arrays.stream(allowedOrigins.split(","))
+                .map(this::normalizeCorsValue)
                 .filter(StringUtils::hasText)
-                .collect(Collectors.toUnmodifiableSet());
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
+        this.trustedOrigins = Set.copyOf(origins);
         this.trustedOriginPatterns = Arrays.stream(allowedOriginPatterns.split(","))
-                .map(String::trim)
+                .map(this::normalizeCorsValue)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toUnmodifiableSet());
     }
@@ -39,5 +46,17 @@ public class OriginValidator {
         if (!trustedOrigins.contains(origin) && trustedOriginPatterns.stream().noneMatch(pattern -> PatternMatchUtils.simpleMatch(pattern, origin))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Untrusted request origin.");
         }
+    }
+
+    private String normalizeCorsValue(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if ((normalized.startsWith("\"") && normalized.endsWith("\""))
+                || (normalized.startsWith("'") && normalized.endsWith("'"))) {
+            normalized = normalized.substring(1, normalized.length() - 1).trim();
+        }
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 }

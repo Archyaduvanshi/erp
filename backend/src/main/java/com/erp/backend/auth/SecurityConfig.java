@@ -1,6 +1,9 @@
 package com.erp.backend.auth;
 
 import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -20,6 +23,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
+    private static final List<String> BUILT_IN_TRUSTED_ORIGINS = List.of(
+            "https://erpfrontend-kohl.vercel.app"
+    );
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, AuthSecurityFilter authSecurityFilter) throws Exception {
@@ -52,11 +58,13 @@ public class SecurityConfig {
             @Value("${app.cors.allowed-origin-patterns:}") String allowedOriginPatterns
     ) {
         CorsConfiguration configuration = new CorsConfiguration();
-        if (!allowedOrigins.isBlank()) {
-            configuration.setAllowedOrigins(Arrays.stream(allowedOrigins.split(",")).map(String::trim).filter(value -> !value.isBlank()).toList());
+        List<String> origins = parseCorsValues(allowedOrigins, BUILT_IN_TRUSTED_ORIGINS);
+        if (!origins.isEmpty()) {
+            configuration.setAllowedOrigins(origins);
         }
-        if (!allowedOriginPatterns.isBlank()) {
-            configuration.setAllowedOriginPatterns(Arrays.stream(allowedOriginPatterns.split(",")).map(String::trim).filter(value -> !value.isBlank()).toList());
+        List<String> patterns = parseCorsValues(allowedOriginPatterns, List.of());
+        if (!patterns.isEmpty()) {
+            configuration.setAllowedOriginPatterns(patterns);
         }
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
@@ -65,5 +73,28 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
+    }
+
+    private List<String> parseCorsValues(String configuredValues, List<String> builtInValues) {
+        Set<String> values = new LinkedHashSet<>(builtInValues);
+        if (configuredValues != null && !configuredValues.isBlank()) {
+            Arrays.stream(configuredValues.split(","))
+                    .map(this::normalizeCorsValue)
+                    .filter(value -> !value.isBlank())
+                    .forEach(values::add);
+        }
+        return List.copyOf(values);
+    }
+
+    private String normalizeCorsValue(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if ((normalized.startsWith("\"") && normalized.endsWith("\""))
+                || (normalized.startsWith("'") && normalized.endsWith("'"))) {
+            normalized = normalized.substring(1, normalized.length() - 1).trim();
+        }
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 }
