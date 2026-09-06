@@ -221,12 +221,73 @@ public class CollegeSettingsService {
             }
             return authService.authenticateLoginIdentifier(loginIdentifier.accountIdentifier(), password, ipAddress);
         } catch (IllegalArgumentException exception) {
+            UserAccount legacyPortalAccount = migrateLegacyPortalAccount(loginIdentifier, password);
+            if (legacyPortalAccount != null) {
+                return authService.authenticateAccount(
+                        legacyPortalAccount.getInstitute().getId(),
+                        legacyPortalAccount.getNormalizedLoginIdentifier(),
+                        password,
+                        ipAddress
+                );
+            }
             Institute adminInstitute = instituteRepository.findByUsernameIgnoreCase(loginIdentifier.accountIdentifier()).orElse(null);
             if (adminInstitute != null && passwordEncoder.matches(password, adminInstitute.getPasswordHash())) {
                 return authService.syncAdminAccount(adminInstitute);
             }
             throw exception;
         }
+    }
+
+    private UserAccount migrateLegacyPortalAccount(LoginIdentifier loginIdentifier, String password) {
+        Teacher teacher = resolveLegacyTeacher(loginIdentifier);
+        if (teacher != null && password.equals(buildLegacyTeacherPassword(teacher))) {
+            return authService.upsertTeacherAccount(teacher, password, true);
+        }
+
+        Student student = resolveLegacyStudent(loginIdentifier);
+        if (student != null && password.equals(buildLegacyStudentPassword(student))) {
+            return authService.upsertStudentAccount(student, password, true);
+        }
+
+        return null;
+    }
+
+    private Teacher resolveLegacyTeacher(LoginIdentifier loginIdentifier) {
+        if (loginIdentifier.institute() != null) {
+            return teacherRepository
+                    .findByInstituteIdAndEmployeeIdIgnoreCase(loginIdentifier.institute().getId(), loginIdentifier.accountIdentifier())
+                    .orElse(null);
+        }
+        List<Teacher> matches = teacherRepository.findAllByEmployeeIdIgnoreCase(loginIdentifier.accountIdentifier());
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private Student resolveLegacyStudent(LoginIdentifier loginIdentifier) {
+        if (loginIdentifier.institute() != null) {
+            return studentRepository
+                    .findByInstituteIdAndEnrollmentNoIgnoreCase(loginIdentifier.institute().getId(), loginIdentifier.accountIdentifier())
+                    .orElse(null);
+        }
+        List<Student> matches = studentRepository.findAllByEnrollmentNoIgnoreCase(loginIdentifier.accountIdentifier());
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private String buildLegacyTeacherPassword(Teacher teacher) {
+        return firstSixDigits(teacher.getMobileNumber()) + birthYear(teacher.getDob());
+    }
+
+    private String buildLegacyStudentPassword(Student student) {
+        return firstSixDigits(student.getMobile()) + birthYear(student.getDob());
+    }
+
+    private String firstSixDigits(String value) {
+        String digits = StringUtils.hasText(value) ? value.replaceAll("\\D", "") : "";
+        return digits.length() >= 6 ? digits.substring(0, 6) : "";
+    }
+
+    private String birthYear(String value) {
+        String trimmed = StringUtils.hasText(value) ? value.trim() : "";
+        return trimmed.length() >= 4 && trimmed.substring(0, 4).matches("\\d{4}") ? trimmed.substring(0, 4) : "";
     }
 
     private LoginIdentifier resolveLoginIdentifier(UnifiedLoginRequest request) {
