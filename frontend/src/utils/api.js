@@ -10,10 +10,11 @@ export const DAILY_ATTENDANCE_PERIOD_NUMBER = 1;
 const AUTH_SESSION_STORAGE_KEY = 'erp.auth.session';
 const ACCESS_TOKEN_STORAGE_KEY = 'erp.auth.accessToken';
 const AUTH_SESSION_CLEARED_EVENT = 'erp:auth-session-cleared';
-let accessToken = readStoredAccessToken();
+let accessToken = '';
 let refreshPromise = null;
 let cachedSession = null;
 const ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60;
+purgePersistedAccessToken();
 
 const FEATURE_ROUTE_MAP = {
   admissionStudent: '/college/students',
@@ -36,11 +37,21 @@ const readStoredSession = () => {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    return raw ? stripAuthSecrets(JSON.parse(raw)) : null;
   } catch {
     return null;
   }
 };
+
+function purgePersistedAccessToken() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  } catch {
+    // Browser storage can be unavailable in private/restricted contexts.
+  }
+}
 
 const clearStoredAuthSession = () => {
   cachedSession = null;
@@ -84,28 +95,12 @@ export const setAccessToken = (token = '') => {
   accessToken = token || '';
   if (typeof window === 'undefined') return;
   try {
-    if (accessToken) {
-      window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
-      window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
-    } else {
-      window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-      window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-    }
+    window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   } catch {
     // Keep the in-memory token even when browser storage is blocked.
   }
 };
-
-function readStoredAccessToken() {
-  if (typeof window === 'undefined') return '';
-  try {
-    return window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)
-      || window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)
-      || '';
-  } catch {
-    return '';
-  }
-}
 
 async function request(path, options = {}) {
   return requestWithAuth(path, options, true);
@@ -230,15 +225,14 @@ function decodeJwtPayload(token) {
 
 export function persistAuthSession(session) {
   const activeSession = cachedSession || readStoredSession() || {};
+  const safeSession = stripAuthSecrets(session || {});
+  const safeActiveSession = stripAuthSecrets(activeSession || {});
   const nextSession = {
-    ...activeSession,
-    ...session,
-    role: String(session.role || activeSession.role || '').toLowerCase(),
-    assignedFeatures: session.assignedFeatures || activeSession.assignedFeatures || [],
+    ...safeActiveSession,
+    ...safeSession,
+    role: String(safeSession.role || safeActiveSession.role || '').toLowerCase(),
+    assignedFeatures: safeSession.assignedFeatures || safeActiveSession.assignedFeatures || [],
   };
-  if (nextSession.accessToken) {
-    setAccessToken(nextSession.accessToken);
-  }
   cachedSession = nextSession;
   if (typeof window !== 'undefined') {
     try {
@@ -248,6 +242,20 @@ export function persistAuthSession(session) {
     }
   }
   return nextSession;
+}
+
+function stripAuthSecrets(session) {
+  const {
+    accessToken,
+    refreshToken,
+    password,
+    temporaryPassword,
+    resetToken,
+    token,
+    passwordHash,
+    ...safeSession
+  } = session || {};
+  return safeSession;
 }
 
 function fromAuthMe(session) {

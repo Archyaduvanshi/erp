@@ -21,7 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class ImageKitUploadService {
     private static final String IMAGEKIT_UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
-    private static final long MAX_REGISTRATION_LOGO_BYTES = 5L * 1024L * 1024L;
+    private static final long MAX_REGISTRATION_LOGO_BYTES = 2L * 1024L * 1024L;
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -135,7 +135,7 @@ public class ImageKitUploadService {
             throw new IllegalArgumentException("Institution logo is required.");
         }
         if (file.getSize() > MAX_REGISTRATION_LOGO_BYTES) {
-            throw new IllegalArgumentException("Institution logo must be 5 MB or smaller.");
+            throw new IllegalArgumentException("Institution logo must be 2 MB or smaller.");
         }
         String contentType = StringUtils.hasText(file.getContentType()) ? file.getContentType().toLowerCase() : "";
         if (!contentType.equals("image/jpeg") && !contentType.equals("image/png") && !contentType.equals("image/webp")) {

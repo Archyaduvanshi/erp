@@ -219,75 +219,14 @@ public class CollegeSettingsService {
             if (loginIdentifier.institute() != null) {
                 return authService.authenticateAccount(loginIdentifier.institute().getId(), loginIdentifier.accountIdentifier(), password, ipAddress);
             }
-            throw new IllegalArgumentException("Invalid username, enrollment ID, teacher ID, or password.");
+            return authService.authenticateLoginIdentifier(loginIdentifier.accountIdentifier(), password, ipAddress);
         } catch (IllegalArgumentException exception) {
-            UserAccount portalAccount = bootstrapPortalAccountIfDeterministicPassword(loginIdentifier, password);
-            if (portalAccount != null) {
-                return authService.authenticateAccount(
-                        portalAccount.getInstitute().getId(),
-                        portalAccount.getNormalizedLoginIdentifier(),
-                        password,
-                        ipAddress
-                );
-            }
             Institute adminInstitute = instituteRepository.findByUsernameIgnoreCase(loginIdentifier.accountIdentifier()).orElse(null);
             if (adminInstitute != null && passwordEncoder.matches(password, adminInstitute.getPasswordHash())) {
                 return authService.syncAdminAccount(adminInstitute);
             }
             throw exception;
         }
-    }
-
-    private UserAccount bootstrapPortalAccountIfDeterministicPassword(LoginIdentifier loginIdentifier, String password) {
-        Teacher teacher = resolveTeacherLogin(loginIdentifier);
-        if (teacher != null && password.equals(buildInitialTeacherPassword(teacher))) {
-            return authService.upsertTeacherAccount(teacher, password, false);
-        }
-
-        Student student = resolveStudentLogin(loginIdentifier);
-        if (student != null && password.equals(buildInitialStudentPassword(student))) {
-            return authService.upsertStudentAccount(student, password, false);
-        }
-
-        return null;
-    }
-
-    private Teacher resolveTeacherLogin(LoginIdentifier loginIdentifier) {
-        if (loginIdentifier.institute() != null) {
-            return teacherRepository
-                    .findByInstituteIdAndEmployeeIdIgnoreCase(loginIdentifier.institute().getId(), loginIdentifier.accountIdentifier())
-                    .orElse(null);
-        }
-        List<Teacher> matches = teacherRepository.findAllByEmployeeIdIgnoreCase(loginIdentifier.accountIdentifier());
-        return matches.size() == 1 ? matches.get(0) : null;
-    }
-
-    private Student resolveStudentLogin(LoginIdentifier loginIdentifier) {
-        if (loginIdentifier.institute() != null) {
-            return studentRepository
-                    .findByInstituteIdAndEnrollmentNoIgnoreCase(loginIdentifier.institute().getId(), loginIdentifier.accountIdentifier())
-                    .orElse(null);
-        }
-        List<Student> matches = studentRepository.findAllByEnrollmentNoIgnoreCase(loginIdentifier.accountIdentifier());
-        return matches.size() == 1 ? matches.get(0) : null;
-    }
-
-    private String buildInitialTeacherPassword(Teacher teacher) {
-        return firstSixDigits(teacher.getMobileNumber()) + birthYear(teacher.getDob());
-    }
-
-    private String buildInitialStudentPassword(Student student) {
-        return firstSixDigits(student.getMobile()) + birthYear(student.getDob());
-    }
-
-    private String firstSixDigits(String value) {
-        String digits = StringUtils.hasText(value) ? value.replaceAll("\\D", "") : "";
-        return digits.length() >= 6 ? digits.substring(0, 6) : "";
-    }
-
-    private String birthYear(String value) {
-        String trimmed = StringUtils.hasText(value) ? value.trim() : "";
-        return trimmed.length() >= 4 && trimmed.substring(0, 4).matches("\\d{4}") ? trimmed.substring(0, 4) : "";
     }
 
     private LoginIdentifier resolveLoginIdentifier(UnifiedLoginRequest request) {

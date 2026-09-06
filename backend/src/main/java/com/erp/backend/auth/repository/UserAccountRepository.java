@@ -1,6 +1,7 @@
 package com.erp.backend.auth.repository;
 
 import java.util.Optional;
+import java.util.List;
 
 import com.erp.backend.auth.entity.UserAccount;
 import jakarta.persistence.LockModeType;
@@ -11,6 +12,16 @@ import org.springframework.data.repository.query.Param;
 
 public interface UserAccountRepository extends JpaRepository<UserAccount, Long> {
     Optional<UserAccount> findByInstituteIdAndNormalizedLoginIdentifier(Long instituteId, String normalizedLoginIdentifier);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select account
+            from UserAccount account
+            where account.normalizedLoginIdentifier = :normalizedLoginIdentifier
+            """)
+    List<UserAccount> findAllByNormalizedLoginIdentifierForUpdate(
+            @Param("normalizedLoginIdentifier") String normalizedLoginIdentifier
+    );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""

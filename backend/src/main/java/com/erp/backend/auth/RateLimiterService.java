@@ -35,7 +35,10 @@ public class RateLimiterService {
                 bucket.timestamps.removeFirst();
             }
             if (bucket.timestamps.size() >= maxAttempts) {
-                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many requests. Please try again later.");
+                String message = "institute-registration".equals(scope)
+                        ? "REGISTRATION_RATE_LIMITED"
+                        : "Too many requests. Please try again later.";
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, message);
             }
             bucket.timestamps.addLast(now);
             evictOverflow();

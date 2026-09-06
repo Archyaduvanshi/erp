@@ -12,7 +12,6 @@ const UPPERCASE_FIELDS = [
   'instituteName',
   'affiliationNo',
   'affiliatedFrom',
-  'email',
   'address',
   'state',
   'city',
@@ -25,11 +24,13 @@ const DIGIT_FIELDS = {
 
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 const PASSWORD_MESSAGE = 'Password must be at least 8 characters with 1 uppercase letter, 1 lowercase letter, 1 number, and 1 symbol.';
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
 const RegisterInstitute = () => {
   const navigate = useNavigate();
   const { acceptLogin } = useAuth();
   const [isSuccess, setIsSuccess] = useState(false);
+  const [registeredSession, setRegisteredSession] = useState(null);
   const [logoPreview, setLogoPreview] = useState(null);
   const [logoFile, setLogoFile] = useState(null);
   const [error, setError] = useState('');
@@ -56,6 +57,13 @@ const RegisterInstitute = () => {
   const handleLogoChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoFile(null);
+      setLogoPreview(null);
+      setFieldErrors((currentErrors) => ({ ...currentErrors, logo: 'Institution logo must be 2 MB or smaller.' }));
+      setError('Please fix the highlighted fields.');
+      return;
+    }
 
     setLogoFile(file);
     setLogoPreview(URL.createObjectURL(file));
@@ -68,6 +76,9 @@ const RegisterInstitute = () => {
 
     if (UPPERCASE_FIELDS.includes(field)) {
       nextValue = value.toUpperCase();
+    }
+    if (field === 'email') {
+      nextValue = value.trim().toLowerCase();
     }
 
     if (DIGIT_FIELDS[field]) {
@@ -143,16 +154,19 @@ const RegisterInstitute = () => {
         : null;
       const registeredInstitute = await instituteApi.register({
         ...formData,
+        email: formData.email.trim().toLowerCase(),
         logo: uploadedLogo?.url || logoPreview,
       });
 
       setAccessToken(registeredInstitute.accessToken || '');
-      const { accessToken, ...safeInstituteSession } = registeredInstitute;
-      safeInstituteSession.authenticated = true;
-      acceptLogin(safeInstituteSession);
+      const session = {
+        ...registeredInstitute,
+        authenticated: true,
+      };
+      acceptLogin(session);
+      setRegisteredSession(session);
 
       setIsSuccess(true);
-      setTimeout(() => navigate('/college'), 1500);
     } catch (apiError) {
       setError(apiError.message);
       setFieldErrors(apiError.fieldErrors || {});
@@ -162,6 +176,7 @@ const RegisterInstitute = () => {
   };
 
   if (isSuccess) {
+    const institutionCode = registeredSession?.institutionCode || registeredSession?.username || '';
     return (
       <div className="min-h-screen bg-white flex items-center justify-center p-6 text-center">
         <div className="max-w-md animate-in fade-in zoom-in duration-500">
@@ -173,6 +188,27 @@ const RegisterInstitute = () => {
             Institution Registered!
           </h1>
           <p className="text-slate-500 font-medium">Preparing your secure SaaS environment...</p>
+          {institutionCode && (
+            <div className="mt-8 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Your Institution Code</p>
+              <p className="mt-2 text-3xl font-black uppercase tracking-widest text-slate-950">{institutionCode}</p>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(institutionCode)}
+                className="mt-4 rounded-2xl bg-white px-5 py-3 text-[10px] font-black uppercase tracking-widest text-blue-600 shadow-sm transition hover:text-blue-800"
+              >
+                Copy Code
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate('/college')}
+            className="mt-8 inline-flex items-center justify-center gap-3 rounded-3xl bg-slate-950 px-8 py-4 text-xs font-black uppercase tracking-widest text-white shadow-2xl shadow-blue-100 transition hover:-translate-y-1 hover:bg-blue-600"
+          >
+            Continue to Dashboard
+            <ArrowRight size={16} />
+          </button>
         </div>
       </div>
     );

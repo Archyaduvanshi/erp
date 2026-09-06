@@ -153,7 +153,7 @@ public class StudentService {
         student.setRollNo(resolveNextRollNo(instituteId, student.getAssignedClass()));
         student.setQrCodeData(buildFinalQrCodeData(student));
         Student savedStudent = studentRepository.save(student);
-        authService.upsertStudentAccount(savedStudent, buildInitialPortalPassword(savedStudent), false);
+        authService.upsertStudentAccount(savedStudent, null, true);
         feeService.synchronizeChargesForStudent(instituteId, savedStudent.getId());
         return toResponse(savedStudent);
     }
@@ -203,7 +203,7 @@ public class StudentService {
             }
             savedStudents.add(studentRepository.saveAndFlush(student));
         }
-        savedStudents.forEach(student -> authService.upsertStudentAccount(student, buildInitialPortalPassword(student), false));
+        savedStudents.forEach(student -> authService.upsertStudentAccount(student, null, true));
         feeService.synchronizeChargesForStudents(instituteId, savedStudents.stream().map(Student::getId).toList());
 
         return studentRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId)
@@ -607,26 +607,6 @@ public class StudentService {
                 "Blood Group: " + defaultValue(student.getBloodGroup(), "N/A"),
                 "Admission Date: " + defaultValue(student.getAdmissionDate(), "N/A"),
                 "Documents: " + documentSummary);
-    }
-
-    private String buildInitialPortalPassword(Student student) {
-        return firstSixDigits(student.getMobile(), "Student mobile number") + birthYear(student.getDob(), "Student date of birth");
-    }
-
-    private String firstSixDigits(String value, String label) {
-        String digits = digitsOnly(value);
-        if (digits.length() < 6) {
-            throw new IllegalArgumentException(label + " must have at least 6 digits to generate portal password.");
-        }
-        return digits.substring(0, 6);
-    }
-
-    private String birthYear(String value, String label) {
-        String trimmed = trim(value);
-        if (trimmed == null || trimmed.length() < 4 || !trimmed.substring(0, 4).matches("\\d{4}")) {
-            throw new IllegalArgumentException(label + " must start with a 4 digit year to generate portal password.");
-        }
-        return trimmed.substring(0, 4);
     }
 
     private String digitsOnly(String value) {

@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import com.erp.backend.auth.AuthCookieSupport;
+import com.erp.backend.auth.ClientIpResolver;
 import com.erp.backend.auth.AuthService;
 import com.erp.backend.auth.dto.AuthTokenPair;
 import com.erp.backend.auth.entity.UserAccount;
@@ -18,6 +19,7 @@ import com.erp.backend.settings.dto.ChangeAdminPasswordRequest;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.transaction.Transactional;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -26,7 +28,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class InstituteService {
-    private static final int MAX_REGISTRATION_ATTEMPTS = 25;
+    private static final int MAX_REGISTRATION_ATTEMPTS = 10_000;
 
     private final InstituteRepository instituteRepository;
     private final InstituteMapper instituteMapper;
@@ -34,6 +36,7 @@ public class InstituteService {
     private final PasswordEncoder passwordEncoder;
     private final AuthService authService;
     private final AuthCookieSupport authCookieSupport;
+    private final ClientIpResolver clientIpResolver;
 
     public InstituteService(
             InstituteRepository instituteRepository,
@@ -41,7 +44,8 @@ public class InstituteService {
             InstitutionCodeService institutionCodeService,
             PasswordEncoder passwordEncoder,
             AuthService authService,
-            AuthCookieSupport authCookieSupport
+            AuthCookieSupport authCookieSupport,
+            ClientIpResolver clientIpResolver
     ) {
         this.instituteRepository = instituteRepository;
         this.instituteMapper = instituteMapper;
@@ -49,6 +53,7 @@ public class InstituteService {
         this.passwordEncoder = passwordEncoder;
         this.authService = authService;
         this.authCookieSupport = authCookieSupport;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Transactional
@@ -65,18 +70,19 @@ public class InstituteService {
         return response;
     }
 
-    public InstituteAuthResponse loginInstitute(InstituteLoginRequest request, HttpServletResponse servletResponse) {
-        Institute institute = instituteRepository.findByUsernameIgnoreCase(request.getUsername().trim())
-                .orElseThrow(() -> new IllegalArgumentException("Invalid institution username or password."));
-
-        if (!passwordEncoder.matches(request.getPassword(), institute.getPasswordHash())) {
+    public InstituteAuthResponse loginInstitute(InstituteLoginRequest request, HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
+        UserAccount account = authService.authenticateLoginIdentifier(
+                request.getUsername(),
+                request.getPassword(),
+                clientIpResolver.resolve(servletRequest)
+        );
+        if (!"ADMIN".equalsIgnoreCase(account.getRole())) {
             throw new IllegalArgumentException("Invalid institution username or password.");
         }
 
-        UserAccount account = authService.ensureAdminAccount(institute);
         AuthTokenPair tokens = authService.issueSession(account);
         authCookieSupport.setRefreshCookie(servletResponse, tokens.refreshToken());
-        InstituteAuthResponse response = instituteMapper.toAuthResponse(institute);
+        InstituteAuthResponse response = instituteMapper.toAuthResponse(account.getInstitute());
         response.setAccessToken(tokens.accessToken());
         return response;
     }

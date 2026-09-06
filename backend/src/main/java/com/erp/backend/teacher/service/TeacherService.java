@@ -143,7 +143,7 @@ public class TeacherService {
         try {
             Teacher savedTeacher = teacherRepository.save(teacher);
             syncSalaryProfile(savedTeacher);
-            authService.upsertTeacherAccount(savedTeacher, buildInitialPortalPassword(savedTeacher), false);
+            authService.upsertTeacherAccount(savedTeacher, null, true);
             return toResponse(savedTeacher);
         } catch (DataIntegrityViolationException exception) {
             throw new IllegalArgumentException("Teacher employee ID, email, or mobile number already exists.");
@@ -182,7 +182,7 @@ public class TeacherService {
 
         teacherRepository.saveAll(entities).forEach(teacher -> {
             syncSalaryProfile(teacher);
-            authService.upsertTeacherAccount(teacher, buildInitialPortalPassword(teacher), false);
+            authService.upsertTeacherAccount(teacher, null, true);
         });
         return getAllTeachers(instituteId);
     }
@@ -518,26 +518,6 @@ public class TeacherService {
         } catch (Exception exception) {
             throw new IllegalStateException("Unable to generate teacher QR payload.", exception);
         }
-    }
-
-    private String buildInitialPortalPassword(Teacher teacher) {
-        return firstSixDigits(teacher.getMobileNumber(), "Teacher mobile number") + birthYear(teacher.getDob(), "Teacher date of birth");
-    }
-
-    private String firstSixDigits(String value, String label) {
-        String digits = digitsOnly(value);
-        if (digits.length() < 6) {
-            throw new IllegalArgumentException(label + " must have at least 6 digits to generate portal password.");
-        }
-        return digits.substring(0, 6);
-    }
-
-    private String birthYear(String value, String label) {
-        String trimmed = trim(value);
-        if (trimmed == null || trimmed.length() < 4 || !trimmed.substring(0, 4).matches("\\d{4}")) {
-            throw new IllegalArgumentException(label + " must start with a 4 digit year to generate portal password.");
-        }
-        return trimmed.substring(0, 4);
     }
 
     private int normalizePageSize(Integer size) {

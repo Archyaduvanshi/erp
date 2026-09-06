@@ -116,7 +116,7 @@ public class AuthService {
         String selectedPassword = StringUtils.hasText(rawPassword) ? rawPassword.trim() : isNewAccount ? generateTemporaryPassword() : null;
         if (StringUtils.hasText(selectedPassword)) {
             account.setPasswordHash(passwordEncoder.encode(selectedPassword));
-            account.setMustChangePassword(mustChangePassword);
+            account.setMustChangePassword(mustChangePassword || isNewAccount);
             account.setPasswordChangedAt(LocalDateTime.now());
             account.setFailedLoginCount(0);
             account.setLockedUntil(null);
@@ -138,7 +138,7 @@ public class AuthService {
         String selectedPassword = StringUtils.hasText(rawPassword) ? rawPassword.trim() : isNewAccount ? generateTemporaryPassword() : null;
         if (StringUtils.hasText(selectedPassword)) {
             account.setPasswordHash(passwordEncoder.encode(selectedPassword));
-            account.setMustChangePassword(mustChangePassword);
+            account.setMustChangePassword(mustChangePassword || isNewAccount);
             account.setPasswordChangedAt(LocalDateTime.now());
             account.setFailedLoginCount(0);
             account.setLockedUntil(null);
@@ -158,6 +158,18 @@ public class AuthService {
                 .findByInstituteIdAndNormalizedLoginIdentifierForUpdate(instituteId, normalizeIdentifier(identifier))
                 .orElseThrow(this::invalidCredentials);
         return verifyAccountPassword(account, rawPassword);
+    }
+
+    @Transactional
+    public UserAccount authenticateLoginIdentifier(String identifier, String rawPassword, String ipAddress) {
+        String normalizedIdentifier = normalizeIdentifier(identifier);
+        rateLimiterService.check("login-ip", ipAddress, 30, Duration.ofMinutes(1));
+        rateLimiterService.check("login-account", "global:" + normalizedIdentifier, 10, Duration.ofMinutes(5));
+        List<UserAccount> matches = userAccountRepository.findAllByNormalizedLoginIdentifierForUpdate(normalizedIdentifier);
+        if (matches.size() != 1) {
+            throw invalidCredentials();
+        }
+        return verifyAccountPassword(matches.get(0), rawPassword);
     }
 
     private UserAccount verifyAccountPassword(UserAccount account, String rawPassword) {
@@ -180,9 +192,6 @@ public class AuthService {
         account.setFailedLoginCount(0);
         account.setLastFailedLoginAt(null);
         account.setLockedUntil(null);
-        if (isPortalRole(account.getRole())) {
-            account.setMustChangePassword(false);
-        }
         return userAccountRepository.save(account);
     }
 
@@ -415,10 +424,6 @@ public class AuthService {
 
     private boolean activeStudentStatus(String status) {
         return !StringUtils.hasText(status) || "VERIFIED".equalsIgnoreCase(status) || "ACTIVE".equalsIgnoreCase(status);
-    }
-
-    private boolean isPortalRole(String role) {
-        return "TEACHER".equalsIgnoreCase(role) || "STUDENT".equalsIgnoreCase(role);
     }
 
     private List<UserAccount> accountsForPasswordReset(LoginIdentifier loginIdentifier) {
