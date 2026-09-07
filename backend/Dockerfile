@@ -16,7 +16,7 @@ COPY --from=build /app/target/backend-0.0.1-SNAPSHOT.jar app.jar
 
 ENV PORT=10000
 ENV SPRING_PROFILES_ACTIVE=prod
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Djava.security.egd=file:/dev/./urandom"
 EXPOSE 10000
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
