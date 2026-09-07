@@ -22,6 +22,13 @@ public interface StudentMarkRepository extends JpaRepository<StudentMark, Long> 
             String subjectName
     );
 
+    List<StudentMark> findAllByInstituteIdAndAcademicSessionIdAndSchoolClassIdAndSubjectIdOrderByExamTitleAscCreatedAtAsc(
+            Long instituteId,
+            Long academicSessionId,
+            Long classId,
+            Long subjectId
+    );
+
     List<StudentMark> findAllByInstituteIdAndClassNameIgnoreCaseOrderBySubjectNameAscExamTitleAscCreatedAtAsc(
             Long instituteId,
             String className

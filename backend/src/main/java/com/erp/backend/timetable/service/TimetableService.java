@@ -55,6 +55,7 @@ import org.springframework.util.StringUtils;
 @Service
 public class TimetableService {
     private static final Pattern LEADING_CLASS_NUMBER = Pattern.compile("^(?:class\\s*)?(\\d{1,2})(?:\\b|\\s|/)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CLASS_SECTION_DASH_LABEL = Pattern.compile("^(.+?)\\s*-\\s*([A-Za-z0-9]+)$");
 
     private final InstituteRepository instituteRepository;
     private final AcademicSessionRepository academicSessionRepository;
@@ -131,10 +132,10 @@ public class TimetableService {
 
     public ClassTimetableResponse getStudentTimetable(Long instituteId, Long studentId, Long academicSessionId) {
         AcademicSession session = resolveSession(instituteId, academicSessionId);
-        Student student = studentRepository.findByInstituteIdAndId(instituteId, studentId)
+        Student student = studentRepository.findByInstituteIdAndIdWithClassAndSection(instituteId, studentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Student not found with id: " + studentId));
         StudentTimetableTarget target = resolveStudentTimetableTarget(instituteId, student);
-        return findClassTimetableByIdentity(instituteId, session.getId(), target.schoolClass().getId(), target.section() == null ? null : target.section().getId())
+        return findStudentClassTimetable(instituteId, session.getId(), target.schoolClass().getId(), target.section() == null ? null : target.section().getId())
                 .map(this::toClassTimetableResponse)
                 .orElse(null);
     }
@@ -422,19 +423,61 @@ public class TimetableService {
     }
 
     private StudentTimetableTarget resolveStudentTimetableTarget(Long instituteId, Student student) {
-        String label = StringUtils.hasText(student.getAssignedClass())
-                ? student.getAssignedClass()
-                : displayStudentClassName(student);
-        String[] parts = String.valueOf(label == null ? "" : label).split("/", 2);
-        String className = canonicalSubjectClassName(parts[0]);
-        SchoolClass schoolClass = resolveClassFromName(instituteId, className);
+        StudentTimetableTarget stableTarget = resolveStableStudentTimetableTarget(instituteId, student);
+        if (stableTarget != null) {
+            return stableTarget;
+        }
+
+        StudentClassSectionLabel label = parseStudentClassSectionLabel(
+                StringUtils.hasText(student.getAssignedClass()) ? student.getAssignedClass() : displayStudentClassName(student),
+                student.getSection()
+        );
+        SchoolClass schoolClass = resolveClassFromName(instituteId, label.className());
         ClassSection section = null;
-        String sectionName = parts.length > 1 ? parts[1].trim() : student.getSection();
+        String sectionName = label.sectionName();
         if (StringUtils.hasText(sectionName)) {
             section = classSectionRepository.findByInstituteIdAndSchoolClassIdAndNormalizedName(instituteId, schoolClass.getId(), normalizeKey(sectionName))
                     .orElse(null);
         }
         return new StudentTimetableTarget(schoolClass, section);
+    }
+
+    private StudentTimetableTarget resolveStableStudentTimetableTarget(Long instituteId, Student student) {
+        if (student.getSchoolClass() == null) {
+            return null;
+        }
+        SchoolClass schoolClass = schoolClassRepository.findByInstituteIdAndId(instituteId, student.getSchoolClass().getId())
+                .filter(candidate -> !"ARCHIVED".equalsIgnoreCase(candidate.getStatus()))
+                .orElse(null);
+        if (schoolClass == null) {
+            return null;
+        }
+        ClassSection section = null;
+        if (student.getClassSection() != null) {
+            section = classSectionRepository.findByInstituteIdAndId(instituteId, student.getClassSection().getId())
+                    .filter(candidate -> candidate.getSchoolClass().getId().equals(schoolClass.getId()))
+                    .filter(candidate -> !"ARCHIVED".equalsIgnoreCase(candidate.getStatus()))
+                    .orElse(null);
+        }
+        return new StudentTimetableTarget(schoolClass, section);
+    }
+
+    private StudentClassSectionLabel parseStudentClassSectionLabel(String classLabel, String fallbackSection) {
+        String cleanLabel = String.valueOf(classLabel == null ? "" : classLabel).trim();
+        String className = cleanLabel;
+        String sectionName = fallbackSection;
+        String[] slashParts = cleanLabel.split("/", 2);
+        if (slashParts.length == 2) {
+            className = slashParts[0].trim();
+            sectionName = slashParts[1].trim();
+        } else if (!StringUtils.hasText(fallbackSection)) {
+            Matcher matcher = CLASS_SECTION_DASH_LABEL.matcher(cleanLabel);
+            if (matcher.matches()) {
+                className = matcher.group(1).trim();
+                sectionName = matcher.group(2).trim();
+            }
+        }
+        return new StudentClassSectionLabel(canonicalSubjectClassName(className), sectionName);
     }
 
     private String displayStudentClassName(Student student) {
@@ -445,6 +488,9 @@ public class TimetableService {
     }
 
     private record StudentTimetableTarget(SchoolClass schoolClass, ClassSection section) {
+    }
+
+    private record StudentClassSectionLabel(String className, String sectionName) {
     }
 
     private String normalizeTimetableClassKey(String value) {
@@ -497,6 +543,14 @@ public class TimetableService {
         return sectionId == null
                 ? classTimetableRepository.findByInstituteIdAndAcademicSessionIdAndSchoolClassIdAndSectionIsNull(instituteId, academicSessionId, classId)
                 : classTimetableRepository.findByInstituteIdAndAcademicSessionIdAndSchoolClassIdAndSectionId(instituteId, academicSessionId, classId, sectionId);
+    }
+
+    private Optional<ClassTimetable> findStudentClassTimetable(Long instituteId, Long academicSessionId, Long classId, Long sectionId) {
+        Optional<ClassTimetable> exactMatch = findClassTimetableByIdentity(instituteId, academicSessionId, classId, sectionId);
+        if (exactMatch.isPresent() || sectionId == null) {
+            return exactMatch;
+        }
+        return findClassTimetableByIdentity(instituteId, academicSessionId, classId, null);
     }
 
     private Optional<TimetableTemplateDraft> findTemplateDraftByIdentity(Long instituteId, Long academicSessionId, Long classId, Long sectionId) {
@@ -759,6 +813,7 @@ public class TimetableService {
                 schoolClass == null ? timetable.getClassName() : schoolClass.getName(),
                 section == null ? null : section.getName(),
                 period.getClassSubject().getId(),
+                period.getClassSubject().getSubject().getId(),
                 period.getClassSubject().getSubject().getName(),
                 teacher.getId(),
                 StringUtils.hasText(teacher.getEmployeeId()) ? teacherName + " (" + teacher.getEmployeeId() + ")" : teacherName
@@ -780,6 +835,7 @@ public class TimetableService {
                 period.className(),
                 period.sectionName(),
                 period.classSubjectId(),
+                period.subjectId(),
                 period.subjectName(),
                 period.teacherId(),
                 teacherName

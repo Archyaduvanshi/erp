@@ -271,7 +271,7 @@ public class HostelService {
         Student student = studentRepository.findByInstituteIdAndEnrollmentNoIgnoreCase(instituteId, enrollmentNo.trim())
                 .orElseThrow(() -> new ResourceNotFoundException("STUDENT_NOT_FOUND: Student not found with enrollment number: " + enrollmentNo));
         return new HostelStudentLookupResponse(student.getId(), student.getEnrollmentNo(), buildStudentName(student),
-                student.getGuardianName(), getStudentClassName(student), getStudentSection(student));
+                student.getGuardianName(), student.getGuardianPhone(), getStudentClassName(student), getStudentSection(student));
     }
 
     @Transactional(readOnly = true)

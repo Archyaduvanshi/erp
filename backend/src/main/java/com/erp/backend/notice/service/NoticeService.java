@@ -74,9 +74,8 @@ public class NoticeService {
     @Transactional(readOnly = true)
     public Page<NoticeListResponse> getNotices(Long instituteId, int page, int size, String search, String status, String audience, String priority, String category) {
         Pageable pageable = PageRequest.of(Math.max(page, 0), allowedSize(size, 25), Sort.by(
-                Sort.Order.desc("pinned"),
-                Sort.Order.desc("publishDate"),
-                Sort.Order.desc("createdAt")
+                Sort.Order.desc("createdAt"),
+                Sort.Order.desc("publishDate")
         ));
         return noticeRepository.findAdminNotices(
                 instituteId,

@@ -233,6 +233,17 @@ const HostelManagement = () => {
   const selectedStudent = studentSearchResults.find((student) => String(student.studentId || student.id) === String(residentForm.studentId)) || null;
   const selectedStudentContact = selectedStudent ? studentContact(selectedStudent.studentId || selectedStudent.id, studentSearchResults) : '';
 
+  useEffect(() => {
+    if (!showAllotmentForm || !selectedAllotmentRoom || residentForm.bedNumber) {
+      return;
+    }
+    const suggestedBedNumber = suggestAvailableBedNumber(selectedAllotmentRoom, selectedRoomResidents);
+    if (suggestedBedNumber) {
+      setResidentForm((current) => current.bedNumber ? current : { ...current, bedNumber: suggestedBedNumber });
+      clearFieldError('bedNumber');
+    }
+  }, [residentForm.bedNumber, selectedAllotmentRoom, selectedRoomResidents, showAllotmentForm]);
+
   const handleBack = () => {
     if (activeSection === 'room-generator') {
       setActiveSection('rooms');
@@ -365,9 +376,9 @@ const HostelManagement = () => {
       fatherName: student?.fatherName || student?.guardianName || '',
       className: student?.className || getStudentClass(student),
       section: student?.section || getStudentSection(student),
-      guardianContact: student?.guardianPhone ? digitsOnly(student.guardianPhone, 10) : current.guardianContact,
+      guardianContact: digitsOnly(student?.guardianPhone || student?.fatherMobile || student?.mobileNumber || current.guardianContact, 10),
     }));
-    ['enrollmentNo', 'studentId', 'studentName', 'fatherName', 'className', 'section'].forEach(clearFieldError);
+    ['enrollmentNo', 'studentId', 'studentName', 'fatherName', 'className', 'section', 'guardianContact'].forEach(clearFieldError);
   };
 
   const handleResidentEnrollmentChange = async (value, shouldLookup = false, extraFormValues = {}) => {
@@ -413,6 +424,7 @@ const HostelManagement = () => {
     setResidentForm({
       ...initialResidentForm,
       roomId: String(room.id),
+      bedNumber: suggestAvailableBedNumber(room, selectedRoomResidents),
       monthlyCharge: roomCharge(room),
     });
     setFormErrors({});
@@ -1647,6 +1659,22 @@ function roomCharge(room) {
 
 function getVacantBeds(room) {
   return Math.max((Number(room?.capacity) || 0) - (Number(room?.occupiedBeds) || 0), 0);
+}
+
+function suggestAvailableBedNumber(room, residents = []) {
+  const capacity = Number(room?.capacity) || 0;
+  if (!capacity) return '';
+  const occupiedBeds = new Set(
+    residents
+      .filter(isActiveResident)
+      .map((resident) => String(resident?.bedNumber || '').trim().toUpperCase())
+      .filter(Boolean),
+  );
+  for (let index = 1; index <= capacity; index += 1) {
+    const candidate = `BED-${index}`;
+    if (!occupiedBeds.has(candidate)) return candidate;
+  }
+  return '';
 }
 
 function isActiveResident(resident) {

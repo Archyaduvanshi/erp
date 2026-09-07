@@ -5,6 +5,7 @@ public record HostelStudentLookupResponse(
         String enrollmentNo,
         String studentName,
         String fatherName,
+        String guardianPhone,
         String className,
         String section
 ) {

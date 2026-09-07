@@ -28,6 +28,17 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
 
     Optional<Student> findByInstituteIdAndId(Long instituteId, Long id);
 
+    @Query("""
+            select s
+            from Student s
+            left join fetch s.schoolClass
+            left join fetch s.classSection cs
+            left join fetch cs.schoolClass
+            where s.institute.id = :instituteId
+              and s.id = :id
+            """)
+    Optional<Student> findByInstituteIdAndIdWithClassAndSection(@Param("instituteId") Long instituteId, @Param("id") Long id);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Student s where s.institute.id = :instituteId and s.id = :id")
     Optional<Student> findByInstituteIdAndIdForUpdate(@Param("instituteId") Long instituteId, @Param("id") Long id);
@@ -273,6 +284,7 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
                         coalesce(s.className, s.assignedClass),
                         s.section,
                         s.guardianName,
+                        s.guardianPhone,
                         coalesce(s.hostelStatus, case when lower(coalesce(s.hostelOptIn, 'no')) in ('yes', 'true') then 'requested' else 'not_requested' end),
                         case when count(a.id) > 0 then true else false end
                     )
@@ -297,7 +309,7 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
                         )) like lower(concat('%', :search, '%'))
                       )
                     group by s.id, s.enrollmentNo, s.firstName, s.lastName, s.name, s.className,
-                             s.assignedClass, s.section, s.guardianName, s.hostelStatus, s.hostelOptIn
+                             s.assignedClass, s.section, s.guardianName, s.guardianPhone, s.hostelStatus, s.hostelOptIn
                     """,
             countQuery = """
                     select count(s)

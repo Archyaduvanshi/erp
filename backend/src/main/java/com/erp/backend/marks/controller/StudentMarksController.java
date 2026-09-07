@@ -32,11 +32,14 @@ public class StudentMarksController {
 
     @GetMapping
     public List<StudentMarkResponse> getMarks(
-            @AuthenticationPrincipal(expression = "instituteId") Long instituteId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestParam(required = false) Long academicSessionId,
+            @RequestParam(required = false) Long classId,
             @RequestParam(required = false) String className,
+            @RequestParam(required = false) Long subjectId,
             @RequestParam(required = false) String subjectName
     ) {
-        return studentMarksService.getMarks(instituteId, className, subjectName);
+        return studentMarksService.getMarks(principal, academicSessionId, classId, className, subjectId, subjectName);
     }
 
     @PostMapping("/register")
@@ -56,9 +59,9 @@ public class StudentMarksController {
     @PostMapping("/exam-renames")
     @ResponseStatus(HttpStatus.CREATED)
     public List<StudentMarksExamRenameResponse> renameExam(
-            @AuthenticationPrincipal(expression = "instituteId") Long instituteId,
+            @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody StudentMarksExamRenamePayload request
     ) {
-        return studentMarksService.renameExam(instituteId, request);
+        return studentMarksService.renameExam(principal.instituteId(), principal, request);
     }
 }

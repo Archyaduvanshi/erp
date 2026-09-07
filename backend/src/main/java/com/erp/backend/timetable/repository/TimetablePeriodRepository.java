@@ -50,6 +50,7 @@ public interface TimetablePeriodRepository extends JpaRepository<TimetablePeriod
                 s.id,
                 s.name,
                 cs.id,
+                sub.id,
                 sub.name,
                 coalesce(nullif(trim(concat(coalesce(teacher.firstName, ''), ' ', coalesce(teacher.lastName, ''))), ''), coalesce(teacher.name, 'Teacher')),
                 teacher.employeeId
@@ -108,6 +109,7 @@ public interface TimetablePeriodRepository extends JpaRepository<TimetablePeriod
                 s.id,
                 s.name,
                 cs.id,
+                sub.id,
                 sub.name,
                 coalesce(nullif(trim(concat(coalesce(teacher.firstName, ''), ' ', coalesce(teacher.lastName, ''))), ''), coalesce(teacher.name, 'Teacher')),
                 teacher.employeeId
@@ -168,6 +170,7 @@ public interface TimetablePeriodRepository extends JpaRepository<TimetablePeriod
                 s.id,
                 s.name,
                 cs.id,
+                sub.id,
                 sub.name,
                 coalesce(nullif(trim(concat(coalesce(teacher.firstName, ''), ' ', coalesce(teacher.lastName, ''))), ''), coalesce(teacher.name, 'Teacher')),
                 teacher.employeeId

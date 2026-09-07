@@ -145,6 +145,12 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         if (isReadMethod(request.getMethod()) && isTeacherPortalSelfRead(request, principal)) {
             return;
         }
+        if (isTeacherPortalAttendanceWrite(request)) {
+            return;
+        }
+        if (isTeacherPortalMarksAccess(request)) {
+            return;
+        }
         if (isReadMethod(request.getMethod()) && path.matches("^/api/teachers/\\d+$") && pathId(path).equals(principal.teacherId())) {
             return;
         }
@@ -215,6 +221,7 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/notices/portal")
                 || path.startsWith("/api/attendance/teachers/me/")
                 || path.startsWith("/api/examinations/teacher/me")
+                || path.equals("/api/examinations/date-sheets")
                 || path.startsWith("/api/salary/teacher/me/")) {
             return true;
         }
@@ -230,6 +237,22 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
             return teacherId != null && teacherId.equals(principal.teacherId());
         }
         return false;
+    }
+
+    private boolean isTeacherPortalAttendanceWrite(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return "PUT".equalsIgnoreCase(request.getMethod())
+                && path.matches("^/api/attendance/classes/\\d+/session$");
+    }
+
+    private boolean isTeacherPortalMarksAccess(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        String method = request.getMethod();
+        if (isReadMethod(method)) {
+            return path.equals("/api/marks") || path.equals("/api/marks/exam-renames");
+        }
+        return "POST".equalsIgnoreCase(method)
+                && (path.equals("/api/marks/register") || path.equals("/api/marks/exam-renames"));
     }
 
     private Long queryLong(HttpServletRequest request, String name) {

@@ -102,6 +102,38 @@ public class StudentMarksService {
                 .toList();
     }
 
+    public List<StudentMarkResponse> getMarks(AuthPrincipal principal, Long academicSessionId, Long classId, String className, Long subjectId, String subjectName) {
+        Long instituteId = principal.instituteId();
+        if (classId != null && subjectId != null) {
+            AcademicSession academicSession = resolveAcademicSession(instituteId, academicSessionId);
+            SchoolClass schoolClass = resolveSchoolClass(instituteId, classId, className);
+            Subject subject = resolveSubject(instituteId, subjectId, subjectName);
+            if ("TEACHER".equalsIgnoreCase(principal.role())) {
+                assertTeacherCanWriteMarks(principal, instituteId, academicSession.getId(), schoolClass.getId(), subject.getId());
+            }
+            return studentMarkRepository
+                    .findAllByInstituteIdAndAcademicSessionIdAndSchoolClassIdAndSubjectIdOrderByExamTitleAscCreatedAtAsc(
+                            instituteId,
+                            academicSession.getId(),
+                            schoolClass.getId(),
+                            subject.getId()
+                    )
+                    .stream()
+                    .map(this::toMarkResponse)
+                    .toList();
+        }
+        if ("TEACHER".equalsIgnoreCase(principal.role())) {
+            if (!StringUtils.hasText(className) || !StringUtils.hasText(subjectName)) {
+                throw new IllegalArgumentException("TEACHER_MARKS_FILTER_REQUIRED");
+            }
+            AcademicSession academicSession = resolveAcademicSession(instituteId, academicSessionId);
+            SchoolClass schoolClass = resolveSchoolClass(instituteId, null, className);
+            Subject subject = resolveSubject(instituteId, null, subjectName);
+            assertTeacherCanWriteMarks(principal, instituteId, academicSession.getId(), schoolClass.getId(), subject.getId());
+        }
+        return getMarks(instituteId, className, subjectName);
+    }
+
     public List<StudentMarksExamRenameResponse> getRenames(Long instituteId) {
         validateInstitute(instituteId);
         return examRenameRepository.findAllByInstituteIdOrderByClassNameAscSubjectNameAscOldTitleAsc(instituteId)
@@ -241,11 +273,23 @@ public class StudentMarksService {
 
     @Transactional
     public List<StudentMarksExamRenameResponse> renameExam(Long instituteId, StudentMarksExamRenamePayload request) {
+        return renameExam(instituteId, null, request);
+    }
+
+    @Transactional
+    public List<StudentMarksExamRenameResponse> renameExam(Long instituteId, AuthPrincipal principal, StudentMarksExamRenamePayload request) {
         Institute institute = validateInstitute(instituteId);
         String className = request.className().trim();
         String subjectName = request.subjectName().trim();
         String oldTitle = request.oldTitle().trim();
         String newTitle = request.newTitle().trim();
+
+        if (principal != null && "TEACHER".equalsIgnoreCase(principal.role())) {
+            AcademicSession academicSession = resolveAcademicSession(instituteId, null);
+            SchoolClass schoolClass = resolveSchoolClass(instituteId, null, className);
+            Subject subject = resolveSubject(instituteId, null, subjectName);
+            assertTeacherCanWriteMarks(principal, instituteId, academicSession.getId(), schoolClass.getId(), subject.getId());
+        }
 
         List<StudentMark> matchingMarks = studentMarkRepository
                 .findAllByInstituteIdAndClassNameIgnoreCaseAndSubjectNameIgnoreCaseAndExamTitleIn(

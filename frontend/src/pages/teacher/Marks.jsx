@@ -13,10 +13,11 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { academicSessionApi, examApi, marksApi, studentApi, timetableApi } from '../../utils/api';
+import { academicSessionApi, attendanceApi, examApi, marksApi, timetableApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
 const FALLBACK_EXAM_TYPES = ['Class Test 1', 'Class Test 2', 'Unit Test 1', 'Half Yearly', 'Annual Exam'];
+const EMPTY_ARRAY = [];
 
 const TeacherMarks = () => {
   const navigate = useNavigate();
@@ -56,24 +57,39 @@ const TeacherMarks = () => {
     enabled: session?.role === 'teacher' && Boolean(currentAcademicSession?.id),
   });
 
+  const teacherTimetablePeriods = timetableQuery.data?.week || EMPTY_ARRAY;
+
+  const teacherSubjectsByClass = useMemo(() => (
+    deriveTeacherSubjectsByClass(teacherTimetablePeriods)
+  ), [teacherTimetablePeriods]);
+
+  const teachingClasses = useMemo(() => {
+    return Object.keys(teacherSubjectsByClass);
+  }, [teacherSubjectsByClass]);
+
+  const selectedClassTarget = useMemo(() => (
+    teacherTimetablePeriods.find((period) => period.className === selectedClass) || null
+  ), [selectedClass, teacherTimetablePeriods]);
+
   const dateSheetsQuery = useQuery({
-    queryKey: ['marks', 'date-sheets', currentAcademicSession?.id, selectedClass],
-    queryFn: examApi.getDateSheets,
-    enabled: session?.role === 'teacher' && Boolean(selectedClass),
+    queryKey: ['marks', 'date-sheets', currentAcademicSession?.id, selectedClassTarget?.classId || null],
+    queryFn: () => examApi.getDateSheets({
+      academicSessionId: currentAcademicSession?.id,
+      classId: selectedClassTarget?.classId,
+      size: 100,
+    }),
+    enabled: session?.role === 'teacher' && Boolean(selectedClassTarget?.classId),
     placeholderData: keepPreviousData,
   });
 
   const studentsQuery = useQuery({
-    queryKey: ['marks', 'students', selectedClass],
-    queryFn: () => studentApi.getPage({ assignedClass: selectedClass, size: 500, sort: 'firstName,asc' }),
-    enabled: session?.role === 'teacher' && Boolean(selectedClass),
-    placeholderData: keepPreviousData,
-  });
-
-  const marksQuery = useQuery({
-    queryKey: ['marks', 'register', selectedClass, selectedSubject],
-    queryFn: () => marksApi.getAll(selectedClass, selectedSubject),
-    enabled: session?.role === 'teacher' && Boolean(selectedClass && selectedSubject),
+    queryKey: ['marks', 'students', currentAcademicSession?.id, selectedClassTarget?.classId || null, selectedClassTarget?.sectionId ?? null],
+    queryFn: () => attendanceApi.getClassStudents({
+      academicSessionId: currentAcademicSession?.id,
+      classId: selectedClassTarget.classId,
+      sectionId: selectedClassTarget.sectionId,
+    }),
+    enabled: session?.role === 'teacher' && Boolean(currentAcademicSession?.id && selectedClassTarget?.classId),
     placeholderData: keepPreviousData,
   });
 
@@ -84,27 +100,9 @@ const TeacherMarks = () => {
   });
 
   const students = useMemo(() => normalizePageItems(studentsQuery.data), [studentsQuery.data]);
-  const teacherTimetablePeriods = timetableQuery.data?.week || [];
-  const dateSheets = dateSheetsQuery.data || [];
-  const marksRecords = marksQuery.data || [];
-  const examRenames = renamesQuery.data || [];
+  const dateSheets = useMemo(() => normalizePageItems(dateSheetsQuery.data), [dateSheetsQuery.data]);
+  const examRenames = renamesQuery.data || EMPTY_ARRAY;
   const teacherName = session?.username || 'Teacher';
-  const queryError = [
-    sessionsQuery.error,
-    timetableQuery.error,
-    dateSheetsQuery.error,
-    studentsQuery.error,
-    marksQuery.error,
-    renamesQuery.error,
-  ].find(Boolean);
-
-  const teacherSubjectsByClass = useMemo(() => (
-    deriveTeacherSubjectsByClass(teacherTimetablePeriods)
-  ), [teacherTimetablePeriods]);
-
-  const teachingClasses = useMemo(() => {
-    return Object.keys(teacherSubjectsByClass);
-  }, [teacherSubjectsByClass]);
 
   const filteredClasses = useMemo(() => {
     const query = classSearch.trim().toLowerCase();
@@ -115,11 +113,38 @@ const TeacherMarks = () => {
     teacherSubjectsByClass[selectedClass] || []
   ), [selectedClass, teacherSubjectsByClass]);
 
+  const selectedSubjectTarget = useMemo(() => (
+    teacherTimetablePeriods.find((period) => (
+      period.className === selectedClass && period.subjectName === selectedSubject
+    )) || null
+  ), [selectedClass, selectedSubject, teacherTimetablePeriods]);
+
+  const marksQuery = useQuery({
+    queryKey: ['marks', 'register', currentAcademicSession?.id, selectedClassTarget?.classId || null, selectedSubjectTarget?.subjectId || null, selectedClass, selectedSubject],
+    queryFn: () => marksApi.getAll(selectedClass, selectedSubject, {
+      academicSessionId: currentAcademicSession?.id,
+      classId: selectedClassTarget?.classId,
+      subjectId: selectedSubjectTarget?.subjectId,
+    }),
+    enabled: session?.role === 'teacher' && Boolean(selectedClass && selectedSubject),
+    placeholderData: keepPreviousData,
+  });
+
+  const marksRecords = marksQuery.data || EMPTY_ARRAY;
+  const queryError = [
+    sessionsQuery.error,
+    timetableQuery.error,
+    dateSheetsQuery.error,
+    studentsQuery.error,
+    marksQuery.error,
+    renamesQuery.error,
+  ].find(Boolean);
+
   const selectedClassAllStudents = useMemo(() => (
     students
-      .filter((student) => student.assignedClass === selectedClass)
+      .map((student) => ({ ...student, id: student.id || student.studentId }))
       .sort((a, b) => getStudentName(a).localeCompare(getStudentName(b)))
-  ), [selectedClass, students]);
+  ), [students]);
 
   const visibleStudents = useMemo(() => {
     const query = studentSearch.trim().toLowerCase();
@@ -285,7 +310,9 @@ const TeacherMarks = () => {
     try {
       await marksApi.saveRegister({
         academicSessionId: currentAcademicSession?.id,
+        classId: selectedClassTarget?.classId,
         className: selectedClass,
+        subjectId: selectedSubjectTarget?.subjectId,
         subjectName: selectedSubject,
         uploadedBy: teacherName,
         exams: examColumns.map((column) => ({
@@ -673,7 +700,7 @@ const deriveTeacherSubjectsByClass = (periods = []) => {
 const normalizePageItems = (response) => {
   if (Array.isArray(response)) return response;
   if (Array.isArray(response?.content)) return response.content;
-  return [];
+  return EMPTY_ARRAY;
 };
 
 const readTeacherTimetableTemplate = (record) => {
@@ -765,7 +792,7 @@ const slotMatchesTeacher = (slot, teacherKeys) => {
 };
 
 const getStudentName = (student) => (
-  `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Unnamed student'
+  student.name || `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Unnamed student'
 );
 
 const getStudentRollNo = (student) => (

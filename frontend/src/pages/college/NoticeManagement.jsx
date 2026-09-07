@@ -5,18 +5,14 @@ import {
   AlertTriangle,
   Archive,
   ArrowLeft,
-  CalendarDays,
   CheckCircle2,
   Clock,
-  Eye,
   Megaphone,
   Pencil,
-  Pin,
   Plus,
   Search,
   Send,
   Trash2,
-  Users,
 } from 'lucide-react';
 import { curriculumApi, noticeApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
@@ -30,9 +26,7 @@ const initialNoticeForm = {
   audience: 'All',
   priority: 'Normal',
   publishDate: today,
-  expireDate: '',
   status: 'Draft',
-  isPinned: false,
   targetClassIds: [],
   summary: '',
   details: '',
@@ -51,7 +45,6 @@ const NoticeManagement = () => {
   const [audienceFilter, setAudienceFilter] = useState('All');
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [page, setPage] = useState(0);
-  const [selectedNoticeId, setSelectedNoticeId] = useState(null);
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
@@ -103,37 +96,21 @@ const NoticeManagement = () => {
     enabled: isCollegeModuleSession(session) && Boolean(collegeId),
   });
 
-  const detailQuery = useQuery({
-    queryKey: ['notices', 'detail', selectedNoticeId],
-    queryFn: () => noticeApi.getById(selectedNoticeId),
-    enabled: Boolean(selectedNoticeId),
-  });
-
   const filteredNotices = Array.isArray(noticesQuery.data?.content) ? noticesQuery.data.content : [];
-  const selectedListNotice = filteredNotices.find((notice) => String(notice.id) === String(selectedNoticeId)) || filteredNotices[0] || null;
-  const selectedNotice = detailQuery.data || selectedListNotice;
   const classOptions = Array.isArray(classOptionsQuery.data) ? classOptionsQuery.data : [];
   const stats = overviewQuery.data || { total: 0, published: 0, scheduled: 0, urgent: 0 };
-
-  useEffect(() => {
-    setSelectedNoticeId((currentId) => (
-      currentId && filteredNotices.some((notice) => String(notice.id) === String(currentId)) ? currentId : filteredNotices[0]?.id || null
-    ));
-  }, [filteredNotices]);
 
   const invalidateNoticeQueries = () => {
     queryClient.invalidateQueries({ queryKey: ['notices', 'admin'] });
     queryClient.invalidateQueries({ queryKey: ['notices', 'overview'] });
     queryClient.invalidateQueries({ queryKey: ['notices', 'portal'] });
-    if (selectedNoticeId) queryClient.invalidateQueries({ queryKey: ['notices', 'detail', selectedNoticeId] });
   };
 
   const saveNoticeMutation = useMutation({
     mutationFn: ({ id, payload }) => (id ? noticeApi.update(id, payload) : noticeApi.create(payload)),
-    onSuccess: (savedNotice) => {
+    onSuccess: () => {
       setNoticeForm(initialNoticeForm);
       setEditingId(null);
-      setSelectedNoticeId(savedNotice?.id || null);
       setLoadError('');
       invalidateNoticeQueries();
     },
@@ -152,7 +129,6 @@ const NoticeManagement = () => {
   const deleteNoticeMutation = useMutation({
     mutationFn: noticeApi.delete,
     onSuccess: () => {
-      setSelectedNoticeId(null);
       setLoadError('');
       invalidateNoticeQueries();
     },
@@ -165,7 +141,8 @@ const NoticeManagement = () => {
     const payload = {
       ...noticeForm,
       title: noticeForm.title.trim(),
-      expireDate: noticeForm.expireDate || null,
+      expireDate: null,
+      isPinned: false,
       targetClassIds: noticeForm.audience === 'Students' ? noticeForm.targetClassIds : [],
       summary: noticeForm.summary.trim(),
       details: noticeForm.details.trim(),
@@ -185,9 +162,7 @@ const NoticeManagement = () => {
       audience: fullNotice.audience || 'All',
       priority: fullNotice.priority || 'Normal',
       publishDate: fullNotice.publishDate || today,
-      expireDate: fullNotice.expireDate || '',
       status: fullNotice.status || 'Draft',
-      isPinned: Boolean(fullNotice.isPinned),
       targetClassIds: Array.isArray(fullNotice.targetClassIds) ? fullNotice.targetClassIds : [],
       summary: fullNotice.summary || '',
       details: fullNotice.details || '',
@@ -264,11 +239,11 @@ const NoticeManagement = () => {
           </div>
         </section>
 
-        <div className="mt-8 grid gap-8 xl:grid-cols-[0.85fr_1.15fr]">
+        <div className="mt-8 space-y-8">
           <section className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-38px_rgba(15,23,42,0.35)] lg:p-8">
             <FormTitle
               title={editingId ? 'Edit Notice' : 'Create Notice'}
-              description="Draft, schedule, publish, or pin notices for the right campus audience."
+              description="Draft, schedule, or publish notices for the right campus audience."
             />
 
             <form onSubmit={handleSaveNotice} className="mt-7 space-y-5">
@@ -310,12 +285,6 @@ const NoticeManagement = () => {
                   value={noticeForm.publishDate}
                   onChange={(e) => setNoticeForm({ ...noticeForm, publishDate: e.target.value })}
                 />
-                <TextInput
-                  label="Expiry Date"
-                  type="date"
-                  value={noticeForm.expireDate}
-                  onChange={(e) => setNoticeForm({ ...noticeForm, expireDate: e.target.value })}
-                />
               </div>
 
               {noticeForm.audience === 'Students' ? (
@@ -326,16 +295,6 @@ const NoticeManagement = () => {
                   onChange={(targetClassIds) => setNoticeForm({ ...noticeForm, targetClassIds })}
                 />
               ) : null}
-
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={noticeForm.isPinned}
-                  onChange={(e) => setNoticeForm({ ...noticeForm, isPinned: e.target.checked })}
-                  className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-                />
-                Pin this notice to the top
-              </label>
 
               <TextArea
                 label="Short Summary"
@@ -373,79 +332,68 @@ const NoticeManagement = () => {
             </form>
           </section>
 
-          <section className="space-y-8">
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-38px_rgba(15,23,42,0.35)] lg:p-8">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <FormTitle title="Notice Register" description={`${noticesQuery.data?.totalElements || 0} notice record(s) found`} />
-                <div className="grid gap-3 md:grid-cols-[1fr_150px_150px_150px]">
-                  <SearchInput value={searchTerm} onChange={setSearchTerm} />
-                  <SelectInput
-                    label="Status"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    options={['All', 'Draft', 'Published', 'Scheduled', 'Expired', 'Archived']}
-                  />
-                  <SelectInput
-                    label="Audience"
-                    value={audienceFilter}
-                    onChange={(e) => setAudienceFilter(e.target.value)}
-                    options={['All', 'Students', 'Teachers']}
-                  />
-                  <SelectInput
-                    label="Priority"
-                    value={priorityFilter}
-                    onChange={(e) => setPriorityFilter(e.target.value)}
-                    options={['All', 'Urgent', 'High', 'Normal', 'Low']}
-                  />
-                </div>
+          <section className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-38px_rgba(15,23,42,0.35)] lg:p-8">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <FormTitle title="Notice Register" description={`${noticesQuery.data?.totalElements || 0} notice record(s) found`} />
+              <div className="grid gap-3 md:grid-cols-[1fr_150px_150px_150px]">
+                <SearchInput value={searchTerm} onChange={setSearchTerm} />
+                <SelectInput
+                  label="Status"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  options={['All', 'Draft', 'Published', 'Scheduled', 'Archived']}
+                />
+                <SelectInput
+                  label="Audience"
+                  value={audienceFilter}
+                  onChange={(e) => setAudienceFilter(e.target.value)}
+                  options={['All', 'Students', 'Teachers']}
+                />
+                <SelectInput
+                  label="Priority"
+                  value={priorityFilter}
+                  onChange={(e) => setPriorityFilter(e.target.value)}
+                  options={['All', 'Urgent', 'High', 'Normal', 'Low']}
+                />
               </div>
-
-              <div className="mt-7 space-y-4">
-                {filteredNotices.length === 0 ? (
-                  <EmptyState />
-                ) : (
-                  filteredNotices.map((notice) => (
-                    <NoticeRow
-                      key={notice.id}
-                      notice={notice}
-                      isSelected={String(selectedNotice?.id) === String(notice.id)}
-                      onSelect={() => setSelectedNoticeId(notice.id)}
-                      onEdit={() => handleEditNotice(notice)}
-                      onDelete={() => handleDeleteNotice(notice.id)}
-                      onTogglePin={() => handleQuickUpdate(notice, { isPinned: !notice.isPinned })}
-                      onPublish={() => handleQuickUpdate(notice, { status: 'Published' })}
-                      onArchive={() => handleQuickUpdate(notice, { status: 'Archived' })}
-                    />
-                  ))
-                )}
-              </div>
-              <PaginationBar page={page} totalPages={noticesQuery.data?.totalPages || 1} onPageChange={setPage} />
             </div>
 
-            <section className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-38px_rgba(15,23,42,0.35)] lg:p-8">
-              <FormTitle title="Live Preview" description="Selected notice preview for student, teacher, and staff portals." />
-              {selectedNotice ? (
-                <div className="mt-7 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge status={selectedNotice.liveStatus} />
-                    <PriorityBadge priority={selectedNotice.priority} />
-                    {selectedNotice.isPinned ? <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-violet-700"><Pin size={12} />Pinned</span> : null}
-                  </div>
-                  <h3 className="mt-5 font-serif text-3xl font-black italic tracking-tight text-slate-950">{selectedNotice.title}</h3>
-                  <p className="mt-3 text-sm font-semibold leading-7 text-slate-600">{selectedNotice.summary}</p>
-                  <div className="mt-5 grid gap-3 text-xs font-black uppercase tracking-[0.18em] text-slate-500 sm:grid-cols-3">
-                    <InfoPill icon={Users} label={selectedNotice.audience} />
-                    <InfoPill icon={CalendarDays} label={formatDate(selectedNotice.publishDate)} />
-                    <InfoPill icon={Archive} label={selectedNotice.expireDate ? `Till ${formatDate(selectedNotice.expireDate)}` : 'No expiry'} />
-                  </div>
-                  <p className="mt-6 whitespace-pre-line rounded-2xl bg-white p-5 text-sm leading-7 text-slate-600">
-                    {selectedNotice.details}
-                  </p>
+            <div className="mt-7 overflow-hidden rounded-2xl border border-slate-200">
+              {filteredNotices.length === 0 ? (
+                <div className="p-6">
+                  <EmptyState />
                 </div>
               ) : (
-                <EmptyState title="No notice selected" description="Create or select a notice to preview it here." />
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 bg-white">
+                    <thead className="bg-slate-950 text-white">
+                      <tr>
+                        <NoticeTh>Notice</NoticeTh>
+                        <NoticeTh>Category</NoticeTh>
+                        <NoticeTh>Audience</NoticeTh>
+                        <NoticeTh>Priority</NoticeTh>
+                        <NoticeTh>Status</NoticeTh>
+                        <NoticeTh>Publish</NoticeTh>
+                        <NoticeTh noBorder>Actions</NoticeTh>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredNotices.map((notice) => (
+                        <NoticeTableRow
+                          key={notice.id}
+                          notice={notice}
+                          onEdit={() => handleEditNotice(notice)}
+                          onDelete={() => handleDeleteNotice(notice.id)}
+                          onPublish={() => handleQuickUpdate(notice, { status: 'Published' })}
+                          onArchive={() => handleQuickUpdate(notice, { status: 'Archived' })}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </section>
+            </div>
+            <PaginationBar page={page} totalPages={noticesQuery.data?.totalPages || 1} onPageChange={setPage} />
           </section>
         </div>
       </main>
@@ -453,35 +401,40 @@ const NoticeManagement = () => {
   );
 };
 
-const NoticeRow = ({ notice, isSelected, onSelect, onEdit, onDelete, onTogglePin, onPublish, onArchive }) => (
-  <article className={`rounded-2xl border p-4 transition ${isSelected ? 'border-violet-300 bg-violet-50/60' : 'border-slate-200 bg-white hover:border-violet-200'}`}>
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-      <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={notice.liveStatus} />
-          <PriorityBadge priority={notice.priority} />
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600">{notice.audience}</span>
-          {notice.isPinned ? <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-violet-700"><Pin size={12} />Pinned</span> : null}
-        </div>
-        <h3 className="mt-3 text-lg font-black tracking-tight text-slate-950">{notice.title}</h3>
-        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{notice.summary}</p>
-        <div className="mt-4 flex flex-wrap gap-3 text-xs font-bold text-slate-400">
-          <span>{notice.category}</span>
-          <span>Publish: {formatDate(notice.publishDate)}</span>
-          <span>Expiry: {notice.expireDate ? formatDate(notice.expireDate) : 'None'}</span>
-        </div>
-      </button>
-
-      <div className="flex flex-wrap gap-2 lg:justify-end">
-        <IconButton label={notice.isPinned ? 'Unpin' : 'Pin'} icon={Pin} onClick={onTogglePin} />
-        <IconButton label="Preview" icon={Eye} onClick={onSelect} />
+const NoticeTableRow = ({ notice, onEdit, onDelete, onPublish, onArchive }) => (
+  <tr className="odd:bg-white even:bg-slate-50/70 hover:bg-violet-50/50">
+    <NoticeTd>
+      <div className="min-w-[260px]">
+        <h3 className="text-sm font-black tracking-tight text-slate-950">{notice.title}</h3>
+        <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-slate-500">{notice.summary}</p>
+      </div>
+    </NoticeTd>
+    <NoticeTd>{notice.category || '-'}</NoticeTd>
+    <NoticeTd>{notice.audience || '-'}</NoticeTd>
+    <NoticeTd><PriorityBadge priority={notice.priority} /></NoticeTd>
+    <NoticeTd><StatusBadge status={notice.liveStatus} /></NoticeTd>
+    <NoticeTd>{formatDate(notice.publishDate)}</NoticeTd>
+    <NoticeTd noBorder>
+      <div className="flex min-w-[140px] flex-wrap gap-2">
         <IconButton label="Edit" icon={Pencil} onClick={onEdit} />
         {notice.status !== 'Published' ? <IconButton label="Publish" icon={Send} onClick={onPublish} /> : null}
         {notice.status !== 'Archived' ? <IconButton label="Archive" icon={Archive} onClick={onArchive} /> : null}
         <IconButton label="Delete" icon={Trash2} onClick={onDelete} danger />
       </div>
-    </div>
-  </article>
+    </NoticeTd>
+  </tr>
+);
+
+const NoticeTh = ({ children, noBorder = false }) => (
+  <th className={`px-4 py-4 text-left text-[11px] font-black uppercase tracking-[0.18em] ${noBorder ? '' : 'border-r border-white/10'}`}>
+    {children}
+  </th>
+);
+
+const NoticeTd = ({ children, noBorder = false }) => (
+  <td className={`px-4 py-4 align-top text-sm font-semibold text-slate-600 ${noBorder ? '' : 'border-r border-slate-100'}`}>
+    {children}
+  </td>
 );
 
 const MetricCard = ({ label, value, icon: Icon }) => (
@@ -635,13 +588,6 @@ const PriorityBadge = ({ priority }) => (
   </span>
 );
 
-const InfoPill = ({ icon: Icon, label }) => (
-  <span className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
-    <Icon size={14} />
-    {label}
-  </span>
-);
-
 const EmptyState = ({ title = 'No notices found', description = 'Create a notice or adjust filters to view records.' }) => (
   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center">
     <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-slate-300 shadow-sm">
@@ -694,9 +640,9 @@ function toNoticePayload(notice) {
     targetClassIds: notice.audience === 'Students' && Array.isArray(notice.targetClassIds) ? notice.targetClassIds : [],
     priority: notice.priority || 'Normal',
     publishDate: notice.publishDate || today,
-    expireDate: notice.expireDate || null,
+    expireDate: null,
     status: notice.status || 'Draft',
-    isPinned: Boolean(notice.isPinned),
+    isPinned: false,
     summary: notice.summary || '',
     details: notice.details || '',
   };

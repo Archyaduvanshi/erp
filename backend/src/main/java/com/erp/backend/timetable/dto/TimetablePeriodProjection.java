@@ -15,6 +15,7 @@ public record TimetablePeriodProjection(
         Long sectionId,
         String sectionName,
         Long classSubjectId,
+        Long subjectId,
         String subjectName,
         String teacherName,
         String employeeId

@@ -11,6 +11,7 @@ public record TimetablePeriodResponse(
         String className,
         String sectionName,
         Long classSubjectId,
+        Long subjectId,
         String subjectName,
         Long teacherId,
         String teacherName

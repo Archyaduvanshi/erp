@@ -7,6 +7,7 @@ public record HostelStudentSearchResponse(
         String className,
         String section,
         String fatherName,
+        String guardianPhone,
         String hostelRequestStatus,
         boolean currentlyAllotted
 ) {

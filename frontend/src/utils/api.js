@@ -1257,8 +1257,13 @@ export const attendanceApi = {
 };
 
 export const marksApi = {
-  getAll: (className, subjectName) => {
+  getAll: (className, subjectName, filters = {}) => {
     const params = new URLSearchParams();
+    Object.entries(filters || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        params.set(key, value);
+      }
+    });
     if (className) params.set('className', className);
     if (subjectName) params.set('subjectName', subjectName);
     const query = params.toString();
