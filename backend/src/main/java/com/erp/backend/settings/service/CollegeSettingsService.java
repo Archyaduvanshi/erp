@@ -32,6 +32,7 @@ import com.erp.backend.teacher.entity.Teacher;
 import com.erp.backend.teacher.repository.TeacherRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.transaction.Transactional;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -134,6 +135,7 @@ public class CollegeSettingsService {
         throw new IllegalArgumentException("Legacy feature password login has been removed. Please login with the teacher account.");
     }
 
+    @Transactional
     public UnifiedLoginResponse loginUnified(UnifiedLoginRequest request, HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
         LoginIdentifier loginIdentifier = resolveLoginIdentifier(request);
         String password = request.password().trim();

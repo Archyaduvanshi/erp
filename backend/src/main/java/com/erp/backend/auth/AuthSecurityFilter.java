@@ -53,6 +53,23 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
     }
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
+        String path = request.getRequestURI();
+        return path.equals("/api/health")
+                || path.equals("/api/settings/login")
+                || path.equals("/api/auth/refresh")
+                || path.equals("/api/auth/logout")
+                || path.equals("/api/auth/password/forgot")
+                || path.equals("/api/auth/password/reset")
+                || path.equals("/api/institutes/register")
+                || path.equals("/api/institutes/login")
+                || path.equals("/api/uploads/registration-logo");
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
         String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (StringUtils.hasText(authorization) && authorization.startsWith("Bearer ")) {

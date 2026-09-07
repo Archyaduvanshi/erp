@@ -42,6 +42,7 @@ const Login = () => {
 
     const credential = formData.username.trim();
     try {
+      setAccessToken('');
       const user = await settingsApi.login({
         username: credential,
         password: formData.password,
