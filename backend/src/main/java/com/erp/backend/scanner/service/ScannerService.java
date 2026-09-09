@@ -15,6 +15,7 @@ import com.erp.backend.student.entity.Student;
 import com.erp.backend.student.repository.StudentRepository;
 import com.erp.backend.teacher.entity.Teacher;
 import com.erp.backend.teacher.repository.TeacherRepository;
+import com.erp.backend.timetable.repository.ClassTimetableRepository;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,31 +52,36 @@ public class ScannerService {
     private final TeacherRepository teacherRepository;
     private final TeacherAuthorizationService teacherAuthorizationService;
     private final QrIdentityTokenService qrIdentityTokenService;
+    private final ClassTimetableRepository classTimetableRepository;
 
     public ScannerService(
             StudentRepository studentRepository,
             TeacherRepository teacherRepository,
             TeacherAuthorizationService teacherAuthorizationService,
-            QrIdentityTokenService qrIdentityTokenService
+            QrIdentityTokenService qrIdentityTokenService,
+            ClassTimetableRepository classTimetableRepository
     ) {
         this.studentRepository = studentRepository;
         this.teacherRepository = teacherRepository;
         this.teacherAuthorizationService = teacherAuthorizationService;
         this.qrIdentityTokenService = qrIdentityTokenService;
+        this.classTimetableRepository = classTimetableRepository;
     }
 
     @Transactional(readOnly = true)
     public ScanResolveResponse resolve(AuthPrincipal principal, ScanResolveRequest request) {
         String featureKey = normalizeFeature(request.feature());
-        authorizeFeature(principal, featureKey);
+        authorizeFeature(principal, featureKey, request);
         QrIdentityTokenService.ParsedQr qr = qrIdentityTokenService.parse(request.qrData());
         if (!SUPPORTED_TYPES.get(featureKey).contains(qr.entityType())) {
             throw new IllegalArgumentException("This QR is not supported in " + displayFeature(featureKey) + ".");
         }
 
-        return qr.entityType() == EntityType.STUDENT
+        ScanResolveResponse response = qr.entityType() == EntityType.STUDENT
                 ? resolveStudent(principal.instituteId(), qr.payload())
                 : resolveTeacher(principal.instituteId(), qr.payload());
+        validateTeacherAttendanceTarget(principal, featureKey, request, response);
+        return response;
     }
 
     @Transactional
@@ -121,17 +127,50 @@ public class ScannerService {
         );
     }
 
-    private void authorizeFeature(AuthPrincipal principal, String featureKey) {
+    private void authorizeFeature(AuthPrincipal principal, String featureKey, ScanResolveRequest request) {
         if (principal == null || principal.instituteId() == null) {
             throw new AccessDeniedException("Authentication is required.");
         }
         if ("ADMIN".equals(principal.role())) {
             return;
         }
-        if ("TEACHER".equals(principal.role()) && teacherAuthorizationService.canRead(principal, featureKey)) {
-            return;
+        if ("TEACHER".equals(principal.role())) {
+            if (teacherAuthorizationService.canRead(principal, featureKey)) {
+                return;
+            }
+            if ("attendance".equals(featureKey) && hasAttendanceContext(request)) {
+                return;
+            }
         }
         throw new AccessDeniedException("You do not have access to this scanner feature.");
+    }
+
+    private void validateTeacherAttendanceTarget(
+            AuthPrincipal principal,
+            String featureKey,
+            ScanResolveRequest request,
+            ScanResolveResponse response
+    ) {
+        if (!"attendance".equals(featureKey) || !"TEACHER".equals(principal.role())) {
+            return;
+        }
+        if (!hasAttendanceContext(request) || principal.teacherId() == null) {
+            throw new AccessDeniedException("Select your assigned class before scanning attendance.");
+        }
+        if (!classTimetableRepository.existsAttendanceTeacherAssignment(
+                principal.instituteId(), request.academicSessionId(), principal.teacherId(), request.classId(), request.sectionId()
+        )) {
+            throw new AccessDeniedException("You are not the attendance teacher for this class/section.");
+        }
+        if (!"STUDENT".equals(response.entityType())
+                || !request.classId().equals(response.classId())
+                || !java.util.Objects.equals(request.sectionId(), response.sectionId())) {
+            throw new AccessDeniedException("This student does not belong to your selected class/section.");
+        }
+    }
+
+    private boolean hasAttendanceContext(ScanResolveRequest request) {
+        return request.academicSessionId() != null && request.classId() != null;
     }
 
     private String normalizeFeature(String value) {

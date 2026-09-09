@@ -4,7 +4,7 @@ import { resolveQrIdentity } from '../../api/scannerApi';
 
 const IGNORED_SCAN_ERRORS = new Set(['NotFoundException', 'ChecksumException', 'FormatException']);
 
-const QRScannerModal = ({ open, feature, featureLabel, onClose, onResolved }) => {
+const QRScannerModal = ({ open, feature, featureLabel, resolveContext, onClose, onResolved }) => {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
   const resolvingRef = useRef(false);
@@ -29,7 +29,7 @@ const QRScannerModal = ({ open, feature, featureLabel, onClose, onResolved }) =>
     setError('');
     stopCamera();
     try {
-      const identity = await resolveQrIdentity(qrData, feature);
+      const identity = await resolveQrIdentity(qrData, feature, resolveContext);
       if (!mountedRef.current) return;
       setStatus('success');
       onResolved(identity);
@@ -39,7 +39,7 @@ const QRScannerModal = ({ open, feature, featureLabel, onClose, onResolved }) =>
       setStatus('error');
       setError(requestError.message || 'QR could not be verified.');
     }
-  }, [feature, onResolved, stopCamera]);
+  }, [feature, onResolved, resolveContext, stopCamera]);
 
   const startCamera = useCallback(async () => {
     stopCamera();

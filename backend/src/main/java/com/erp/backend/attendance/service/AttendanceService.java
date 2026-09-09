@@ -5,7 +5,6 @@ import java.time.YearMonth;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -51,7 +50,6 @@ import com.erp.backend.teacher.entity.Teacher;
 import com.erp.backend.teacher.repository.TeacherRepository;
 import com.erp.backend.timetable.entity.ClassTimetable;
 import com.erp.backend.timetable.repository.ClassTimetableRepository;
-import com.erp.backend.timetable.repository.TimetablePeriodRepository;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -72,7 +70,6 @@ public class AttendanceService {
     private final AttendanceSessionRepository attendanceSessionRepository;
     private final AttendanceEntryRepository attendanceEntryRepository;
     private final ClassTimetableRepository classTimetableRepository;
-    private final TimetablePeriodRepository timetablePeriodRepository;
 
     public AttendanceService(
             InstituteRepository instituteRepository,
@@ -85,8 +82,7 @@ public class AttendanceService {
             ClassSubjectRepository classSubjectRepository,
             AttendanceSessionRepository attendanceSessionRepository,
             AttendanceEntryRepository attendanceEntryRepository,
-            ClassTimetableRepository classTimetableRepository,
-            TimetablePeriodRepository timetablePeriodRepository
+            ClassTimetableRepository classTimetableRepository
     ) {
         this.instituteRepository = instituteRepository;
         this.studentRepository = studentRepository;
@@ -99,7 +95,6 @@ public class AttendanceService {
         this.attendanceSessionRepository = attendanceSessionRepository;
         this.attendanceEntryRepository = attendanceEntryRepository;
         this.classTimetableRepository = classTimetableRepository;
-        this.timetablePeriodRepository = timetablePeriodRepository;
     }
 
     public List<AttendanceTargetResponse> getAttendanceTargets(Long instituteId, Long academicSessionId) {
@@ -171,28 +166,20 @@ public class AttendanceService {
                         StudentClassSummaryResponse::totalStudents,
                         Long::sum
                 ));
-        return timetablePeriodRepository.findTeacherPeriodProjections(instituteId, academicSessionId, teacherId)
+        return classTimetableRepository.findAttendanceTeacherAssignments(instituteId, academicSessionId, teacherId)
                 .stream()
-                .collect(Collectors.toMap(
-                        period -> period.classId() + ":" + (period.sectionId() == null ? "none" : period.sectionId()),
-                        Function.identity(),
-                        (existing, ignored) -> existing,
-                        LinkedHashMap::new
-                ))
-                .values()
-                .stream()
-                .map(period -> {
-                    String assignedLabel = period.sectionName() == null
-                            ? period.className()
-                            : period.className() + " / " + period.sectionName();
-                    String displayName = period.sectionName() == null
-                            ? "Class " + period.className()
-                            : "Class " + period.className() + "-" + period.sectionName();
+                .map(timetable -> {
+                    SchoolClass schoolClass = timetable.getSchoolClass();
+                    ClassSection section = timetable.getSection();
+                    String assignedLabel = buildAssignedClassLabel(schoolClass, section);
+                    String displayName = section == null
+                            ? "Class " + schoolClass.getName()
+                            : "Class " + schoolClass.getName() + "-" + section.getName();
                     return new TeacherAttendanceTargetResponse(
-                            period.classId(),
-                            period.className(),
-                            period.sectionId(),
-                            period.sectionName(),
+                            schoolClass.getId(),
+                            schoolClass.getName(),
+                            section == null ? null : section.getId(),
+                            section == null ? null : section.getName(),
                             displayName,
                             studentCounts.getOrDefault(normalizeLabel(assignedLabel), 0L)
                     );
@@ -605,11 +592,9 @@ public class AttendanceService {
         if (principal.teacherId() == null) {
             throw new AccessDeniedException("Teacher account is not linked to a teacher.");
         }
-        boolean assigned = timetablePeriodRepository
-                .findTeacherPeriodProjections(principal.instituteId(), academicSessionId, principal.teacherId())
-                .stream()
-                .anyMatch(period -> Objects.equals(period.classId(), classId)
-                        && Objects.equals(period.sectionId(), sectionId));
+        boolean assigned = classTimetableRepository.existsAttendanceTeacherAssignment(
+                principal.instituteId(), academicSessionId, principal.teacherId(), classId, sectionId
+        );
         if (!assigned) {
             throw new AccessDeniedException("Teacher is not assigned to this class/section.");
         }

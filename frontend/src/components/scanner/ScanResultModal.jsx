@@ -1,6 +1,6 @@
 import { ArrowRight, IdCard, UserRound, X } from 'lucide-react';
 
-const ScanResultModal = ({ result, featureLabel, onClose, onContinue }) => {
+const ScanResultModal = ({ result, featureLabel, continueLabel = 'Open Record', onClose, onContinue }) => {
   if (!result) return null;
   const classLabel = [result.className, result.section].filter(Boolean).join(' - ');
 
@@ -25,7 +25,7 @@ const ScanResultModal = ({ result, featureLabel, onClose, onContinue }) => {
           Continue to load this record in {featureLabel}. Only information allowed for this module will be shown.
         </p>
         <button type="button" onClick={onContinue} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:bg-emerald-700">
-          Open Record <ArrowRight size={15} />
+          {continueLabel} <ArrowRight size={15} />
         </button>
       </div>
     </div>

@@ -11,6 +11,7 @@ import {
 import { DAILY_ATTENDANCE_PERIOD_NUMBER, academicSessionApi, attendanceApi, holidayApi } from '../../utils/api';
 import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 
 const createSessionForm = () => ({
   date: new Date().toISOString().split('T')[0],
@@ -28,6 +29,7 @@ const TeacherAttendance = () => {
   const [classSearch, setClassSearch] = useState('');
   const [recordSearch, setRecordSearch] = useState('');
   const [mutationError, setMutationError] = useState('');
+  const [scanNotice, setScanNotice] = useState(null);
   const registerScrollRef = useRef(null);
 
   useEffect(() => {
@@ -76,6 +78,11 @@ const TeacherAttendance = () => {
       ? `${selectedTarget.className} / ${selectedTarget.sectionName}`
       : selectedTarget.className
     : '';
+  const scannerContext = useMemo(() => selectedTarget ? ({
+    academicSessionId,
+    classId: selectedTarget.classId,
+    sectionId: selectedTarget.sectionId ?? null,
+  }) : null, [academicSessionId, selectedTarget]);
 
   const studentsQuery = useQuery({
     queryKey: ['teacher-attendance-class-students', instituteId, academicSessionId, selectedTarget?.classId || null, selectedTarget?.sectionId ?? null],
@@ -86,6 +93,25 @@ const TeacherAttendance = () => {
     }),
     enabled: Boolean(session?.role === 'teacher' && academicSessionId && selectedTarget),
     staleTime: 2 * 60 * 1000,
+  });
+
+  const attendanceSessionQuery = useQuery({
+    queryKey: [
+      'teacher-attendance-session',
+      instituteId,
+      academicSessionId,
+      selectedTarget?.classId || null,
+      selectedTarget?.sectionId ?? null,
+      sessionForm.date,
+    ],
+    queryFn: () => attendanceApi.getClassSession({
+      academicSessionId,
+      classId: selectedTarget.classId,
+      sectionId: selectedTarget.sectionId,
+      date: sessionForm.date,
+      periodNumber: DAILY_ATTENDANCE_PERIOD_NUMBER,
+    }),
+    enabled: Boolean(session?.role === 'teacher' && academicSessionId && selectedTarget && sessionForm.date),
   });
 
   const classMonthQuery = useQuery({
@@ -116,7 +142,7 @@ const TeacherAttendance = () => {
     (holidaysQuery.data || []).filter((holiday) => holiday.audience === 'All' || holiday.audience === 'Students')
   ), [holidaysQuery.data]);
   const loadError = mutationError
-    || [sessionsQuery.error, targetsQuery.error, studentsQuery.error, classMonthQuery.error, holidaysQuery.error]
+    || [sessionsQuery.error, targetsQuery.error, studentsQuery.error, attendanceSessionQuery.error, classMonthQuery.error, holidaysQuery.error]
       .find(Boolean)?.message
     || '';
 
@@ -302,13 +328,56 @@ const TeacherAttendance = () => {
       subject: '',
     });
     setAttendanceMap({});
+    setScanNotice(null);
   };
 
+  useEffect(() => {
+    const savedEntries = attendanceSessionQuery.data?.entries;
+    if (!Array.isArray(savedEntries)) return;
+
+    const savedAttendance = Object.fromEntries(savedEntries.map((entry) => [String(entry.studentId), entry.status]));
+    setAttendanceMap((current) => ({ ...savedAttendance, ...current }));
+  }, [attendanceSessionQuery.data]);
+
   const handleStatusChange = (studentId, status) => {
+    setScanNotice(null);
     setAttendanceMap((current) => ({
       ...current,
       [studentId]: status,
     }));
+  };
+
+  const handleScannedStudent = (identity) => {
+    if (identity?.entityType !== 'STUDENT') {
+      setScanNotice({ tone: 'error', message: 'Only a student QR can be used for student attendance.' });
+      return;
+    }
+
+    const matchedStudent = selectedClassStudents.find((student) => (
+      String(student.studentId || student.id) === String(identity.id)
+    ));
+    if (!matchedStudent) {
+      setScanNotice({
+        tone: 'error',
+        message: `${identity.name || 'This student'} does not belong to ${selectedClass}. Attendance was not marked.`,
+      });
+      return;
+    }
+
+    const studentKey = String(matchedStudent.studentId || matchedStudent.id);
+    if (attendanceMap[studentKey] === 'Present') {
+      setScanNotice({
+        tone: 'warning',
+        message: `${matchedStudent.name || identity.name || 'Student'} is already marked present for this attendance sheet.`,
+      });
+      return;
+    }
+
+    setAttendanceMap((current) => ({ ...current, [studentKey]: 'Present' }));
+    setScanNotice({
+      tone: 'success',
+      message: `${matchedStudent.name || identity.name || 'Student'} marked present.`,
+    });
   };
 
   const handleSaveAttendance = async (e) => {
@@ -407,14 +476,29 @@ const TeacherAttendance = () => {
           </section>
         ) : (
           <div className="mx-auto mt-8 grid w-full max-w-6xl justify-items-center gap-8">
-            <Panel title={`${selectedClass} Session Details`} description="Set date once and mark the full class attendance for the day.">
+            <Panel
+              title={`${selectedClass} Session Details`}
+              description="Set date once and mark the full class attendance for the day."
+              action={(
+                <QRScannerButton
+                  feature="attendance"
+                  continueLabel="Mark Present"
+                  resolveContext={scannerContext}
+                  onResolved={handleScannedStudent}
+                />
+              )}
+            >
               <form className="mt-8 space-y-8" onSubmit={handleSaveAttendance}>
                 <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                   <InputField
                     label="Date"
                     type="date"
                     value={sessionForm.date}
-                    onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })}
+                    onChange={(e) => {
+                      setSessionForm({ ...sessionForm, date: e.target.value });
+                      setAttendanceMap({});
+                      setScanNotice(null);
+                    }}
                   />
                   <StaticField label="Attendance Type" value="Daily Attendance" />
                   <StaticField label="Teacher" value={teacherName} />
@@ -429,6 +513,18 @@ const TeacherAttendance = () => {
                 {isSundaySession && !isHolidaySession ? (
                   <div className="rounded-[1.6rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
                     Selected date Sunday hai. Sunday ko college holiday treat kiya ja raha hai, isliye attendance save nahi hogi.
+                  </div>
+                ) : null}
+
+                {scanNotice ? (
+                  <div className={`rounded-[1.6rem] border px-4 py-3 text-sm font-semibold ${
+                    scanNotice.tone === 'success'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : scanNotice.tone === 'warning'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                  }`}>
+                    {scanNotice.message}
                   </div>
                 ) : null}
 
@@ -643,10 +739,15 @@ const formatMonthDateKey = (year, month, day) => (
   `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 );
 
-const Panel = ({ title, description, children }) => (
+const Panel = ({ title, description, action = null, children }) => (
   <section className="w-full rounded-4xl border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">
-    <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
-    <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h3 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{title}</h3>
+        <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
+      </div>
+      {action}
+    </div>
     {children}
   </section>
 );

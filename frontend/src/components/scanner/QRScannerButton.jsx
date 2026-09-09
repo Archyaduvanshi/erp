@@ -4,7 +4,7 @@ import QRScannerModal from './QRScannerModal';
 import ScanResultModal from './ScanResultModal';
 import { SCANNER_FEATURE_LABELS } from './scannerConfig';
 
-const QRScannerButton = ({ feature, onResolved, className = '' }) => {
+const QRScannerButton = ({ feature, onResolved, resolveContext, className = '', continueLabel = 'Open Record' }) => {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [result, setResult] = useState(null);
   const featureLabel = SCANNER_FEATURE_LABELS[feature] || 'ERP Management';
@@ -25,8 +25,21 @@ const QRScannerButton = ({ feature, onResolved, className = '' }) => {
       <button type="button" onClick={() => setScannerOpen(true)} className={`inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 ${className}`}>
         <ScanLine size={16} /> Scan QR
       </button>
-      <QRScannerModal open={scannerOpen} feature={feature} featureLabel={featureLabel} onClose={() => setScannerOpen(false)} onResolved={handleResolved} />
-      <ScanResultModal result={result} featureLabel={featureLabel} onClose={() => setResult(null)} onContinue={handleContinue} />
+      <QRScannerModal
+        open={scannerOpen}
+        feature={feature}
+        featureLabel={featureLabel}
+        resolveContext={resolveContext}
+        onClose={() => setScannerOpen(false)}
+        onResolved={handleResolved}
+      />
+      <ScanResultModal
+        result={result}
+        featureLabel={featureLabel}
+        continueLabel={continueLabel}
+        onClose={() => setResult(null)}
+        onContinue={handleContinue}
+      />
     </>
   );
 };

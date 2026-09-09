@@ -10,6 +10,10 @@ public record ScanResolveRequest(
 
         @NotBlank(message = "Scanner feature is required.")
         @Size(max = 60, message = "Scanner feature is invalid.")
-        String feature
+        String feature,
+
+        Long academicSessionId,
+        Long classId,
+        Long sectionId
 ) {
 }

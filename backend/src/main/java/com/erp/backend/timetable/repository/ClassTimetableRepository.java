@@ -17,6 +17,41 @@ public interface ClassTimetableRepository extends JpaRepository<ClassTimetable, 
     List<ClassTimetable> findAllByInstituteIdAndAcademicSessionId(Long instituteId, Long academicSessionId);
 
     @Query("""
+            select t
+            from ClassTimetable t
+            join fetch t.schoolClass c
+            left join fetch t.section s
+            where t.institute.id = :instituteId
+              and t.academicSession.id = :academicSessionId
+              and t.attendanceTeacher.id = :teacherId
+              and upper(coalesce(t.status, 'PUBLISHED')) = 'PUBLISHED'
+            order by c.name asc, s.name asc
+            """)
+    List<ClassTimetable> findAttendanceTeacherAssignments(
+            @Param("instituteId") Long instituteId,
+            @Param("academicSessionId") Long academicSessionId,
+            @Param("teacherId") Long teacherId
+    );
+
+    @Query("""
+            select count(t) > 0
+            from ClassTimetable t
+            where t.institute.id = :instituteId
+              and t.academicSession.id = :academicSessionId
+              and t.attendanceTeacher.id = :teacherId
+              and t.schoolClass.id = :classId
+              and (:sectionId is null and t.section is null or t.section.id = :sectionId)
+              and upper(coalesce(t.status, 'PUBLISHED')) = 'PUBLISHED'
+            """)
+    boolean existsAttendanceTeacherAssignment(
+            @Param("instituteId") Long instituteId,
+            @Param("academicSessionId") Long academicSessionId,
+            @Param("teacherId") Long teacherId,
+            @Param("classId") Long classId,
+            @Param("sectionId") Long sectionId
+    );
+
+    @Query("""
             select new com.erp.backend.timetable.dto.TimetableRecordSummary(
                 t.id,
                 t.academicSession.id,
