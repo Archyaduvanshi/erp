@@ -4,13 +4,24 @@ import QRScannerModal from './QRScannerModal';
 import ScanResultModal from './ScanResultModal';
 import { SCANNER_FEATURE_LABELS } from './scannerConfig';
 
-const QRScannerButton = ({ feature, onResolved, resolveContext, className = '', continueLabel = 'Open Record' }) => {
+const QRScannerButton = ({
+  feature,
+  onResolved,
+  resolveContext,
+  autoContinue = false,
+  className = '',
+  continueLabel = 'Open Record',
+}) => {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [result, setResult] = useState(null);
   const featureLabel = SCANNER_FEATURE_LABELS[feature] || 'ERP Management';
 
   const handleResolved = (identity) => {
     setScannerOpen(false);
+    if (autoContinue) {
+      onResolved?.(identity);
+      return;
+    }
     setResult(identity);
   };
 

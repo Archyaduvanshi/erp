@@ -482,7 +482,7 @@ const TeacherAttendance = () => {
               action={(
                 <QRScannerButton
                   feature="attendance"
-                  continueLabel="Mark Present"
+                  autoContinue
                   resolveContext={scannerContext}
                   onResolved={handleScannedStudent}
                 />
