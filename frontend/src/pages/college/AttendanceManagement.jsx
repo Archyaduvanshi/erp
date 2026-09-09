@@ -5,6 +5,7 @@ import { ArrowLeft, BookOpen, ChevronDown, ClipboardCheck, Search, Users } from 
 import { academicSessionApi, attendanceApi, holidayApi, teacherApi } from '../../utils/api';
 import { holidayAppliesToStudentClass } from '../../utils/noticeUtils';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 
 const AttendanceManagement = () => {
   const navigate = useNavigate();
@@ -264,6 +265,21 @@ const AttendanceManagement = () => {
     setSelectedTeacher('');
   };
 
+  const handleScannedIdentity = (identity) => {
+    if (identity.entityType === 'TEACHER') {
+      setActiveSection('teacher');
+      setTeacherSearch(identity.referenceNumber || identity.name || '');
+      return;
+    }
+    setActiveSection('student');
+    const target = attendanceTargets.find((entry) => (
+      String(entry.classId) === String(identity.classId)
+      && String(entry.sectionId || '') === String(identity.sectionId || '')
+    ));
+    if (target) openClassSheet(target);
+    setClassSearch(identity.className || identity.referenceNumber || '');
+  };
+
   const handleTeacherAttendanceSave = (event) => {
     event.preventDefault();
     const unmarkedTeachers = teacherOptions.filter((teacher) => !teacherAttendanceMap[String(teacher.id)]);
@@ -296,6 +312,8 @@ const AttendanceManagement = () => {
               <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">{pageTitle}</h1>
             </div>
           </div>
+          <div className="flex items-center gap-3">
+          <QRScannerButton feature="attendance" onResolved={handleScannedIdentity} />
           <div className="flex rounded-full border border-slate-200 bg-slate-100 p-1">
             {[
               ['student', 'Student'],
@@ -305,6 +323,7 @@ const AttendanceManagement = () => {
                 {label}
               </button>
             ))}
+          </div>
           </div>
         </div>
       </div>

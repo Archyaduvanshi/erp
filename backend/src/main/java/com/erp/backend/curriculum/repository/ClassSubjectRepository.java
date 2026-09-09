@@ -7,6 +7,7 @@ import java.util.Set;
 import com.erp.backend.curriculum.dto.ClassSubjectResponse;
 import com.erp.backend.curriculum.dto.CurriculumClassSummaryResponse;
 import com.erp.backend.curriculum.entity.ClassSubject;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,6 +18,7 @@ public interface ClassSubjectRepository extends JpaRepository<ClassSubject, Long
 
     List<ClassSubject> findAllByInstituteIdAndIdIn(Long instituteId, Set<Long> ids);
 
+    @EntityGraph(attributePaths = {"schoolClass", "subject"})
     List<ClassSubject> findAllByInstituteIdAndAcademicSessionId(Long instituteId, Long academicSessionId);
 
     Optional<ClassSubject> findByInstituteIdAndAcademicSessionIdAndSchoolClassIdAndSubjectId(

@@ -216,12 +216,4 @@ public class FeeController {
         return feeService.getPayments(principal.instituteId(), principal.studentId(), academicSessionId, search, mode, status, pageable);
     }
 
-    @PostMapping("/student/me/payments")
-    @ResponseStatus(HttpStatus.CREATED)
-    public FeePaymentResponse saveMyPayment(
-            @AuthenticationPrincipal AuthPrincipal principal,
-            @Valid @RequestBody FeePaymentPayload request
-    ) {
-        return feeService.saveMyPayment(principal.instituteId(), principal.studentId(), request, principal);
-    }
 }

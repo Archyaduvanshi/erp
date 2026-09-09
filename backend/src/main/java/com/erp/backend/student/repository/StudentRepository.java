@@ -45,6 +45,8 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
 
     Optional<Student> findByInstituteIdAndEnrollmentNoIgnoreCase(Long instituteId, String enrollmentNo);
 
+    Optional<Student> findByInstituteIdAndQrCodeData(Long instituteId, String qrCodeData);
+
     List<Student> findAllByEnrollmentNoIgnoreCase(String enrollmentNo);
 
     List<Student> findAllByInstituteIdAndIdIn(Long instituteId, List<Long> ids);

@@ -16,7 +16,8 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { feeApi } from '../../utils/api';
+import { cashfreeApi, feeApi } from '../../utils/api';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 import {
   calculateTaxBreakdown,
   formatBillingType,
@@ -73,6 +74,9 @@ const FeeManagement = () => {
   const [loadError, setLoadError] = useState('');
   const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
   const [generatedReceipt, setGeneratedReceipt] = useState(null);
+  const [cashfreeMerchant, setCashfreeMerchant] = useState(null);
+  const [cashfreeOnboardingLink, setCashfreeOnboardingLink] = useState('');
+  const [scannedStudent, setScannedStudent] = useState(null);
   const debouncedDueSearch = useDebouncedValue(dueSearch, 350);
 
   const overviewQuery = useQuery({
@@ -190,10 +194,46 @@ const FeeManagement = () => {
     },
   });
 
+  const createCashfreeMerchantMutation = useMutation({
+    mutationFn: cashfreeApi.createMerchant,
+    onSuccess: (merchant) => {
+      setCashfreeMerchant(merchant);
+      setActiveSection('cashfree');
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to initialize Cashfree school account.'),
+  });
+
+  const refreshCashfreeMerchantMutation = useMutation({
+    mutationFn: cashfreeApi.getMerchant,
+    onSuccess: (merchant) => {
+      setCashfreeMerchant(merchant);
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to refresh Cashfree account status.'),
+  });
+
+  const cashfreeOnboardingMutation = useMutation({
+    mutationFn: cashfreeApi.createOnboardingLink,
+    onSuccess: (merchant) => {
+      setCashfreeMerchant(merchant);
+      setCashfreeOnboardingLink(merchant.onboardingLink || '');
+      setLoadError('');
+    },
+    onError: (error) => setLoadError(error.message || 'Unable to create Cashfree onboarding link.'),
+  });
+
+  const cashfreeAttemptsQuery = useQuery({
+    queryKey: ['cashfree', 'attempts'],
+    queryFn: () => cashfreeApi.getAttempts({ page: 0, size: 25 }),
+    enabled: activeSection === 'cashfree',
+    staleTime: 15_000,
+  });
+
   const feeClasses = classesQuery.data || [];
   const structures = structuresQuery.data || [];
-  const studentOptions = useMemo(() => pagesContent(studentSearchQuery.data)
-    .map((student) => ({
+  const studentOptions = useMemo(() => {
+    const options = pagesContent(studentSearchQuery.data).map((student) => ({
       id: student.id,
       name: student.studentName || student.enrollmentNo || 'Unnamed student',
       className: normalizeClassName(student.className) || 'Course pending',
@@ -204,9 +244,12 @@ const FeeManagement = () => {
       hostelStatus: student.hostelStatus,
       libraryStatus: student.libraryStatus,
       libraryMonthlyCharge: student.libraryMonthlyCharge,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name)),
-  [studentSearchQuery.data]);
+    }));
+    if (scannedStudent && !options.some((student) => String(student.id) === String(scannedStudent.id))) {
+      options.push(scannedStudent);
+    }
+    return options.sort((a, b) => a.name.localeCompare(b.name));
+  }, [scannedStudent, studentSearchQuery.data]);
   const selectedStudentPayments = pagesContent(selectedStudentPaymentsQuery.data);
   const dueRows = pagesContent(duesQuery.data);
 
@@ -275,8 +318,8 @@ const FeeManagement = () => {
 
   const selectedPaymentStudent = studentOptions.find((student) => String(student.id) === String(paymentForm.studentId));
   const collectionClassOptions = useMemo(() => {
-    return [...new Set(courseOptions.filter(Boolean))].sort(compareClassNames);
-  }, [courseOptions]);
+    return [...new Set([...courseOptions, scannedStudent?.className].filter(Boolean))].sort(compareClassNames);
+  }, [courseOptions, scannedStudent]);
   const collectionSectionOptions = useMemo(() => {
     if (!paymentForm.className) return [];
     return [...new Set(
@@ -427,6 +470,31 @@ const FeeManagement = () => {
       studentId,
       paymentTarget: 'due_auto',
       paidAmount: '',
+    }));
+  };
+
+  const handleScannedStudent = (identity) => {
+    const student = {
+      id: identity.id,
+      name: identity.name,
+      enrollmentNo: identity.referenceNumber,
+      className: normalizeClassName(identity.className),
+      sectionName: identity.section || '',
+      category: 'General',
+    };
+    setScannedStudent(student);
+    setActiveSection('payments');
+    setFeeSummaryOpen(false);
+    setGeneratedReceipt(null);
+    setPaymentForm((current) => ({
+      ...current,
+      className: student.className,
+      section: student.sectionName,
+      studentId: String(student.id),
+      paymentTarget: 'due_auto',
+      paidAmount: '',
+      transactionId: '',
+      gatewayRef: '',
     }));
   };
 
@@ -591,6 +659,7 @@ const FeeManagement = () => {
             <ActionCard icon={BadgeIndianRupee} title="Fee Structure Setup" text="Define cycle-based fees and monthly hostel, transport, or library service fees." onClick={() => setActiveSection('structures')} />
             <ActionCard icon={CreditCard} title="Fee Collection" text="Collect fee at the counter, with cash as the default mode and receipt-ready allocation." onClick={() => setActiveSection('payments')} />
             <ActionCard icon={CalendarClock} title="Due Fee Reports" text="Find pending balances, late fines, and reminder counts." onClick={() => setActiveSection('dues')} />
+            <ActionCard icon={Landmark} title="Cashfree School Payments" text="Onboard this school account so student payments settle directly to the school's verified account." onClick={() => createCashfreeMerchantMutation.mutate()} />
           </section>
         ) : (
           <div className="mt-8">
@@ -600,6 +669,47 @@ const FeeManagement = () => {
             </div>
           </div>
         )}
+
+        {activeSection === 'cashfree' ? (
+          <Panel
+            className="mt-8"
+            title="Cashfree School Payment Account"
+            description="Complete the school's own Cashfree KYC. VidyantraErp records payment status and receipts; settlement remains with Cashfree and the school account."
+          >
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              <InfoPill icon={Landmark} text={`Merchant: ${cashfreeMerchant?.merchantId || 'Creating...'}`} />
+              <InfoPill icon={FileText} text={`Onboarding: ${cashfreeMerchant?.onboardingStatus || 'Pending'}`} />
+              <InfoPill icon={CreditCard} text={cashfreeMerchant?.paymentsEnabled ? 'Payments Active' : 'Payments Not Active'} />
+            </div>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <PrimaryButton
+                type="button"
+                icon={CreditCard}
+                label={cashfreeOnboardingMutation.isPending ? 'Preparing KYC...' : 'Start / Continue KYC'}
+                disabled={cashfreeOnboardingMutation.isPending}
+                onClick={() => cashfreeOnboardingMutation.mutate()}
+              />
+              <PrimaryButton
+                type="button"
+                icon={CalendarClock}
+                label={refreshCashfreeMerchantMutation.isPending ? 'Refreshing...' : 'Refresh Status'}
+                disabled={refreshCashfreeMerchantMutation.isPending}
+                onClick={() => refreshCashfreeMerchantMutation.mutate()}
+              />
+            </div>
+            {cashfreeOnboardingLink ? (
+              <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200 bg-white">
+                <iframe
+                  title="Cashfree merchant onboarding"
+                  src={cashfreeOnboardingLink}
+                  className="h-[720px] w-full border-0"
+                  allow="camera; microphone"
+                />
+              </div>
+            ) : null}
+            <GatewayAttemptTable provider="Cashfree" rows={cashfreeAttemptsQuery.data?.content || []} />
+          </Panel>
+        ) : null}
 
         {activeSection === 'structures' ? (
           selectedFeeClass ? (
@@ -813,6 +923,9 @@ const FeeManagement = () => {
 
         {activeSection === 'payments' ? (
           <Panel className="mt-8" title="Counter Fee Collection" description="Cash counter ke liye student select karo, payable amount verify karo, cash receive karo, aur receipt save karo.">
+                <div className="mt-6 flex justify-end">
+                  <QRScannerButton feature="fees" onResolved={handleScannedStudent} />
+                </div>
                 <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSavePayment}>
                   <SelectField
                     label="Class"
@@ -1040,6 +1153,7 @@ const sectionTitle = (section) => ({
   structures: 'Fee Structure Setup',
   payments: 'Fee Counter Collection',
   dues: 'Due Fee Reports',
+  cashfree: 'Cashfree School Payments',
 }[section] || 'Fee Management');
 
 const enrichReceiptForDisplay = (receipt, student) => ({
@@ -1225,11 +1339,12 @@ const SearchInput = ({ value, onChange, placeholder }) => (
   </div>
 );
 
-const PrimaryButton = ({ type, icon, label, onClick }) => (
+const PrimaryButton = ({ type, icon, label, onClick, disabled = false }) => (
   <button
     type={type}
     onClick={onClick}
-    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600"
+    disabled={disabled}
+    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
   >
     {React.createElement(icon, { size: 15 })}
     {label}
@@ -1450,6 +1565,42 @@ const PaymentHistoryTable = ({ rows, onVerify, onReject, verifying }) => (
         Is student ki payment history abhi empty hai.
       </div>
     )}
+  </div>
+);
+
+const GatewayAttemptTable = ({ provider, rows }) => (
+  <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <h4 className="text-sm font-black text-slate-950">{provider} Transaction Register</h4>
+      <p className="mt-1 text-xs font-semibold text-slate-500">Latest 25 successful, pending, failed, and dropped online payment attempts.</p>
+    </div>
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+        <thead>
+          <tr>
+            {['Date & Time', 'Student', 'Order ID', `${provider} Payment ID`, 'Mode', 'Status', 'Amount'].map((label) => (
+              <th key={label} className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((attempt) => (
+            <tr key={attempt.attemptId} className="hover:bg-emerald-50/40">
+              <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-600">{attempt.paidAt || attempt.createdAt || '-'}</td>
+              <td className="px-4 py-4 font-black text-slate-900">{attempt.studentName || `Student ${attempt.studentId}`}</td>
+              <td className="px-4 py-4 font-semibold text-slate-600">{attempt.orderId}</td>
+              <td className="px-4 py-4 text-slate-600">{attempt.cfPaymentId || attempt.paymentId || '-'}</td>
+              <td className="px-4 py-4 text-slate-600">{attempt.paymentMode || '-'}</td>
+              <td className="px-4 py-4"><span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-600">{attempt.status}</span></td>
+              <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(attempt.amount)}</td>
+            </tr>
+          ))}
+          {!rows.length ? (
+            <tr><td colSpan="7" className="px-4 py-8 text-center font-semibold text-slate-500">No {provider} transactions recorded yet.</td></tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
   </div>
 );
 

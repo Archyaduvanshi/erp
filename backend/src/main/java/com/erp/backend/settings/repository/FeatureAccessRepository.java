@@ -4,11 +4,13 @@ import java.util.List;
 import java.util.Optional;
 
 import com.erp.backend.settings.entity.FeatureAccess;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface FeatureAccessRepository extends JpaRepository<FeatureAccess, Long> {
+    @EntityGraph(attributePaths = "teacher")
     List<FeatureAccess> findAllByInstituteIdOrderByFeatureKeyAsc(Long instituteId);
 
     @Query("""

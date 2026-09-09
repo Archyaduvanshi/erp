@@ -27,7 +27,8 @@ import lombok.Setter;
         name = "students",
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_students_institute_enrollment", columnNames = {"institute_id", "enrollment_no"}),
-                @UniqueConstraint(name = "uk_students_institute_class_roll", columnNames = {"institute_id", "assigned_class", "roll_no"})
+                @UniqueConstraint(name = "uk_students_institute_class_roll", columnNames = {"institute_id", "assigned_class", "roll_no"}),
+                @UniqueConstraint(name = "uk_students_qr_code_data", columnNames = {"qr_code_data"})
         },
         indexes = {
                 @Index(name = "idx_students_institute_created", columnList = "institute_id, created_at"),
@@ -109,7 +110,7 @@ public class Student {
     @Column(columnDefinition = "TEXT")
     private String documentsJson;
 
-    @Column(length = 2000)
+    @Column(length = 80, nullable = false)
     private String qrCodeData;
 
     private String cardExpiryDate;

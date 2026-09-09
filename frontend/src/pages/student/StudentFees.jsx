@@ -6,61 +6,24 @@ import {
   ChevronDown,
   CreditCard,
   Download,
-  Landmark,
   Search,
 } from 'lucide-react';
-import { feeApi } from '../../utils/api';
+import { cashfreeApi, feeApi } from '../../utils/api';
 import { getFeeFacilityKey } from '../../utils/facilityUtils';
 import {
   calculateTaxBreakdown,
   formatBillingType,
   formatCoveredMonths,
   formatMoney,
-  getTodayKey,
   resolveCoverageLabel,
 } from '../../utils/feeUtils';
 import { useAuth } from '../../context/AuthContext';
 
-const today = getTodayKey();
 const PAGE_SIZE = 25;
 
 const createPaymentForm = () => ({
-  transactionId: '',
-  gatewayRef: '',
-  mode: 'UPI',
-  paymentStatus: 'Success',
-  paymentTarget: 'due_auto',
   paidAmount: '',
-  paymentDate: today,
 });
-
-const paymentMethodDetails = {
-  UPI: {
-    title: 'UPI Payment',
-    primary: 'fees@collegeupi',
-    secondary: 'UPI app me amount pay karke UTR / transaction ID paste karein.',
-  },
-  'Bank Transfer': {
-    title: 'Bank Transfer',
-    primary: 'A/C 0000000000 | IFSC COLG0001234',
-    secondary: 'NEFT / IMPS / RTGS ke baad bank reference number submit karein.',
-  },
-  Card: {
-    title: 'Card Payment',
-    primary: 'Gateway reference required',
-    secondary: 'Card payment ke successful gateway reference ko save karein.',
-  },
-  'Net Banking': {
-    title: 'Net Banking',
-    primary: 'Bank confirmation reference required',
-    secondary: 'Net banking receipt ka transaction reference enter karein.',
-  },
-  Other: {
-    title: 'Other Method',
-    primary: 'Reference / proof number required',
-    secondary: 'Cheque, wallet, ya kisi other mode ka proof reference add karein.',
-  },
-};
 
 const StudentFees = () => {
   const navigate = useNavigate();
@@ -90,12 +53,15 @@ const StudentFees = () => {
     placeholderData: keepPreviousData,
   });
 
-  const savePaymentMutation = useMutation({
-    mutationFn: feeApi.saveMyPayment,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-payments'] });
-    },
+  const cashfreeOrderMutation = useMutation({
+    mutationFn: cashfreeApi.createMyOrder,
+  });
+
+  const cashfreeAvailabilityQuery = useQuery({
+    queryKey: ['cashfree', 'student-me-availability'],
+    queryFn: cashfreeApi.getMyAvailability,
+    enabled: session?.role === 'student',
+    staleTime: 30_000,
   });
 
   const student = summaryQuery.data?.student || null;
@@ -150,7 +116,7 @@ const StudentFees = () => {
   const totalFacilityCharge = 0;
   const totalCollegeCharge = Number(summaryQuery.data?.currentDue) || 0;
   const customPaymentAmount = Number(paymentForm.paidAmount) || 0;
-  const selectedPaymentMethod = paymentMethodDetails[paymentForm.mode] || paymentMethodDetails.Other;
+  const cashfreePaymentsEnabled = cashfreeAvailabilityQuery.data?.paymentsEnabled === true;
   const activeFacilityRows = visibleFeeRows.filter((row) => (
     isFacilityFeeStructure(row.structure) && (Number(row.currentCycleDueAmount) || 0) > 0
   ));
@@ -190,30 +156,36 @@ const StudentFees = () => {
     }
   }, [paymentForm.paidAmount, totalCurrentDue]);
 
-  const handleSavePayment = async (e) => {
-    e.preventDefault();
-    if (!student) return;
-
-    const paidAmount = Number(paymentForm.paidAmount) || 0;
-    if (!paymentForm.transactionId.trim() || paidAmount <= 0) return;
-
-    if (visibleFeeRows.length === 0) return;
+  const handleCashfreePayment = async () => {
+    if (!cashfreePaymentsEnabled) {
+      setLoadError(cashfreeAvailabilityQuery.data?.message || 'Online payments are not active for this school yet.');
+      return;
+    }
+    if (!student || customPaymentAmount <= 0 || visibleFeeRows.length === 0) return;
+    setLoadError('');
     try {
-      await savePaymentMutation.mutateAsync({
-        ...paymentForm,
-        structureId: 'overall_total',
-        paidAmount,
+      const order = await cashfreeOrderMutation.mutateAsync({
+        amount: customPaymentAmount,
         idempotencyKey: crypto.randomUUID(),
-        paymentTarget: 'due_auto',
-        coverageLabel: 'Manual payment auto-adjusted',
-        activeFromMonth: '',
-        billedMonthsCount: 0,
-        billingType: 'overall_payment',
       });
-
-      setPaymentForm(createPaymentForm());
+      const Cashfree = await loadCashfreeSdk();
+      const cashfree = Cashfree({ mode: order.environment === 'production' ? 'production' : 'sandbox' });
+      await cashfree.checkout({
+        paymentSessionId: order.paymentSessionId,
+        redirectTarget: '_modal',
+      });
+      const result = await cashfreeApi.getMyOrder(order.orderId);
+      if (result.status === 'SUCCESS') {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-summary'] }),
+          queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-payments'] }),
+        ]);
+        setPaymentForm(createPaymentForm());
+      } else if (result.status === 'FAILED' || result.status === 'USER_DROPPED') {
+        setLoadError('Payment complete nahi hua. Aap dobara safely try kar sakte hain.');
+      }
     } catch (error) {
-      setLoadError(error.message || 'Unable to save payment in database.');
+      setLoadError(error.message || 'Cashfree checkout start nahi ho saka.');
     }
   };
 
@@ -291,7 +263,7 @@ const StudentFees = () => {
               title="Student Fee Collection"
               description="Payable amount verify karein, manual payment proof submit karein, aur receipt database me save karein."
             >
-              <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSavePayment}>
+              <div className="mt-8 grid gap-5 md:grid-cols-2">
                 <div className="md:col-span-2">
                   <LoggedInStudentStrip student={student} studentName={studentName} studentSection={studentSection} />
                 </div>
@@ -332,54 +304,33 @@ const StudentFees = () => {
                   </div>
                 </div>
 
-                <SelectField
-                  label="Collection Mode"
-                  value={paymentForm.mode}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, mode: e.target.value })}
-                  options={['UPI', 'Bank Transfer', 'Card', 'Net Banking', 'Other']}
-                />
-                <div className="rounded-[1.4rem] border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-emerald-700 shadow-sm">
-                      {paymentForm.mode === 'Bank Transfer' ? <Landmark size={20} /> : <CreditCard size={20} />}
-                    </div>
-                    <div>
-                      <p className="text-sm font-black text-slate-950">{selectedPaymentMethod.title}</p>
-                      <p className="mt-1 text-sm font-bold text-emerald-700">{selectedPaymentMethod.primary}</p>
-                      <p className="mt-2 text-xs font-semibold leading-5 text-slate-600">{selectedPaymentMethod.secondary}</p>
-                    </div>
-                  </div>
-                </div>
                 <InputField
-                  label="UTR / Transaction ID"
-                  value={paymentForm.transactionId}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, transactionId: e.target.value })}
-                  placeholder="UPI123456 / NEFT-2026-001"
-                />
-                <InputField
-                  label="Bank / Gateway Reference"
-                  value={paymentForm.gatewayRef}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, gatewayRef: e.target.value })}
-                  placeholder="bank_ref_or_gateway_ref"
-                />
-                <InputField
-                  label="Amount To Collect"
+                  label="Amount To Pay"
                   type="number"
                   min="0"
                   value={paymentForm.paidAmount}
                   onChange={(e) => setPaymentForm({ ...paymentForm, paidAmount: e.target.value })}
                   placeholder="25000"
                 />
-                <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
+                <div className="flex flex-col gap-3 sm:flex-row md:self-end">
                   <PrimaryButton
-                    type="submit"
-                    icon={Landmark}
-                    label="Submit Manual Payment"
-                    disabled={!student || customPaymentAmount <= 0 || !paymentForm.transactionId.trim() || savePaymentMutation.isPending}
-                    variant="soft"
+                    type="button"
+                    icon={CreditCard}
+                    label={cashfreeOrderMutation.isPending
+                      ? 'Starting Cashfree...'
+                      : cashfreePaymentsEnabled
+                        ? 'Pay Online with Cashfree'
+                        : 'Online Payments Not Active'}
+                    disabled={!student || customPaymentAmount <= 0 || cashfreeOrderMutation.isPending || !cashfreePaymentsEnabled}
+                    onClick={handleCashfreePayment}
                   />
                 </div>
-              </form>
+                {!cashfreeAvailabilityQuery.isLoading && !cashfreePaymentsEnabled ? (
+                  <p className="md:col-span-2 text-xs font-semibold text-amber-700">
+                    {cashfreeAvailabilityQuery.data?.message || cashfreeAvailabilityQuery.error?.message || 'Online payments are not active for this school yet.'}
+                  </p>
+                ) : null}
+              </div>
               <div className="mt-8 max-w-md">
                 <SearchInput value={receiptSearch} onChange={setReceiptSearch} placeholder="Search receipt or transaction..." />
               </div>
@@ -433,22 +384,6 @@ const InputField = ({ label, ...props }) => (
       className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
       {...props}
     />
-  </div>
-);
-
-const SelectField = ({ label, options, renderOptionLabel, ...props }) => (
-  <div className="space-y-2.5">
-    <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
-    <select
-      className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
-      {...props}
-    >
-      {options.map((option) => (
-        <option key={option || 'empty-option'} value={option}>
-          {renderOptionLabel ? renderOptionLabel(option) : option || 'Select'}
-        </option>
-      ))}
-    </select>
   </div>
 );
 
@@ -563,7 +498,7 @@ const PaymentHistoryTable = ({ rows, onDownload }) => (
                 <td className="px-4 py-4 font-black text-slate-900">{receipt.receiptNumber || receipt.transactionId || '-'}</td>
                 <td className="px-4 py-4 text-slate-600">{receipt.mode || '-'}</td>
                 <td className="px-4 py-4">
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${receipt.paymentStatus === 'Success' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${['Success', 'COMPLETED'].includes(receipt.paymentStatus) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                     {receipt.paymentStatus || 'Saved'}
                   </span>
                 </td>
@@ -616,6 +551,24 @@ function useDebouncedValue(value, delay) {
   }, [delay, value]);
 
   return debouncedValue;
+}
+
+let cashfreeSdkPromise;
+
+function loadCashfreeSdk() {
+  if (window.Cashfree) return Promise.resolve(window.Cashfree);
+  if (cashfreeSdkPromise) return cashfreeSdkPromise;
+  cashfreeSdkPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://sdk.cashfree.com/js/v3/cashfree.js';
+    script.async = true;
+    script.onload = () => window.Cashfree
+      ? resolve(window.Cashfree)
+      : reject(new Error('Cashfree checkout SDK did not initialize.'));
+    script.onerror = () => reject(new Error('Cashfree checkout SDK could not be loaded.'));
+    document.head.appendChild(script);
+  });
+  return cashfreeSdkPromise;
 }
 
 export default StudentFees;

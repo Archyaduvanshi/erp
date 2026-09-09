@@ -23,6 +23,8 @@ import {
   X,
 } from 'lucide-react';
 import { academicSessionApi, curriculumApi, settingsApi, studentApi, uploadApi } from '../../utils/api';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
+import { downloadQrCode, useQrCodeDataUrl } from '../../utils/qrCode';
 
 const initialFormData = {
   firstName: '',
@@ -643,6 +645,8 @@ const StudentManagement = () => {
             </div>
           </div>
 
+          <div className="flex items-center gap-3">
+          {activeTab === 'list' ? <QRScannerButton feature="student-management" onResolved={(identity) => handleOpenStudent(identity.id)} /> : null}
           <button
             onClick={() => {
               setActiveTab(activeTab === 'list' ? 'add' : 'list');
@@ -667,6 +671,7 @@ const StudentManagement = () => {
             {activeTab === 'list' ? <Plus size={14} /> : <X size={14} />}
             {activeTab === 'list' ? 'Add Student' : 'Close Form'}
           </button>
+          </div>
         </div>
       </div>
 
@@ -1922,34 +1927,6 @@ function getStudentClassLabel(student) {
   return student.assignedClass || [student.className, student.section].filter(Boolean).join(' / ') || 'Unassigned';
 }
 
-function buildStudentQrPayload(student) {
-  const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student';
-  const documentSummary = (student.documents || [])
-    .map((document) => document.documentType || document.fileName || document.fileUploadPath)
-    .filter(Boolean)
-    .join(', ');
-
-  return [
-    'ERP STUDENT PROFILE',
-    `Name: ${fullName}`,
-    `Enrollment No: ${student.enrollmentNo || 'N/A'}`,
-    `Class: ${student.assignedClass || student.className || 'N/A'}`,
-    `Section: ${student.section || 'N/A'}`,
-    `DOB: ${student.dob || 'N/A'}`,
-    `Gender: ${student.gender || 'N/A'}`,
-    `Mobile: ${student.mobile || 'N/A'}`,
-    `Email: ${student.email || 'N/A'}`,
-    `Father: ${student.guardianName || 'N/A'}`,
-    `Father Phone: ${student.guardianPhone || 'N/A'}`,
-    `Blood Group: ${student.bloodGroup || 'N/A'}`,
-    `Documents: ${documentSummary || 'N/A'}`,
-  ].join('\n');
-}
-
-function createQrImageUrl(value) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'student')}`;
-}
-
 function buildImageKitThumbnail(url, size = 48) {
   if (!url) {
     return url;
@@ -2109,24 +2086,6 @@ function monthNameToNumber(monthName) {
   return index >= 0 ? index + 1 : 4;
 }
 
-async function downloadQrCode(qrCodeData, studentName) {
-  const qrUrl = createQrImageUrl(qrCodeData);
-  const response = await fetch(qrUrl);
-  if (!response.ok) {
-    throw new Error('Unable to download QR code.');
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = `${(studentName || 'student').replace(/\s+/g, '-').toLowerCase()}-qr.png`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(objectUrl);
-}
-
 function StudentDetailView({
   student,
   formData,
@@ -2145,7 +2104,7 @@ function StudentDetailView({
   onDocumentBrowse,
   onPhotoBrowse,
 }) {
-  const qrImage = createQrImageUrl(student.qrCodeData);
+  const qrImage = useQrCodeDataUrl(student.qrCodeData);
   const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student';
 
   return (
@@ -2338,7 +2297,7 @@ function StudentDetailView({
 }
 
 function GeneratedStudentView({ student, onClose }) {
-  const qrImage = createQrImageUrl(student.qrCodeData);
+  const qrImage = useQrCodeDataUrl(student.qrCodeData);
 
   return (
     <div className="rounded-[2.25rem] border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.35)] lg:p-8">

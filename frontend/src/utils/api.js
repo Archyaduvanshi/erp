@@ -424,6 +424,8 @@ const withPortalHeaders = (role, options = {}) => {
 export const studentApi = {
   getAll: () => request('/students', withInstituteHeaders()),
 
+  getMyDashboard: () => request('/students/me/dashboard', withPortalHeaders('student')),
+
   getClassSummary: () => request('/students/class-summary', withInstituteHeaders()),
 
   getPage: ({ page = 0, size = 25, assignedClass = '', search = '', status = '', sort = 'createdAt,desc' } = {}) => {
@@ -512,6 +514,17 @@ export const teacherApi = {
     request(`/teachers/${id}`, withInstituteHeaders({
       method: 'DELETE',
     })),
+};
+
+export const scannerApi = {
+  resolve: (payload) => request('/scanner/resolve', withInstituteHeaders({
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })),
+
+  regenerateStudent: (studentId) => request(`/scanner/students/${studentId}/regenerate`, withInstituteHeaders({ method: 'POST' })),
+
+  regenerateTeacher: (teacherId) => request(`/scanner/teachers/${teacherId}/regenerate`, withInstituteHeaders({ method: 'POST' })),
 };
 
 export const transportApi = {
@@ -890,12 +903,6 @@ export const feeApi = {
       body: JSON.stringify(payload),
     })),
 
-  saveMyPayment: (payload) =>
-    request('/fees/student/me/payments', withInstituteHeaders({
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })),
-
   getMySummary: (filters = {}) => request(`/fees/student/me/summary${toQueryString(filters)}`, withInstituteHeaders()),
 
   getMyPayments: (filters = {}) => request(`/fees/student/me/payments${toQueryString(filters)}`, withInstituteHeaders()),
@@ -921,6 +928,31 @@ export const feeApi = {
     request(`/fees/payments/${id}`, withInstituteHeaders({
       method: 'DELETE',
     })),
+};
+
+export const cashfreeApi = {
+  getMyAvailability: () =>
+    request('/cashfree/student/me/availability', withInstituteHeaders()),
+
+  createMyOrder: (payload) =>
+    request('/cashfree/student/me/orders', withInstituteHeaders({
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })),
+
+  getMyOrder: (orderId) =>
+    request(`/cashfree/student/me/orders/${encodeURIComponent(orderId)}`, withInstituteHeaders()),
+
+  createMerchant: () =>
+    request('/cashfree/merchant', withInstituteHeaders({ method: 'POST' })),
+
+  getMerchant: () => request('/cashfree/merchant', withInstituteHeaders()),
+
+  createOnboardingLink: () =>
+    request('/cashfree/merchant/onboarding-link', withInstituteHeaders({ method: 'POST' })),
+
+  getAttempts: (filters = {}) =>
+    request(`/cashfree/attempts${toQueryString(filters)}`, withInstituteHeaders()),
 };
 
 export const salaryApi = {

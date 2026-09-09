@@ -20,6 +20,8 @@ import com.erp.backend.fee.service.FeeService;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
 import com.erp.backend.institute.service.InstitutionCodeService;
+import com.erp.backend.scanner.service.QrIdentityTokenService;
+import com.erp.backend.scanner.service.QrIdentityTokenService.EntityType;
 import com.erp.backend.student.dto.StudentClassSummaryResponse;
 import com.erp.backend.student.dto.StudentDocumentPayload;
 import com.erp.backend.student.dto.StudentListResponse;
@@ -65,6 +67,7 @@ public class StudentService {
     private final FeeService feeService;
     private final InstitutionCodeService institutionCodeService;
     private final SectionCapacityService sectionCapacityService;
+    private final QrIdentityTokenService qrIdentityTokenService;
 
     public StudentService(
             StudentRepository studentRepository,
@@ -74,7 +77,8 @@ public class StudentService {
             AuthService authService,
             FeeService feeService,
             InstitutionCodeService institutionCodeService,
-            SectionCapacityService sectionCapacityService
+            SectionCapacityService sectionCapacityService,
+            QrIdentityTokenService qrIdentityTokenService
     ) {
         this.studentRepository = studentRepository;
         this.instituteRepository = instituteRepository;
@@ -84,6 +88,7 @@ public class StudentService {
         this.feeService = feeService;
         this.institutionCodeService = institutionCodeService;
         this.sectionCapacityService = sectionCapacityService;
+        this.qrIdentityTokenService = qrIdentityTokenService;
     }
 
     public List<StudentResponse> getAllStudents(Long instituteId) {
@@ -151,7 +156,7 @@ public class StudentService {
         student.setInstitute(institute);
         applyStudentPayload(instituteId, student, request);
         student.setRollNo(resolveNextRollNo(instituteId, student.getAssignedClass()));
-        student.setQrCodeData(buildFinalQrCodeData(student));
+        student.setQrCodeData(qrIdentityTokenService.generate(EntityType.STUDENT));
         Student savedStudent = studentRepository.save(student);
         authService.upsertStudentAccount(savedStudent, null, true);
         feeService.synchronizeChargesForStudent(instituteId, savedStudent.getId());
@@ -172,7 +177,6 @@ public class StudentService {
                 || !StringUtils.hasText(student.getRollNo())) {
             student.setRollNo(resolveNextRollNo(instituteId, student.getAssignedClass()));
         }
-        student.setQrCodeData(buildFinalQrCodeData(student));
         Student savedStudent = studentRepository.save(student);
         authService.upsertStudentAccount(savedStudent, null, false);
         if (!Objects.equals(normalizeComparable(previousAssignedClass), normalizeComparable(savedStudent.getAssignedClass()))) {
@@ -192,6 +196,7 @@ public class StudentService {
             Student student = new Student();
             student.setInstitute(institute);
             applyStudentPayload(instituteId, student, payload);
+            student.setQrCodeData(qrIdentityTokenService.generate(EntityType.STUDENT));
             if (StringUtils.hasText(student.getAssignedClass())) {
                 int nextRoll = nextRollByClass.computeIfAbsent(
                         student.getAssignedClass(),
@@ -199,7 +204,6 @@ public class StudentService {
                 ) + 1;
                 nextRollByClass.put(student.getAssignedClass(), nextRoll);
                 student.setRollNo(String.format("%03d", nextRoll));
-                student.setQrCodeData(buildFinalQrCodeData(student));
             }
             savedStudents.add(studentRepository.saveAndFlush(student));
         }
@@ -333,7 +337,6 @@ public class StudentService {
         student.setDocumentsJson(writeDocuments(normalizeDocuments(request.documents())));
         student.setCardExpiryDate(trim(request.cardExpiryDate()));
         student.setPhotoUrl(trim(request.photoUrl()));
-        student.setQrCodeData(resolveQrCodeData(student, request));
         student.setStatus(defaultValue(request.status(), "Verified"));
     }
 
@@ -569,44 +572,6 @@ public class StudentService {
             return "inactive";
         }
         return defaultValue(requestedStatus, "active").toLowerCase();
-    }
-
-    private String resolveQrCodeData(Student student, StudentPayload request) {
-        if (StringUtils.hasText(student.getQrCodeData()) && StringUtils.hasText(request.qrCodeData())) {
-            return request.qrCodeData().trim();
-        }
-
-        return buildFinalQrCodeData(student, normalizeDocuments(request.documents()));
-    }
-
-    private String buildFinalQrCodeData(Student student) {
-        return buildFinalQrCodeData(student, readDocuments(student.getDocumentsJson()));
-    }
-
-    private String buildFinalQrCodeData(Student student, List<StudentDocumentPayload> documents) {
-        String documentSummary = normalizeDocuments(documents).stream()
-                .map(document -> firstNonBlank(document.documentType(), firstNonBlank(document.fileName(), document.fileUploadPath())))
-                .filter(StringUtils::hasText)
-                .toList()
-                .stream()
-                .reduce((first, second) -> first + ", " + second)
-                .orElse("N/A");
-
-        return String.join("\n",
-                "ERP STUDENT PROFILE",
-                "Name: " + defaultValue(buildStudentName(student.getFirstName(), student.getLastName()), "Student"),
-                "Enrollment No: " + defaultValue(student.getEnrollmentNo(), "N/A"),
-                "Class: " + defaultValue(firstNonBlank(student.getAssignedClass(), student.getClassName()), "N/A"),
-                "Section: " + defaultValue(student.getSection(), "N/A"),
-                "DOB: " + defaultValue(student.getDob(), "N/A"),
-                "Gender: " + defaultValue(student.getGender(), "N/A"),
-                "Mobile: " + defaultValue(student.getMobile(), "N/A"),
-                "Email: " + defaultValue(student.getEmail(), "N/A"),
-                "Father: " + defaultValue(student.getGuardianName(), "N/A"),
-                "Father Phone: " + defaultValue(student.getGuardianPhone(), "N/A"),
-                "Blood Group: " + defaultValue(student.getBloodGroup(), "N/A"),
-                "Admission Date: " + defaultValue(student.getAdmissionDate(), "N/A"),
-                "Documents: " + documentSummary);
     }
 
     private String digitsOnly(String value) {

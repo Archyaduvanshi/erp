@@ -28,6 +28,8 @@ import {
 import { teacherApi, uploadApi } from '../../utils/api';
 import { formatSalary } from '../../utils/salaryUtils';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
+import { downloadQrCode, useQrCodeDataUrl } from '../../utils/qrCode';
 
 const getToday = () => new Date().toISOString().slice(0, 10);
 
@@ -469,6 +471,8 @@ const TeacherManagement = () => {
             </div>
           </div>
 
+          <div className="flex items-center gap-3">
+          {activeTab === 'list' ? <QRScannerButton feature="teacher-management" onResolved={(identity) => handleOpenTeacher(identity.id)} /> : null}
           <button
             onClick={() => {
               setActiveTab(activeTab === 'list' ? 'add' : 'list');
@@ -494,6 +498,7 @@ const TeacherManagement = () => {
             {activeTab === 'list' ? <Plus size={14} /> : <X size={14} />}
             {activeTab === 'list' ? 'Add Teacher' : 'Close Form'}
           </button>
+          </div>
         </div>
       </div>
 
@@ -1518,10 +1523,6 @@ function stripPendingFile(document) {
   return cleanDocument;
 }
 
-function createQrImageUrl(value) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'teacher')}`;
-}
-
 function buildImageKitThumbnail(url, size = 48) {
   if (!url) {
     return url;
@@ -1529,24 +1530,6 @@ function buildImageKitThumbnail(url, size = 48) {
 
   const transformation = `tr=w-${size},h-${size},c-at_max`;
   return url.includes('?') ? `${url}&${transformation}` : `${url}?${transformation}`;
-}
-
-async function downloadQrCode(qrCodeData, teacherName) {
-  const qrUrl = createQrImageUrl(qrCodeData);
-  const response = await fetch(qrUrl);
-  if (!response.ok) {
-    throw new Error('Unable to download QR code.');
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = `${(teacherName || 'teacher').replace(/\s+/g, '-').toLowerCase()}-qr.png`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(objectUrl);
 }
 
 function TeacherDetailView({
@@ -1561,7 +1544,7 @@ function TeacherDetailView({
   onDocumentBrowse,
   onPhotoBrowse,
 }) {
-  const qrImage = createQrImageUrl(teacher.qrCodeData);
+  const qrImage = useQrCodeDataUrl(teacher.qrCodeData);
   const fullName = `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher';
   const updateUpperField = (field) => (e) => {
     setFormData({ ...formData, [field]: e.target.value.toUpperCase() });
@@ -1726,7 +1709,7 @@ function TeacherDetailView({
 }
 
 function GeneratedTeacherView({ teacher, onClose }) {
-  const qrImage = createQrImageUrl(teacher.qrCodeData);
+  const qrImage = useQrCodeDataUrl(teacher.qrCodeData);
   const fullName = `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher';
 
   return (

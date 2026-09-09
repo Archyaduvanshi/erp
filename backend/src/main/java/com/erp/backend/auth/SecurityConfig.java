@@ -50,6 +50,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/settings/login").permitAll()
                         .requestMatchers("/api/institutes/register", "/api/institutes/login").permitAll()
                         .requestMatchers("/api/uploads/registration-logo").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/cashfree/webhook").permitAll()
                         .anyRequest().authenticated()
                 );
         return http.build();

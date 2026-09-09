@@ -2,9 +2,7 @@ package com.erp.backend.teacher.service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -15,6 +13,8 @@ import com.erp.backend.institute.repository.InstituteRepository;
 import com.erp.backend.institute.service.InstitutionCodeService;
 import com.erp.backend.salary.entity.TeacherSalaryProfile;
 import com.erp.backend.salary.repository.TeacherSalaryProfileRepository;
+import com.erp.backend.scanner.service.QrIdentityTokenService;
+import com.erp.backend.scanner.service.QrIdentityTokenService.EntityType;
 import com.erp.backend.teacher.dto.TeacherDocumentPayload;
 import com.erp.backend.teacher.dto.TeacherListResponse;
 import com.erp.backend.teacher.dto.TeacherPageResponse;
@@ -57,6 +57,7 @@ public class TeacherService {
     private final ObjectMapper objectMapper;
     private final AuthService authService;
     private final InstitutionCodeService institutionCodeService;
+    private final QrIdentityTokenService qrIdentityTokenService;
 
     public TeacherService(
             TeacherRepository teacherRepository,
@@ -64,7 +65,8 @@ public class TeacherService {
             TeacherSalaryProfileRepository salaryProfileRepository,
             ObjectMapper objectMapper,
             AuthService authService,
-            InstitutionCodeService institutionCodeService
+            InstitutionCodeService institutionCodeService,
+            QrIdentityTokenService qrIdentityTokenService
     ) {
         this.teacherRepository = teacherRepository;
         this.instituteRepository = instituteRepository;
@@ -72,6 +74,7 @@ public class TeacherService {
         this.objectMapper = objectMapper;
         this.authService = authService;
         this.institutionCodeService = institutionCodeService;
+        this.qrIdentityTokenService = qrIdentityTokenService;
     }
 
     public List<TeacherResponse> getAllTeachers(Long instituteId) {
@@ -139,7 +142,7 @@ public class TeacherService {
         Teacher teacher = new Teacher();
         teacher.setInstitute(institute);
         applyTeacherPayload(teacher, request);
-        teacher.setQrCodeData(buildFinalQrCodeData(teacher));
+        teacher.setQrCodeData(qrIdentityTokenService.generate(EntityType.TEACHER));
         try {
             Teacher savedTeacher = teacherRepository.save(teacher);
             syncSalaryProfile(savedTeacher);
@@ -157,7 +160,6 @@ public class TeacherService {
         validatePhoto(request);
 
         applyTeacherPayload(teacher, request);
-        teacher.setQrCodeData(buildFinalQrCodeData(teacher));
         try {
             Teacher savedTeacher = teacherRepository.save(teacher);
             syncSalaryProfile(savedTeacher);
@@ -176,6 +178,7 @@ public class TeacherService {
                     Teacher teacher = new Teacher();
                     teacher.setInstitute(institute);
                     applyTeacherPayload(teacher, payload);
+                    teacher.setQrCodeData(qrIdentityTokenService.generate(EntityType.TEACHER));
                     return teacher;
                 })
                 .toList();
@@ -315,7 +318,6 @@ public class TeacherService {
         teacher.setPaymentHistoryJson(writePaymentHistory(request.paymentHistory()));
         teacher.setCardExpiryDate(trim(request.cardExpiryDate()));
         teacher.setPhotoUrl(trim(request.photoUrl()));
-        teacher.setQrCodeData(resolveQrCodeData(teacher, request));
         teacher.setStatus(defaultValue(request.status(), "Active"));
         teacher.setAttendanceStatus(defaultValue(request.attendanceStatus(), "Present"));
     }
@@ -486,38 +488,6 @@ public class TeacherService {
         String instituteCode = institutionCodeService.tenantPrefix(teacher.getInstitute().getInstitutionCode());
         long nextSequence = teacherRepository.countByInstituteId(teacher.getInstitute().getId()) + 1;
         return instituteCode + "EMP" + String.format("%04d", nextSequence);
-    }
-
-    private String resolveQrCodeData(Teacher teacher, TeacherPayload request) {
-        if (StringUtils.hasText(teacher.getQrCodeData()) && StringUtils.hasText(request.qrCodeData())) {
-            return request.qrCodeData().trim();
-        }
-
-        return buildFinalQrCodeData(teacher);
-    }
-
-    private String buildFinalQrCodeData(Teacher teacher) {
-        Map<String, Object> qrPayload = new LinkedHashMap<>();
-        qrPayload.put("profileType", "teacher");
-        qrPayload.put("employeeId", teacher.getEmployeeId());
-        qrPayload.put("fullName", buildTeacherName(teacher.getFirstName(), teacher.getLastName()));
-        qrPayload.put("email", teacher.getPersonalEmail());
-        qrPayload.put("mobile", teacher.getMobileNumber());
-        qrPayload.put("dob", teacher.getDob());
-        qrPayload.put("specialization", teacher.getSpecialization());
-        qrPayload.put("experienceYears", teacher.getExperienceYears());
-        qrPayload.put("contractType", teacher.getContractType());
-        qrPayload.put("joiningDate", teacher.getJoiningDate());
-        qrPayload.put("address", teacher.getAddress());
-        qrPayload.put("city", teacher.getCity());
-        qrPayload.put("state", teacher.getState());
-        qrPayload.put("pincode", teacher.getPincode());
-
-        try {
-            return objectMapper.writeValueAsString(qrPayload);
-        } catch (Exception exception) {
-            throw new IllegalStateException("Unable to generate teacher QR payload.", exception);
-        }
     }
 
     private int normalizePageSize(Integer size) {

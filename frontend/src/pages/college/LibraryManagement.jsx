@@ -14,9 +14,10 @@ import {
 } from 'lucide-react';
 import { libraryApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 
 const today = new Date().toISOString().split('T')[0];
-const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
+const isCollegeModuleSession = (session) => ['admin', 'feature', 'teacher'].includes(session?.role);
 const pageSizes = [25, 50, 100];
 
 const initialBookForm = {
@@ -112,6 +113,15 @@ const LibraryManagement = () => {
     queryClient.invalidateQueries({ queryKey: ['library', 'overview'] });
     queryClient.invalidateQueries({ queryKey: ['library', 'books'] });
     queryClient.invalidateQueries({ queryKey: ['library', 'issues'] });
+  };
+
+  const handleScannedStudent = (identity) => {
+    setActiveDesk('circulation');
+    setCirculationAction('issue');
+    setStudentSearch(identity.referenceNumber || identity.name || '');
+    setIssueSearch(identity.referenceNumber || identity.name || '');
+    setIssuePage(0);
+    setIssueForm((current) => ({ ...current, borrowerId: String(identity.id) }));
   };
 
   const saveBookMutation = useMutation({
@@ -278,6 +288,7 @@ const LibraryManagement = () => {
               <h1 className="font-serif text-2xl font-black italic tracking-tight text-slate-950">Stacks And Circulation Desk</h1>
             </div>
           </div>
+          <QRScannerButton feature="library" onResolved={handleScannedStudent} />
         </div>
       </div>
 

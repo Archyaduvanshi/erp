@@ -17,6 +17,7 @@ import {
   Users,
 } from 'lucide-react';
 import { hostelApi } from '../../utils/api';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 
 const today = new Date().toISOString().split('T')[0];
 
@@ -628,6 +629,19 @@ const HostelManagement = () => {
     }
   };
 
+  const handleScannedStudent = (identity) => {
+    setActiveSection('rooms');
+    setShowAllotmentForm(true);
+    setResidentForm((current) => ({
+      ...current,
+      enrollmentNo: identity.referenceNumber || '',
+      studentId: String(identity.id),
+      studentName: identity.name || '',
+      className: identity.className || '',
+      section: identity.section || '',
+    }));
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-16 text-slate-900">
       <div className="border-b border-slate-200/70 bg-white/90 backdrop-blur-xl">
@@ -647,6 +661,7 @@ const HostelManagement = () => {
               </h1>
             </div>
           </div>
+          <QRScannerButton feature="hostel" onResolved={handleScannedStudent} />
         </div>
       </div>
 

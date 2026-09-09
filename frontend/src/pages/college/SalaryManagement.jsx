@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { salaryApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 import {
   formatCurrencyAmount,
   formatSalary,
@@ -21,7 +22,7 @@ import {
   getMonthLabel,
 } from '../../utils/salaryUtils';
 
-const isCollegeModuleSession = (session) => session?.role === 'admin' || session?.role === 'feature';
+const isCollegeModuleSession = (session) => ['admin', 'feature', 'teacher'].includes(session?.role);
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white';
 
 const SalaryManagement = () => {
@@ -102,11 +103,12 @@ const SalaryManagement = () => {
         loading={payrollQuery.isLoading || overviewQuery.isLoading || generatePayrollMutation.isPending}
         navigate={navigate}
         onGenerateMonth={() => generatePayrollMutation.mutate()}
+        onScanTeacher={(identity) => navigate(`/college/salary/${identity.id}`)}
       />
   );
 };
 
-const PayrollRegister = ({ payrollPeriods, searchTerm, setSearchTerm, statusFilter, setStatusFilter, payrollPage, setPayrollPage, payrollPageData, overview, loadError, loading, navigate, onGenerateMonth }) => {
+const PayrollRegister = ({ payrollPeriods, searchTerm, setSearchTerm, statusFilter, setStatusFilter, payrollPage, setPayrollPage, payrollPageData, overview, loadError, loading, navigate, onGenerateMonth, onScanTeacher }) => {
   const currentMonthKey = getMonthKey(new Date());
 
   const rows = useMemo(() => (
@@ -181,7 +183,10 @@ const PayrollRegister = ({ payrollPeriods, searchTerm, setSearchTerm, statusFilt
               >
                 {['All', 'Paid', 'Pending'].map((option) => <option key={option}>{option}</option>)}
               </select>
-              <ActionButton icon={PlusCircle} label="Generate Month" onClick={onGenerateMonth} disabled={loading} />
+              <div className="flex gap-2">
+                <QRScannerButton feature="salary" onResolved={onScanTeacher} />
+                <ActionButton icon={PlusCircle} label="Generate Month" onClick={onGenerateMonth} disabled={loading} />
+              </div>
             </div>
           </div>
 

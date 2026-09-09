@@ -4,6 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, GraduationCap, Search } from 'lucide-react';
 import { academicSessionApi, resultApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
+
+const canUseCollegeFeature = (session) => ['admin', 'feature', 'teacher'].includes(session?.role);
 
 const ResultManagement = () => {
   const navigate = useNavigate();
@@ -15,7 +18,7 @@ const ResultManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    if (!session || !['admin', 'feature'].includes(session.role)) {
+    if (!canUseCollegeFeature(session)) {
       navigate('/login');
     }
   }, [navigate, session]);
@@ -23,7 +26,7 @@ const ResultManagement = () => {
   const sessionsQuery = useQuery({
     queryKey: ['results', 'academic-sessions'],
     queryFn: academicSessionApi.getAll,
-    enabled: ['admin', 'feature'].includes(session?.role),
+    enabled: canUseCollegeFeature(session),
   });
 
   const currentAcademicSession = useMemo(() => (
@@ -33,7 +36,7 @@ const ResultManagement = () => {
   const classesQuery = useQuery({
     queryKey: ['results', 'classes', currentAcademicSession?.id],
     queryFn: () => resultApi.getClasses({ academicSessionId: currentAcademicSession?.id }),
-    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id),
+    enabled: canUseCollegeFeature(session) && Boolean(currentAcademicSession?.id),
   });
 
   const classStudentsQuery = useQuery({
@@ -42,14 +45,14 @@ const ResultManagement = () => {
       academicSessionId: currentAcademicSession?.id,
       examId: selectedExamId || undefined,
     }),
-    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id && selectedClass),
+    enabled: canUseCollegeFeature(session) && Boolean(currentAcademicSession?.id && selectedClass),
     placeholderData: keepPreviousData,
   });
 
   const classExamsQuery = useQuery({
     queryKey: ['results', 'exams', currentAcademicSession?.id, selectedClass],
     queryFn: () => resultApi.getClassExams(selectedClass, { academicSessionId: currentAcademicSession?.id }),
-    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id && selectedClass),
+    enabled: canUseCollegeFeature(session) && Boolean(currentAcademicSession?.id && selectedClass),
     placeholderData: keepPreviousData,
   });
 
@@ -59,7 +62,7 @@ const ResultManagement = () => {
       academicSessionId: currentAcademicSession?.id,
       examId: selectedExamId || undefined,
     }),
-    enabled: ['admin', 'feature'].includes(session?.role) && Boolean(currentAcademicSession?.id && selectedClass && selectedStudentId),
+    enabled: canUseCollegeFeature(session) && Boolean(currentAcademicSession?.id && selectedClass && selectedStudentId),
   });
 
   const publishMutation = useMutation({
@@ -130,7 +133,14 @@ const ResultManagement = () => {
     setSelectedStudentId(String(studentId));
   };
 
-  if (!session || !['admin', 'feature'].includes(session.role)) return null;
+  const handleScannedStudent = (identity) => {
+    setSelectedClass(identity.className || '');
+    setSelectedStudentId(String(identity.id));
+    setSelectedExamId('');
+    setSearchTerm(identity.referenceNumber || identity.name || '');
+  };
+
+  if (!canUseCollegeFeature(session)) return null;
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-12 text-slate-900">
@@ -159,6 +169,9 @@ const ResultManagement = () => {
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-[0.24em] text-fuchsia-700">Result</p>
             <h1 className="truncate text-2xl font-black tracking-tight text-slate-950">Student Result Register</h1>
+          </div>
+          <div className="ml-auto">
+            <QRScannerButton feature="results" onResolved={handleScannedStudent} />
           </div>
         </div>
       </header>

@@ -130,6 +130,7 @@ public class TimetableService {
         return new TeacherOccupancyResponse(teachers);
     }
 
+    @Transactional(readOnly = true)
     public ClassTimetableResponse getStudentTimetable(Long instituteId, Long studentId, Long academicSessionId) {
         AcademicSession session = resolveSession(instituteId, academicSessionId);
         Student student = studentRepository.findByInstituteIdAndIdWithClassAndSection(instituteId, studentId)

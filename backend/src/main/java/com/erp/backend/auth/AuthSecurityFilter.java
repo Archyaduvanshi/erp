@@ -66,7 +66,8 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
                 || path.equals("/api/auth/password/reset")
                 || path.equals("/api/institutes/register")
                 || path.equals("/api/institutes/login")
-                || path.equals("/api/uploads/registration-logo");
+                || path.equals("/api/uploads/registration-logo")
+                || ("POST".equalsIgnoreCase(request.getMethod()) && path.equals("/api/cashfree/webhook"));
     }
 
     @Override
@@ -127,6 +128,10 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
 
     private void enforceStudentAccess(HttpServletRequest request, AuthPrincipal principal) {
         String path = request.getRequestURI();
+        if (path.startsWith("/api/cashfree/student/me/")
+                && (isReadMethod(request.getMethod()) || "POST".equalsIgnoreCase(request.getMethod()))) {
+            return;
+        }
         if ("POST".equalsIgnoreCase(request.getMethod()) && path.equals("/api/fees/student/me/payments")) {
             return;
         }
@@ -153,6 +158,9 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
 
     private void enforceTeacherAccess(HttpServletRequest request, AuthPrincipal principal) {
         String path = request.getRequestURI();
+        if ("POST".equalsIgnoreCase(request.getMethod()) && path.equals("/api/scanner/resolve")) {
+            return;
+        }
         if (path.startsWith("/api/teachers/me/")) {
             return;
         }

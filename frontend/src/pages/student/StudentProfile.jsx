@@ -20,28 +20,7 @@ import {
 } from 'lucide-react';
 import { studentApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
-
-function createQrImageUrl(value) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'student')}`;
-}
-
-async function downloadQrCode(qrCodeData, studentName) {
-  const qrUrl = createQrImageUrl(qrCodeData);
-  const response = await fetch(qrUrl);
-  if (!response.ok) {
-    throw new Error('Unable to download QR code.');
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = `${(studentName || 'student').replace(/\s+/g, '-').toLowerCase()}-qr.png`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(objectUrl);
-}
+import { downloadQrCode, useQrCodeDataUrl } from '../../utils/qrCode';
 
 const StudentProfile = () => {
   const navigate = useNavigate();
@@ -71,7 +50,7 @@ const StudentProfile = () => {
   const studentName = student
     ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Student'
     : 'Student';
-  const qrImage = student?.qrCodeData ? createQrImageUrl(student.qrCodeData) : '';
+  const qrImage = useQrCodeDataUrl(student?.qrCodeData);
   const selectedDocument = (student?.documents || []).find((document) => document.id === selectedDocumentId) || null;
 
   useEffect(() => {

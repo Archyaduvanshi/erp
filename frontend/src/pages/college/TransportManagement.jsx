@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { academicSessionApi, transportApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 
 const initialDriverForm = {
   driverName: '',
@@ -566,6 +567,19 @@ const TransportManagement = () => {
     navigate('/college');
   };
 
+  const handleScannedStudent = (identity) => {
+    setActiveSection('students');
+    setStudentSearch(identity.referenceNumber || identity.name || '');
+    setStudentForm((current) => ({
+      ...current,
+      enrollmentNo: identity.referenceNumber || '',
+      studentId: String(identity.id),
+      studentName: identity.name || '',
+      className: identity.className || '',
+      section: identity.section || '',
+    }));
+  };
+
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#ecfeff_45%,#f8fafc_100%)] text-slate-900 selection:bg-sky-400 selection:text-slate-950">
       <div className="border-b border-slate-200/70 bg-white/80 backdrop-blur-xl">
@@ -584,7 +598,7 @@ const TransportManagement = () => {
             </div>
           </div>
 
-          <div />
+          <QRScannerButton feature="transport" onResolved={handleScannedStudent} />
         </div>
       </div>
 

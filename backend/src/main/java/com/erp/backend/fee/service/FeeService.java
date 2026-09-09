@@ -8,6 +8,7 @@ import java.time.Year;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -357,13 +358,56 @@ public class FeeService {
     @Transactional
     public FeePaymentResponse savePayment(Long instituteId, FeePaymentPayload request, AuthPrincipal principal) {
         if (request.studentId() == null) throw new IllegalArgumentException("STUDENT_NOT_FOUND: Student is required.");
-        return recordPayment(instituteId, request.studentId(), request, false, principal);
+        return recordPayment(instituteId, request.studentId(), request, false, principal, "MANUAL", null, false);
     }
 
     @Transactional
-    public FeePaymentResponse saveMyPayment(Long instituteId, Long studentId, FeePaymentPayload request, AuthPrincipal principal) {
-        if (studentId == null) throw new IllegalArgumentException("STUDENT_NOT_FOUND: Student identity is required.");
-        return recordPayment(instituteId, studentId, request, true, principal);
+    public FeePaymentResponse recordGatewayPayment(
+            Long instituteId,
+            Long studentId,
+            Long academicSessionId,
+            BigDecimal amount,
+            String providerPaymentId,
+            Long gatewayAttemptId,
+            String paymentMode
+    ) {
+        return recordGatewayPayment(instituteId, studentId, academicSessionId, amount, providerPaymentId,
+                gatewayAttemptId, paymentMode, "CASHFREE");
+    }
+
+    @Transactional
+    public FeePaymentResponse recordGatewayPayment(
+            Long instituteId,
+            Long studentId,
+            Long academicSessionId,
+            BigDecimal amount,
+            String providerPaymentId,
+            Long gatewayAttemptId,
+            String paymentMode,
+            String provider
+    ) {
+        if (!StringUtils.hasText(providerPaymentId)) {
+            throw new IllegalArgumentException("GATEWAY_PAYMENT_ID_REQUIRED: Gateway payment ID is required.");
+        }
+        String normalizedProvider = defaultValue(provider, "ONLINE").trim().toUpperCase(Locale.ROOT);
+        FeePaymentPayload payload = new FeePaymentPayload(
+                "overall_total",
+                studentId,
+                providerPaymentId.trim(),
+                providerPaymentId.trim(),
+                defaultValue(paymentMode, "Online"),
+                COMPLETED,
+                "due_auto",
+                amount,
+                LocalDate.now(),
+                normalizedProvider + " payment auto-adjusted",
+                "",
+                0,
+                "overall_payment",
+                normalizedProvider.toLowerCase(Locale.ROOT) + ":" + providerPaymentId.trim(),
+                academicSessionId
+        );
+        return recordPayment(instituteId, studentId, payload, false, null, normalizedProvider, gatewayAttemptId, true);
     }
 
     @Transactional
@@ -424,7 +468,16 @@ public class FeeService {
         voidPayment(instituteId, id, "Legacy delete converted to void.", principal);
     }
 
-    private FeePaymentResponse recordPayment(Long instituteId, Long studentId, FeePaymentPayload request, boolean studentSubmitted, AuthPrincipal principal) {
+    private FeePaymentResponse recordPayment(
+            Long instituteId,
+            Long studentId,
+            FeePaymentPayload request,
+            boolean studentSubmitted,
+            AuthPrincipal principal,
+            String paymentOrigin,
+            Long gatewayAttemptId,
+            boolean trustedGateway
+    ) {
         if (StringUtils.hasText(request.idempotencyKey())) {
             Optional<FeePayment> existing = feePaymentRepository.findByInstituteIdAndIdempotencyKey(instituteId, request.idempotencyKey().trim());
             if (existing.isPresent()) return toPaymentResponse(existing.get());
@@ -440,7 +493,7 @@ public class FeeService {
         FeeStudentSummaryResponse summary = buildStudentSummary(instituteId, student, session.getId());
         BigDecimal amount = money(request.paidAmount());
         if (amount.compareTo(ZERO) <= 0) throw new IllegalArgumentException("INVALID_PAYMENT_AMOUNT: Payment amount must be greater than zero.");
-        if (!"advance_only".equalsIgnoreCase(defaultValue(request.paymentTarget(), "")) && amount.compareTo(summary.totalOutstanding()) > 0) {
+        if (!trustedGateway && !"advance_only".equalsIgnoreCase(defaultValue(request.paymentTarget(), "")) && amount.compareTo(summary.totalOutstanding()) > 0) {
             throw new IllegalArgumentException("PAYMENT_EXCEEDS_DUE: Payment cannot exceed current outstanding amount.");
         }
         if (requiresUniqueTransaction(request.mode()) && StringUtils.hasText(request.transactionId())
@@ -458,7 +511,8 @@ public class FeeService {
         payment.setMode(defaultValue(request.mode(), studentSubmitted ? "UPI" : "Cash"));
         payment.setPaymentStatus(studentSubmitted ? PENDING_VERIFICATION : COMPLETED);
         payment.setPaymentTarget(defaultValue(request.paymentTarget(), "due_auto"));
-        payment.setPaymentOrigin("MANUAL");
+        payment.setPaymentOrigin(defaultValue(paymentOrigin, "MANUAL"));
+        payment.setGatewayAttemptId(gatewayAttemptId);
         payment.setPaidAmount(amount);
         payment.setPaymentDate(request.paymentDate() == null ? LocalDate.now() : request.paymentDate());
         payment.setCoverageLabel(defaultValue(request.coverageLabel(), studentSubmitted ? "Online payment pending verification" : "Overall payment auto-adjusted"));

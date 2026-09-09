@@ -111,7 +111,7 @@ const StudentDashboard = () => {
       try {
         const currentMonth = new Date().toISOString().slice(0, 7);
         const [studentResponse, timetableResponse, assignmentResponse, librarySummaryResponse, attendanceResponse, examinationResponse, noticeResponse, feeSummaryResponse] = await Promise.all([
-          studentApi.getById(session.studentId),
+          studentApi.getMyDashboard(),
           timetableApi.getMyStudentTimetable(),
           transportApi.getMyAssignment(),
           libraryApi.getMySummary(),

@@ -39,6 +39,8 @@ public interface TeacherRepository extends JpaRepository<Teacher, Long> {
 
     Optional<Teacher> findByInstituteIdAndEmployeeIdIgnoreCase(Long instituteId, String employeeId);
 
+    Optional<Teacher> findByInstituteIdAndQrCodeData(Long instituteId, String qrCodeData);
+
     boolean existsByInstituteIdAndEmployeeIdIgnoreCase(Long instituteId, String employeeId);
 
     boolean existsByInstituteIdAndEmployeeIdIgnoreCaseAndIdNot(Long instituteId, String employeeId, Long id);

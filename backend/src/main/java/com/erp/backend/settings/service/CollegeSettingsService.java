@@ -32,7 +32,6 @@ import com.erp.backend.teacher.entity.Teacher;
 import com.erp.backend.teacher.repository.TeacherRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.transaction.Transactional;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -135,7 +134,6 @@ public class CollegeSettingsService {
         throw new IllegalArgumentException("Legacy feature password login has been removed. Please login with the teacher account.");
     }
 
-    @Transactional
     public UnifiedLoginResponse loginUnified(UnifiedLoginRequest request, HttpServletRequest servletRequest, HttpServletResponse servletResponse) {
         LoginIdentifier loginIdentifier = resolveLoginIdentifier(request);
         String password = request.password().trim();
@@ -144,7 +142,7 @@ public class CollegeSettingsService {
         AuthTokenPair tokens = authService.issueSession(account);
         authCookieSupport.setRefreshCookie(servletResponse, tokens.refreshToken());
         if ("ADMIN".equalsIgnoreCase(account.getRole())) {
-            Institute adminInstitute = account.getInstitute();
+            Institute adminInstitute = validateInstitute(account.getInstitute().getId());
             return new UnifiedLoginResponse(
                     adminInstitute.getId(),
                     adminInstitute.getUsername(),
@@ -166,9 +164,9 @@ public class CollegeSettingsService {
         }
 
         if ("TEACHER".equalsIgnoreCase(account.getRole()) && account.getTeacherId() != null) {
-            Teacher teacher = teacherRepository.findByInstituteIdAndId(account.getInstitute().getId(), account.getTeacherId())
+            Institute institute = validateInstitute(account.getInstitute().getId());
+            Teacher teacher = teacherRepository.findByInstituteIdAndId(institute.getId(), account.getTeacherId())
                     .orElseThrow(() -> new IllegalArgumentException("Teacher account is not linked to an active teacher."));
-            Institute institute = teacher.getInstitute();
             return new UnifiedLoginResponse(
                     institute.getId(),
                     institute.getUsername(),
@@ -190,9 +188,9 @@ public class CollegeSettingsService {
         }
 
         if ("STUDENT".equalsIgnoreCase(account.getRole()) && account.getStudentId() != null) {
-            Student student = studentRepository.findByInstituteIdAndId(account.getInstitute().getId(), account.getStudentId())
+            Institute institute = validateInstitute(account.getInstitute().getId());
+            Student student = studentRepository.findByInstituteIdAndId(institute.getId(), account.getStudentId())
                     .orElseThrow(() -> new IllegalArgumentException("Student account is not linked to an active student."));
-            Institute institute = student.getInstitute();
             return new UnifiedLoginResponse(
                     institute.getId(),
                     institute.getUsername(),

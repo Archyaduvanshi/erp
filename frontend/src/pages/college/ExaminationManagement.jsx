@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { examApi, studentApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import QRScannerButton from '../../components/scanner/QRScannerButton';
 
 const initialDateSheetForm = {
   className: '',
@@ -426,6 +427,17 @@ const ExaminationManagement = () => {
     }));
   };
 
+  const handleScannedStudent = (identity) => {
+    setActiveSection('admitcard');
+    setStudentSearch(identity.referenceNumber || identity.name || '');
+    setAdmitCardForm((current) => ({
+      ...current,
+      studentId: String(identity.id),
+      rollNo: formatExamFormText(identity.rollNo || identity.referenceNumber || ''),
+      className: formatExamFormText([identity.className, identity.section].filter(Boolean).join(' / ')),
+    }));
+  };
+
   const handleAdmitCardSave = async (e) => {
     e.preventDefault();
     const validationErrors = validateAdmitCardForm(admitCardForm);
@@ -586,8 +598,7 @@ const ExaminationManagement = () => {
               </h1>
             </div>
           </div>
-
-
+          <QRScannerButton feature="examinations" onResolved={handleScannedStudent} />
         </div>
       </div>
 

@@ -19,28 +19,7 @@ import {
 import { teacherApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { formatSalary, normalizeTeacherSalary } from '../../utils/salaryUtils';
-
-function createQrImageUrl(value) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=${encodeURIComponent(value || 'teacher')}`;
-}
-
-async function downloadQrCode(qrCodeData, teacherName) {
-  const qrUrl = createQrImageUrl(qrCodeData);
-  const response = await fetch(qrUrl);
-  if (!response.ok) {
-    throw new Error('Unable to download QR code.');
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = `${(teacherName || 'teacher').replace(/\s+/g, '-').toLowerCase()}-qr.png`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(objectUrl);
-}
+import { downloadQrCode, useQrCodeDataUrl } from '../../utils/qrCode';
 
 const TeacherProfile = () => {
   const navigate = useNavigate();
@@ -70,7 +49,7 @@ const TeacherProfile = () => {
   const teacherName = teacher
     ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.employeeId || 'Teacher'
     : 'Teacher';
-  const qrImage = teacher?.qrCodeData ? createQrImageUrl(teacher.qrCodeData) : '';
+  const qrImage = useQrCodeDataUrl(teacher?.qrCodeData);
 
   useEffect(() => {
     if (!session || session.role !== 'teacher') {

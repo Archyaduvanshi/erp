@@ -60,6 +60,11 @@ public class StudentController {
         return response == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(response);
     }
 
+    @GetMapping("/me/dashboard")
+    public StudentResponse getMyDashboard(@AuthenticationPrincipal AuthPrincipal principal) {
+        return studentService.getStudentById(principal.instituteId(), principal.studentId());
+    }
+
     @GetMapping
     public Object getStudents(
             @AuthenticationPrincipal(expression = "instituteId") Long instituteId,

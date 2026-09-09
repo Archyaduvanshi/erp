@@ -60,6 +60,7 @@ IMAGEKIT_PRIVATE_KEY=YOUR_IMAGEKIT_PRIVATE_KEY
 IMAGEKIT_PUBLIC_KEY=YOUR_IMAGEKIT_PUBLIC_KEY
 IMAGEKIT_URL_ENDPOINT=YOUR_IMAGEKIT_URL_ENDPOINT
 IMAGEKIT_DEFAULT_FOLDER=/erp
+
 ```
 
 Do not upload `.env` or `.env.local` files to GitHub.
@@ -82,6 +83,8 @@ VITE_API_BASE_URL=https://YOUR_BACKEND_DOMAIN.onrender.com/api
 ```
 
 After changing `VITE_API_BASE_URL`, redeploy the frontend.
+
+captures a verified `authorized` payment as a fallback.
 
 ## 4. Connect frontend and backend
 
