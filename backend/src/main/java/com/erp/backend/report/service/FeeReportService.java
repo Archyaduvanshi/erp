@@ -25,17 +25,17 @@ public class FeeReportService {
                             from student_fee_charges c
                             where c.institute_id = :instituteId
                               and lower(coalesce(c.status, 'OPEN')) = 'open'
-                              and (:academicSessionId is null or c.academic_session_id = :academicSessionId or c.academic_session_id is null)), 0) as total_charged,
+                              and (cast(:academicSessionId as bigint) is null or c.academic_session_id = cast(:academicSessionId as bigint) or c.academic_session_id is null)), 0) as total_charged,
                   coalesce((select sum(a.amount)
                             from fee_payment_allocations a
                             join fee_payments fp on fp.id = a.payment_id
                             where a.institute_id = :instituteId
                               and lower(coalesce(fp.payment_status, '')) in ('completed', 'success')
-                              and (:academicSessionId is null or a.academic_session_id = :academicSessionId or a.academic_session_id is null)), 0) as collected,
+                              and (cast(:academicSessionId as bigint) is null or a.academic_session_id = cast(:academicSessionId as bigint) or a.academic_session_id is null)), 0) as collected,
                   coalesce((select count(*)
                             from fee_payments fp
                             where fp.institute_id = :instituteId
-                              and (:academicSessionId is null or fp.academic_session_id = :academicSessionId or fp.academic_session_id is null)), 0) as payment_count
+                              and (cast(:academicSessionId as bigint) is null or fp.academic_session_id = cast(:academicSessionId as bigint) or fp.academic_session_id is null)), 0) as payment_count
                 """)
                 .setParameter("instituteId", instituteId)
                 .setParameter("academicSessionId", academicSessionId)

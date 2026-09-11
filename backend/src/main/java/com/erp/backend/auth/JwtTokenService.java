@@ -75,7 +75,7 @@ public class JwtTokenService {
             }
             return new AuthPrincipal(
                     longValue(payload.get("sub")),
-                    longValue(payload.get("instituteId")),
+                    nullableLong(payload.get("instituteId")),
                     String.valueOf(payload.get("role")),
                     nullableLong(payload.get("teacherId")),
                     nullableLong(payload.get("studentId")),

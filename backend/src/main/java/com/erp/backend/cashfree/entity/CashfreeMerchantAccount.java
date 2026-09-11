@@ -35,6 +35,12 @@ public class CashfreeMerchantAccount {
     @Column(nullable = false, length = 40)
     private String merchantId;
 
+    @Column(name = "is_current", nullable = false)
+    private boolean current = true;
+
+    @jakarta.persistence.Version
+    private long version;
+
     @Column(nullable = false, length = 64)
     private String onboardingStatus = "PENDING";
 

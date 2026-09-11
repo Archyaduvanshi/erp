@@ -24,7 +24,9 @@ import { useAuth } from '../../context/AuthContext';
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
-  const { session, logout } = useAuth();
+  const { session, logout, isLoading } = useAuth();
+  const enabledFeatures = useMemo(() => new Set((session?.assignedFeatures || []).filter(item => item.enabled).map(item => item.feature)), [session]);
+  const hasFeature = feature => !isLoading && enabledFeatures.has(feature);
   const [student, setStudent] = useState(null);
   const [classTimetables, setClassTimetables] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
@@ -35,6 +37,7 @@ const StudentDashboard = () => {
   const [feeSummaryData, setFeeSummaryData] = useState(null);
   const [notices, setNotices] = useState([]);
   const [loadError, setLoadError] = useState('');
+  const [unavailable, setUnavailable] = useState({});
 
   const studentName = student
     ? `${student.firstName || ''} ${student.lastName || ''}`.trim() || student.enrollmentNo || 'Student'
@@ -102,50 +105,46 @@ const StudentDashboard = () => {
   };
 
   useEffect(() => {
+    if (isLoading) return;
     if (!session || session.role !== 'student') {
       navigate('/login');
       return;
     }
 
+    let cancelled = false;
     const loadStudentDashboard = async () => {
-      try {
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        const [studentResponse, timetableResponse, assignmentResponse, librarySummaryResponse, attendanceResponse, examinationResponse, noticeResponse, feeSummaryResponse] = await Promise.all([
-          studentApi.getMyDashboard(),
-          timetableApi.getMyStudentTimetable(),
-          transportApi.getMyAssignment(),
-          libraryApi.getMySummary(),
-          attendanceApi.getMyStudentAttendance(currentMonth),
-          examApi.getStudentMe(),
-          noticeApi.getPortalAll({ page: 0, size: 5 }),
-          feeApi.getMySummary(),
-        ]);
-        setStudent(studentResponse);
-        setClassTimetables(timetableResponse ? [timetableResponse] : []);
-        setTransportRecords(assignmentResponse ? [assignmentResponse] : []);
-        setLibrarySummary(librarySummaryResponse);
-        setAttendanceRecords(attendanceResponse);
-        setDateSheets(examinationResponse?.dateSheets || []);
-        setAdmitCards(examinationResponse?.admitCards || []);
-        setNotices(Array.isArray(noticeResponse?.content) ? noticeResponse.content : noticeResponse);
-        setFeeSummaryData(feeSummaryResponse);
-        setLoadError('');
-      } catch {
-        setStudent(null);
-        setClassTimetables([]);
-        setTransportRecords([]);
-        setLibrarySummary(null);
-        setAttendanceRecords([]);
-        setDateSheets([]);
-        setAdmitCards([]);
-        setNotices([]);
-        setFeeSummaryData(null);
-        setLoadError('Unable to load student dashboard data.');
-      }
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const names = ['Profile', 'Timetable', 'Transport', 'Library', 'Attendance', 'Examinations', 'Notices', 'Fees'];
+      const loadFeature = (feature, load) => enabledFeatures.has(feature) ? load() : Promise.resolve(null);
+      const results = await Promise.allSettled([
+        studentApi.getMyDashboard(),
+        loadFeature('timetable', () => timetableApi.getMyStudentTimetable()),
+        loadFeature('transport', () => transportApi.getMyAssignment()),
+        loadFeature('library', () => libraryApi.getMySummary()),
+        loadFeature('attendance', () => attendanceApi.getMyStudentAttendance(currentMonth)),
+        loadFeature('examinations', () => examApi.getStudentMe()),
+        loadFeature('notices', () => noticeApi.getPortalAll({ page: 0, size: 5 })),
+        loadFeature('fees', () => feeApi.getMySummary()),
+      ]);
+      if (cancelled) return;
+      const missing = Object.fromEntries(results.map((result, index) => [names[index], result.status === 'rejected']));
+      const [profile, timetable, transport, library, attendance, exams, notices, fees] = results.map(result => result.status === 'fulfilled' ? result.value : null);
+      setStudent(profile);
+      setClassTimetables(timetable ? [timetable] : []);
+      setTransportRecords(transport ? [transport] : []);
+      setLibrarySummary(library);
+      setAttendanceRecords(attendance || []);
+      setDateSheets(exams?.dateSheets || []);
+      setAdmitCards(exams?.admitCards || []);
+      setNotices(Array.isArray(notices?.content) ? notices.content : (notices || []));
+      setFeeSummaryData(fees);
+      setUnavailable(missing);
+      setLoadError(missing.Profile ? 'Unable to load your student profile. Please refresh to retry.' : '');
     };
 
     loadStudentDashboard();
-  }, [navigate, session]);
+    return () => { cancelled = true; };
+  }, [navigate, session, isLoading, enabledFeatures]);
 
   if (!session || session.role !== 'student') return null;
 
@@ -207,82 +206,90 @@ const StudentDashboard = () => {
                 Welcome {studentName}, keep your academic records and daily essentials in one place.
               </h2>
               <p className="mt-5 max-w-2xl text-sm leading-7 text-cyan-50/85">
-                This dashboard gives each student a focused view of attendance, examination records, transport and library details, fee payments, and profile information saved by the institution.
+                View your academic records, profile and the services enabled by your institution.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard label="Attendance Rate" value={`${attendanceRate}%`} icon={CheckCircle2} />
-              <MetricCard label="Exam Documents" value={classDateSheets.length + studentAdmitCards.length} icon={FileText} />
-              <MetricCard label="Timetable" value={classTimetableRecord ? 'Available' : 'Pending'} icon={CalendarClock} />
-              <MetricCard label="Library Loans" value={librarySummary?.currentlyBorrowed || 0} icon={Library} />
-              <MetricCard label="Fees Paid" value={formatMoney(paidAmount)} icon={CreditCard} />
-              <MetricCard label="Notices" value={portalNotices.length} icon={Megaphone} />
+              {hasFeature('attendance') && <MetricCard label="Attendance Rate" unavailable={unavailable.Attendance} value={`${attendanceRate}%`} icon={CheckCircle2} />}
+              {hasFeature('examinations') && <MetricCard label="Exam Documents" unavailable={unavailable.Examinations} value={classDateSheets.length + studentAdmitCards.length} icon={FileText} />}
+              {hasFeature('timetable') && <MetricCard label="Timetable" unavailable={unavailable.Timetable} value={classTimetableRecord ? 'Available' : 'Pending'} icon={CalendarClock} />}
+              {hasFeature('library') && <MetricCard label="Library Loans" unavailable={unavailable.Library} value={librarySummary?.currentlyBorrowed || 0} icon={Library} />}
+              {hasFeature('fees') && <MetricCard label="Fees Paid" unavailable={unavailable.Fees} value={formatMoney(paidAmount)} icon={CreditCard} />}
+              {hasFeature('notices') && <MetricCard label="Notices" unavailable={unavailable.Notices} value={portalNotices.length} icon={Megaphone} />}
             </div>
           </div>
         </section>
 
         <section className="mb-12 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-10 lg:grid-cols-3">
-          <NoticeSummaryCard
+          {hasFeature('notices') && <NoticeSummaryCard
             notices={portalNotices}
+            unavailable={unavailable.Notices}
             onClick={() => navigate('/student/notices')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('attendance') && <ModuleCard
             icon={<CheckCircle2 className="text-emerald-700" size={42} />}
             title="Attendance"
+            unavailable={unavailable.Attendance}
             desc={`${studentAttendance.length} saved attendance records for this student.`}
             onClick={() => navigate('/student/attendance')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('timetable') && <ModuleCard
             icon={<CalendarClock className="text-cyan-700" size={42} />}
             title="Timetable"
+            unavailable={unavailable.Timetable}
             desc={classTimetableRecord?.fileName
               ? `${classTimetableRecord.fileName} available for your class.`
               : 'College timetable upload hote hi yahan read-only view me milega.'}
             onClick={() => navigate('/student/timetable')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('examinations') && <ModuleCard
             icon={<ScrollText className="text-indigo-700" size={42} />}
             title="Examinations"
+            unavailable={unavailable.Examinations}
             desc={`${studentAdmitCards.length} admit cards and ${classDateSheets.length} class date sheets available.`}
             onClick={() => navigate('/student/examinations')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('transport') && <ModuleCard
             icon={<Bus className="text-sky-700" size={42} />}
             title="Transport"
+            unavailable={unavailable.Transport}
             desc={transportAssignment?.routeName
               ? `${transportAssignment.routeName} | Bus ${transportAssignment.busNumber || 'Assigned'}`
               : ((student?.transportOptIn === 'yes' || student?.transportOptIn === true)
                 ? `Transport ${student?.transportStatus || 'inactive'} | Waiting for assignment`
                 : 'No transport facility requested yet.')}
             onClick={() => navigate('/student/transport')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('library') && <ModuleCard
             icon={<Library className="text-amber-700" size={42} />}
             title="Library"
+            unavailable={unavailable.Library}
             desc={Number(librarySummary?.currentlyBorrowed || 0)
               ? `${librarySummary.currentlyBorrowed} active book issues currently linked to this student.`
               : ((student?.libraryOptIn === 'yes' || student?.libraryOptIn === true)
                 ? `Library ${student?.libraryStatus || 'inactive'}`
                 : 'No library facility requested yet.')}
             onClick={() => navigate('/student/library')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('hostel') && <ModuleCard
             icon={<Home className="text-violet-700" size={42} />}
             title="Hostel"
             desc={(student?.hostelOptIn === 'yes' || student?.hostelOptIn === true)
               ? `Hostel ${student?.hostelStatus || 'inactive'} | Rs ${student?.hostelMonthlyCharge || '0'}/month`
               : 'No hostel facility requested yet.'}
             onClick={() => navigate('/student/hostel')}
-          />
-          <ModuleCard
+          />}
+          {hasFeature('fees') && <ModuleCard
             icon={<Receipt className="text-rose-700" size={42} />}
             title="Fees"
+            unavailable={unavailable.Fees}
             desc={`Payable ${formatMoney(feeSummary.totalPayable)} | Cycle ${formatMoney(feeSummary.currentCycleDue)} | Previous ${formatMoney(feeSummary.previousPending)} | Facilities ${formatMoney(feeSummary.activeFacilityFee)}`}
             onClick={() => navigate('/student/fees')}
-          />
+          />}
           <ModuleCard
             icon={<UserRound className="text-cyan-700" size={42} />}
             title="My Profile"
+            unavailable={unavailable.Profile}
             desc={`${student?.email || 'Email not added'} | ${student?.mobile || 'Phone not added'}`}
             onClick={() => navigate('/student/profile')}
           />
@@ -292,12 +299,12 @@ const StudentDashboard = () => {
   );
 };
 
-const MetricCard = ({ label, value, icon }) => (
+const MetricCard = ({ label, value, icon, unavailable }) => (
   <div className="rounded-[1.6rem] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
     <div className="flex items-start justify-between gap-4">
       <div>
         <p className="text-[11px] font-black uppercase tracking-[0.24em] text-cyan-50/80">{label}</p>
-        <p className="mt-3 text-3xl font-black tracking-tight text-white">{value}</p>
+        <p className="mt-3 text-3xl font-black tracking-tight text-white">{unavailable ? 'Unavailable' : value}</p>
       </div>
       <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-200/10 text-cyan-50">
         {React.createElement(icon, { size: 20 })}
@@ -306,7 +313,7 @@ const MetricCard = ({ label, value, icon }) => (
   </div>
 );
 
-const NoticeSummaryCard = ({ notices, onClick }) => (
+const NoticeSummaryCard = ({ notices, onClick, unavailable }) => (
   <button
     type="button"
     onClick={onClick}
@@ -317,18 +324,18 @@ const NoticeSummaryCard = ({ notices, onClick }) => (
         <Megaphone size={26} />
       </div>
       <span className="rounded-full bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-white">
-        {notices.length} Live
+        {unavailable ? 'Unavailable' : `${notices.length} Live`}
       </span>
     </div>
     <h3 className="mt-6 text-2xl font-black tracking-tight text-slate-900">Notice</h3>
     <p className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-600">
-      {notices[0]?.title || 'College se published notice aate hi yahan show hoga.'}
+      {unavailable ? 'Notice summary is unavailable. Open the notice board to retry.' : notices[0]?.title || 'College se published notice aate hi yahan show hoga.'}
     </p>
     <span className="mt-6 text-[11px] font-black uppercase tracking-[0.22em] text-cyan-700">Open Notice Board</span>
   </button>
 );
 
-const ModuleCard = ({ icon, title, desc, onClick }) => (
+const ModuleCard = ({ icon, title, desc, onClick, unavailable }) => (
   <button
     onClick={onClick}
     className="flex w-full flex-col items-center rounded-4xl border border-slate-100 bg-white p-8 text-center shadow-xl shadow-slate-200/40 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl md:rounded-[2.5rem] md:p-12"
@@ -337,7 +344,7 @@ const ModuleCard = ({ icon, title, desc, onClick }) => (
       {icon}
     </div>
     <h3 className="mb-2 text-xl font-bold tracking-tight text-slate-800 md:mb-3 md:text-2xl">{title}</h3>
-    <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{desc}</p>
+    <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{unavailable ? 'Summary unavailable. Open this module to check access or retry.' : desc}</p>
   </button>
 );
 

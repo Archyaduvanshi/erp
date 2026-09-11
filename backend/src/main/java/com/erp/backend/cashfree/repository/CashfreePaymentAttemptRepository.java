@@ -12,8 +12,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CashfreePaymentAttemptRepository extends JpaRepository<CashfreePaymentAttempt, Long> {
+    Optional<CashfreePaymentAttempt> findByInstituteIdAndOrderId(Long instituteId, String orderId);
     Optional<CashfreePaymentAttempt> findByInstituteIdAndStudentIdAndIdempotencyKey(Long instituteId, Long studentId, String idempotencyKey);
     Optional<CashfreePaymentAttempt> findByInstituteIdAndStudentIdAndOrderId(Long instituteId, Long studentId, String orderId);
+    Page<CashfreePaymentAttempt> findAllByInstituteIdAndStudentIdOrderByCreatedAtDesc(Long instituteId, Long studentId, Pageable pageable);
     Page<CashfreePaymentAttempt> findAllByInstituteIdOrderByCreatedAtDesc(Long instituteId, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

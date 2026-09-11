@@ -24,9 +24,23 @@ class AuthSecurityFilterTest {
         assertThat(shouldNotFilter(request)).isFalse();
     }
 
+    @Test
+    void platformLoginDoesNotRequireAnExistingJwt() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/platform/auth/login");
+
+        assertThat(shouldNotFilter(request)).isTrue();
+    }
+
+    @Test
+    void platformConsoleEndpointRequiresPlatformJwt() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/platform/overview");
+
+        assertThat(shouldNotFilter(request)).isFalse();
+    }
+
     private boolean shouldNotFilter(MockHttpServletRequest request) throws Exception {
         Class<?> filterType = Class.forName("com.erp.backend.auth.AuthSecurityFilter");
-        Object filter = filterType.getConstructors()[0].newInstance(null, null);
+        Object filter = filterType.getConstructors()[0].newInstance(null, null, null);
         Method method = filterType.getDeclaredMethod("shouldNotFilter", jakarta.servlet.http.HttpServletRequest.class);
         method.setAccessible(true);
         return (boolean) method.invoke(filter, request);

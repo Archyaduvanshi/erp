@@ -5,7 +5,6 @@ const AuthContext = createContext(null);
 const PUBLIC_AUTH_PATHS = new Set([
   '/',
   '/login',
-  '/register-institute',
   '/forgot-password',
   '/reset-password',
 ]);
@@ -57,7 +56,7 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const path = window.location?.pathname || '/';
-    if (PUBLIC_AUTH_PATHS.has(path)) {
+    if (PUBLIC_AUTH_PATHS.has(path) || path.startsWith('/platform')) {
       setIsLoading(false);
       return;
     }

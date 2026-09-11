@@ -8,7 +8,9 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 @Entity
 @Table(name = "institutes")
@@ -62,9 +64,30 @@ public class Institute {
     @Column(nullable = false, updatable = false)
     private LocalDateTime registeredDate;
 
+    @Column(nullable = false, length = 20)
+    private String status = "ACTIVE";
+
+    @Column(length = 500)
+    private String statusReason;
+
+    private LocalDateTime suspendedAt;
+
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Version
+    private long version;
+
     @PrePersist
     public void prePersist() {
-        this.registeredDate = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now();
+        this.registeredDate = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    public void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
     }
 
     public Long getId() {
@@ -202,4 +225,22 @@ public class Institute {
     public void setRegisteredDate(LocalDateTime registeredDate) {
         this.registeredDate = registeredDate;
     }
+
+    public String getStatus() { return status; }
+
+    public void setStatus(String status) { this.status = status; }
+
+    public String getStatusReason() { return statusReason; }
+
+    public void setStatusReason(String statusReason) { this.statusReason = statusReason; }
+
+    public LocalDateTime getSuspendedAt() { return suspendedAt; }
+
+    public void setSuspendedAt(LocalDateTime suspendedAt) { this.suspendedAt = suspendedAt; }
+
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public long getVersion() { return version; }
 }

@@ -940,19 +940,16 @@ export const cashfreeApi = {
       body: JSON.stringify(payload),
     })),
 
+  getMyOrders: (filters = {}) =>
+    request(`/cashfree/student/me/orders${toQueryString(filters)}`, withInstituteHeaders()),
+
   getMyOrder: (orderId) =>
     request(`/cashfree/student/me/orders/${encodeURIComponent(orderId)}`, withInstituteHeaders()),
 
-  createMerchant: () =>
-    request('/cashfree/merchant', withInstituteHeaders({ method: 'POST' })),
+  cancelMyOrder: (orderId) =>
+    request(`/cashfree/student/me/orders/${encodeURIComponent(orderId)}/cancel`, withInstituteHeaders({ method: 'POST' })),
 
-  getMerchant: () => request('/cashfree/merchant', withInstituteHeaders()),
 
-  createOnboardingLink: () =>
-    request('/cashfree/merchant/onboarding-link', withInstituteHeaders({ method: 'POST' })),
-
-  getAttempts: (filters = {}) =>
-    request(`/cashfree/attempts${toQueryString(filters)}`, withInstituteHeaders()),
 };
 
 export const salaryApi = {

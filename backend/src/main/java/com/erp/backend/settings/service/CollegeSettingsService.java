@@ -159,7 +159,7 @@ public class CollegeSettingsService {
                     null,
                     null,
                     account.isMustChangePassword(),
-                    List.of()
+                    authService.getAdminFeatureAccess(adminInstitute.getId())
             );
         }
 

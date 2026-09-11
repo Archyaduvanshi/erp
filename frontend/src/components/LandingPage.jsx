@@ -29,9 +29,6 @@ const LandingPage = () => {
 
           <div className="flex items-center gap-4">
             <Link to="/login" className="text-sm font-bold text-slate-600 hover:text-blue-600 transition-colors">Admin Login</Link>
-            <button className="bg-blue-600 text-white px-7 py-2.5 rounded-full font-bold text-sm hover:bg-blue-700 transition-all shadow-xl shadow-blue-200">
-              <Link to="/register-institute">Register Institution </Link>
-            </button>
           </div>
         </div>
       </nav>
@@ -49,7 +46,7 @@ const LandingPage = () => {
           <span className="text-transparent bg-clip-text bg-linear-to-r from-blue-600 to-indigo-500 bg-size-[200%_auto] animate-pulse">Scale Your Institution.</span>
         </h1>
         <p className="text-lg md:text-xl text-slate-500 max-w-3xl mx-auto mb-16 leading-relaxed font-medium">
-          A secure multi-tenant SaaS platform where any college can register to manage **Student Life**, 
+          A secure multi-tenant SaaS platform where approved institutions manage **Student Life**, 
           **Staff Operations**, and **Financial Transparency** in one cloud-based environment.
         </p>
 

@@ -18,6 +18,7 @@ import com.erp.backend.institute.dto.UpdateInstituteRequest;
 import com.erp.backend.settings.dto.ChangeAdminPasswordRequest;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
+import com.erp.backend.platform.service.PlatformProvisioningService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.transaction.Transactional;
@@ -37,6 +38,7 @@ public class InstituteService {
     private final AuthService authService;
     private final AuthCookieSupport authCookieSupport;
     private final ClientIpResolver clientIpResolver;
+    private final PlatformProvisioningService platformProvisioningService;
 
     public InstituteService(
             InstituteRepository instituteRepository,
@@ -45,7 +47,8 @@ public class InstituteService {
             PasswordEncoder passwordEncoder,
             AuthService authService,
             AuthCookieSupport authCookieSupport,
-            ClientIpResolver clientIpResolver
+            ClientIpResolver clientIpResolver,
+            PlatformProvisioningService platformProvisioningService
     ) {
         this.instituteRepository = instituteRepository;
         this.instituteMapper = instituteMapper;
@@ -54,20 +57,33 @@ public class InstituteService {
         this.authService = authService;
         this.authCookieSupport = authCookieSupport;
         this.clientIpResolver = clientIpResolver;
+        this.platformProvisioningService = platformProvisioningService;
     }
 
     @Transactional
     public InstituteAuthResponse registerInstitute(RegisterInstituteRequest request, HttpServletResponse servletResponse) {
+        platformProvisioningService.assertRegistrationEnabled();
         validateRegistrationRequest(request);
         validateUniqueness(request);
 
         Institute savedInstitute = saveWithInstitutionCodeRetry(request);
+        platformProvisioningService.provisionTrial(savedInstitute.getId());
         UserAccount account = authService.syncAdminAccount(savedInstitute);
         AuthTokenPair tokens = authService.issueSession(account);
         authCookieSupport.setRefreshCookie(servletResponse, tokens.refreshToken());
         InstituteAuthResponse response = instituteMapper.toAuthResponse(savedInstitute);
         response.setAccessToken(tokens.accessToken());
         return response;
+    }
+
+    @Transactional
+    public InstituteResponse createInstituteFromPlatform(RegisterInstituteRequest request) {
+        validateRegistrationRequest(request);
+        validateUniqueness(request);
+        Institute savedInstitute = saveWithInstitutionCodeRetry(request);
+        platformProvisioningService.provisionTrial(savedInstitute.getId());
+        authService.syncAdminAccount(savedInstitute);
+        return instituteMapper.toResponse(savedInstitute);
     }
 
     public InstituteAuthResponse loginInstitute(InstituteLoginRequest request, HttpServletRequest servletRequest, HttpServletResponse servletResponse) {

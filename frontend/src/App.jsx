@@ -8,6 +8,7 @@ import RegisterInstitute from './pages/RegisterInstitute';
 import Login from './pages/Login';
 import { warmApi } from './utils/api';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { PlatformAuthProvider, usePlatformAuth } from './context/PlatformAuthContext';
 
 const FEATURE_ROUTE_MAP = {
   admissionStudent: '/college/students',
@@ -65,6 +66,18 @@ const PortalNotices = lazy(() => import('./pages/portal/PortalNotices'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
+const PlatformLogin = lazy(() => import('./pages/platform/PlatformLogin'));
+const PlatformDashboard = lazy(() => import('./pages/platform/PlatformDashboard'));
+const PlatformInstitutes = lazy(() => import('./pages/platform/InstitutesPage'));
+const PlatformInstituteDetails = lazy(() => import('./pages/platform/InstituteDetailsPage'));
+const PlatformPlans = lazy(() => import('./pages/platform/PlansPage'));
+const PlatformBilling = lazy(() => import('./pages/platform/BillingPage'));
+const PlatformAudit = lazy(() => import('./pages/platform/AuditLogsPage'));
+const PlatformSettings = lazy(() => import('./pages/platform/PlatformSettingsPage'));
+const PlatformUsage = lazy(() => import('./pages/platform/PlatformUsagePage'));
+const PlatformSubscriptions = lazy(() => import('./pages/platform/SubscriptionsPage'));
+const PlatformFeatures = lazy(() => import('./pages/platform/FeatureAccessPage'));
+const PlatformGateways = lazy(() => import('./pages/platform/GatewayPage'));
 
 function App() {
   useEffect(() => {
@@ -73,16 +86,30 @@ function App() {
 
   return (
     <AuthProvider>
-      <Router>
+      <PlatformAuthProvider>
+        <Router>
         <Suspense fallback={<RouteLoading />}>
           <Routes>
           {/* Public Landing Page */}
           <Route path="/" element={<LandingPage />} />  
-          <Route path="/register-institute" element={<RegisterInstitute />} />
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/change-password" element={<RequirePasswordChange><ChangePassword /></RequirePasswordChange>} />
+          <Route path="/platform/login" element={<PlatformLogin />} />
+          <Route path="/platform/dashboard" element={<RequirePlatformAccess><PlatformDashboard /></RequirePlatformAccess>} />
+          <Route path="/platform/institutes" element={<RequirePlatformAccess><PlatformInstitutes /></RequirePlatformAccess>} />
+          <Route path="/platform/institutes/new" element={<RequirePlatformAccess><RegisterInstitute platformManaged /></RequirePlatformAccess>} />
+          <Route path="/platform/institutes/:id" element={<RequirePlatformAccess><PlatformInstituteDetails /></RequirePlatformAccess>} />
+          <Route path="/platform/plans" element={<RequirePlatformAccess><PlatformPlans /></RequirePlatformAccess>} />
+          <Route path="/platform/subscriptions" element={<RequirePlatformAccess><PlatformSubscriptions /></RequirePlatformAccess>} />
+          <Route path="/platform/features" element={<RequirePlatformAccess><PlatformFeatures /></RequirePlatformAccess>} />
+          <Route path="/platform/gateways" element={<RequirePlatformAccess><PlatformGateways /></RequirePlatformAccess>} />
+          <Route path="/platform/billing" element={<RequirePlatformAccess><PlatformBilling /></RequirePlatformAccess>} />
+          <Route path="/platform/usage" element={<RequirePlatformAccess><PlatformUsage /></RequirePlatformAccess>} />
+          <Route path="/platform/audit" element={<RequirePlatformAccess><PlatformAudit /></RequirePlatformAccess>} />
+          <Route path="/platform/settings" element={<RequirePlatformAccess><PlatformSettings /></RequirePlatformAccess>} />
+          <Route path="/platform" element={<Navigate to="/platform/dashboard" replace />} />
           
           {/* College Admin Dashboard */}
           <Route path="/college" element={<RequireCollegeAccess><Dashboard /></RequireCollegeAccess>} />
@@ -133,7 +160,8 @@ function App() {
           <Route path="*" element={<ComingSoonPage backTo="/" backLabel="Back To Home" />} />
           </Routes>
         </Suspense>
-      </Router>
+        </Router>
+      </PlatformAuthProvider>
     </AuthProvider>
   );
 }
@@ -198,6 +226,13 @@ const RequirePasswordChange = ({ children }) => {
   if (!session.mustChangePassword) {
     return <Navigate to={session.role === 'teacher' ? '/teacher' : session.role === 'student' ? '/student' : '/college'} replace />;
   }
+  return children;
+};
+
+const RequirePlatformAccess = ({ children }) => {
+  const { session, isLoading } = usePlatformAuth();
+  if (isLoading) return <RouteLoading />;
+  if (!session || session.role !== 'SUPER_ADMIN') return <Navigate to="/platform/login" replace />;
   return children;
 };
 

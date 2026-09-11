@@ -1,12 +1,9 @@
 package com.erp.backend.institute.controller;
 
 import com.erp.backend.auth.AuthPrincipal;
-import com.erp.backend.auth.ClientIpResolver;
-import com.erp.backend.auth.RateLimiterService;
 import com.erp.backend.institute.dto.InstituteAuthResponse;
 import com.erp.backend.institute.dto.InstituteLoginRequest;
 import com.erp.backend.institute.dto.InstituteResponse;
-import com.erp.backend.institute.dto.RegisterInstituteRequest;
 import com.erp.backend.institute.dto.UpdateInstituteRequest;
 import com.erp.backend.institute.service.InstituteService;
 import com.erp.backend.settings.dto.ChangeAdminPasswordRequest;
@@ -30,20 +27,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class InstituteController {
 
     private final InstituteService instituteService;
-    private final RateLimiterService rateLimiterService;
-    private final ClientIpResolver clientIpResolver;
-
-    public InstituteController(InstituteService instituteService, RateLimiterService rateLimiterService, ClientIpResolver clientIpResolver) {
+    public InstituteController(InstituteService instituteService) {
         this.instituteService = instituteService;
-        this.rateLimiterService = rateLimiterService;
-        this.clientIpResolver = clientIpResolver;
-    }
-
-    @PostMapping("/register")
-    @ResponseStatus(HttpStatus.CREATED)
-    public InstituteAuthResponse registerInstitute(@Valid @RequestBody RegisterInstituteRequest request, HttpServletRequest servletRequest, HttpServletResponse response) {
-        rateLimiterService.check("institute-registration", clientIpResolver.resolve(servletRequest), 5, java.time.Duration.ofHours(1));
-        return instituteService.registerInstitute(request, response);
     }
 
     @PostMapping("/login")

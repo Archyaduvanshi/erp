@@ -165,13 +165,6 @@ const Login = () => {
             </button>
           </form>
 
-          <div className="mt-12 pt-8 border-t border-slate-100 text-center">
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Need a new Workspace?</p>
-            <Link to="/register-institute" className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-900 hover:text-blue-600 transition-all">
-              <ShieldCheck size={16} className="text-blue-600" />
-              Register Your College
-            </Link>
-          </div>
         </div>
       </div>
     </div>

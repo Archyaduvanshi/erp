@@ -40,6 +40,9 @@ import com.erp.backend.fee.repository.FeeStructureRepository;
 import com.erp.backend.fee.repository.StudentFeeChargeRepository;
 import com.erp.backend.institute.entity.Institute;
 import com.erp.backend.institute.repository.InstituteRepository;
+import com.erp.backend.notice.dto.NoticePayload;
+import com.erp.backend.notice.repository.NoticeRepository;
+import com.erp.backend.notice.service.NoticeService;
 import com.erp.backend.student.entity.Student;
 import com.erp.backend.student.repository.StudentRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -69,6 +72,8 @@ public class FeeService {
     private final FeePaymentAllocationRepository feePaymentAllocationRepository;
     private final StudentFeeChargeRepository studentFeeChargeRepository;
     private final CashbookService cashbookService;
+    private final NoticeService noticeService;
+    private final NoticeRepository noticeRepository;
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
 
@@ -81,6 +86,8 @@ public class FeeService {
             FeePaymentAllocationRepository feePaymentAllocationRepository,
             StudentFeeChargeRepository studentFeeChargeRepository,
             CashbookService cashbookService,
+            NoticeService noticeService,
+            NoticeRepository noticeRepository,
             EntityManager entityManager,
             ObjectMapper objectMapper
     ) {
@@ -92,6 +99,8 @@ public class FeeService {
         this.feePaymentAllocationRepository = feePaymentAllocationRepository;
         this.studentFeeChargeRepository = studentFeeChargeRepository;
         this.cashbookService = cashbookService;
+        this.noticeService = noticeService;
+        this.noticeRepository = noticeRepository;
         this.entityManager = entityManager;
         this.objectMapper = objectMapper;
     }
@@ -423,6 +432,7 @@ public class FeeService {
         payment.setVoidReason(reason);
         FeePayment saved = feePaymentRepository.save(payment);
         cashbookService.reverseFeePayment(saved, principal == null ? null : principal.accountId(), reason);
+        noticeService.archiveSystemNotice(instituteId, "FEE_PAYMENT_RECEIPT", saved.getId(), principal == null ? null : principal.accountId());
         return toPaymentResponse(saved);
     }
 
@@ -446,6 +456,7 @@ public class FeeService {
             saveNormalizedAllocations(validateInstitute(instituteId), session, student, saved, money(saved.getPaidAmount()), saved.getPaymentTarget());
         }
         cashbookService.postFeePayment(saved, principal == null ? null : principal.accountId());
+        publishFeeReceiptNotice(instituteId, student, saved);
         return toPaymentResponse(saved);
     }
 
@@ -533,6 +544,7 @@ public class FeeService {
             if (!studentSubmitted) {
                 saveNormalizedAllocations(institute, session, student, saved, amount, payment.getPaymentTarget());
                 cashbookService.postFeePayment(saved, principal == null ? null : principal.accountId());
+                publishFeeReceiptNotice(instituteId, student, saved);
             }
             return toPaymentResponse(saved);
         } catch (DataIntegrityViolationException exception) {
@@ -876,7 +888,9 @@ public class FeeService {
                 payment.getDownloadLink(),
                 payment.getIdempotencyKey(),
                 payment.getGatewayAttemptId(),
-                "UNKNOWN",
+                noticeRepository.existsByInstituteIdAndSourceTypeAndSourceId(
+                        payment.getInstitute().getId(), "FEE_PAYMENT_RECEIPT", payment.getId()
+                ) ? "SENT" : "NOT_SENT",
                 readStringList(payment.getCoveredMonthsJson()),
                 readStringList(payment.getResolvedMonthsJson()),
                 readAllocationList(payment.getAllocationsJson()),
@@ -886,6 +900,33 @@ public class FeeService {
                 payment.getVoidedByAccountId(),
                 payment.getVoidReason()
         );
+    }
+
+    private void publishFeeReceiptNotice(Long instituteId, Student student, FeePayment payment) {
+        BigDecimal balance = money(payment.getBalanceRemaining());
+        String studentName = firstNonBlank(student.getName(), firstNonBlank(student.getFirstName(), firstNonBlank(student.getEnrollmentNo(), "Student")));
+        String receiptNumber = defaultValue(payment.getReceiptNumber(), "-" );
+        noticeService.upsertSystemNotice(instituteId, "FEE_PAYMENT_RECEIPT", payment.getId(), new NoticePayload(
+                "Fee received: Rs " + money(payment.getPaidAmount()).toPlainString(),
+                "Fee",
+                "Students",
+                List.of(),
+                List.of(),
+                student.getId(),
+                null,
+                balance.compareTo(ZERO) > 0 ? "High" : "Normal",
+                payment.getPaymentDate() == null ? LocalDate.now() : payment.getPaymentDate(),
+                null,
+                "Published",
+                false,
+                studentName + ", your fee payment of Rs " + money(payment.getPaidAmount()).toPlainString()
+                        + " has been received. Pending balance: Rs " + balance.toPlainString() + ".",
+                "Receipt No.: " + receiptNumber
+                        + "\nPayment mode: " + defaultValue(payment.getMode(), "Cash")
+                        + "\nTransaction ID: " + defaultValue(payment.getTransactionId(), "-")
+                        + "\nAmount deposited: Rs " + money(payment.getPaidAmount()).toPlainString()
+                        + "\nRemaining balance: Rs " + balance.toPlainString()
+        ));
     }
 
     private AcademicSession resolveRequiredSession(Long instituteId, Long academicSessionId) {
@@ -924,8 +965,22 @@ public class FeeService {
     }
 
     private String generateReceiptNumber() {
+        repairReceiptSequence();
         Number nextValue = (Number) entityManager.createNativeQuery("select nextval('fee_receipt_seq')").getSingleResult();
         return "FEE-" + Year.now().getValue() + "-" + String.format("%06d", nextValue.longValue());
+    }
+
+    private void repairReceiptSequence() {
+        entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtext('fee_receipt_seq_repair'))").getSingleResult();
+        entityManager.createNativeQuery("create sequence if not exists fee_receipt_seq start with 1 increment by 1").executeUpdate();
+        entityManager.createNativeQuery("""
+                select setval('fee_receipt_seq', greatest(
+                    (select last_value from fee_receipt_seq),
+                    coalesce((select max(substring(receipt_number from '^FEE-[0-9]{4}-([0-9]+)$')::bigint)
+                              from fee_payments where receipt_number ~ '^FEE-[0-9]{4}-[0-9]+$'), 0),
+                    1
+                ), true)
+                """).getSingleResult();
     }
 
     private String calculateTaxBreakdown(BigDecimal amount) {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { instituteApi, setAccessToken, uploadApi } from '../utils/api';
+import { platformApi } from '../api/platformApi';
 import { useAuth } from '../context/AuthContext';
 import { 
   GraduationCap, Building2, Mail, Lock, ArrowRight, 
@@ -26,7 +27,7 @@ const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}
 const PASSWORD_MESSAGE = 'Password must be at least 8 characters with 1 uppercase letter, 1 lowercase letter, 1 number, and 1 symbol.';
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
-const RegisterInstitute = () => {
+const RegisterInstitute = ({ platformManaged = false }) => {
   const navigate = useNavigate();
   const { acceptLogin } = useAuth();
   const [isSuccess, setIsSuccess] = useState(false);
@@ -152,18 +153,23 @@ const RegisterInstitute = () => {
       const uploadedLogo = logoFile
         ? await uploadApi.uploadRegistrationLogo(logoFile)
         : null;
-      const registeredInstitute = await instituteApi.register({
+      const payload = {
         ...formData,
         email: formData.email.trim().toLowerCase(),
         logo: uploadedLogo?.url || logoPreview,
-      });
+      };
+      const registeredInstitute = platformManaged
+        ? await platformApi.createInstitute(payload)
+        : await instituteApi.register(payload);
 
-      setAccessToken(registeredInstitute.accessToken || '');
       const session = {
         ...registeredInstitute,
         authenticated: true,
       };
-      acceptLogin(session);
+      if (!platformManaged) {
+        setAccessToken(registeredInstitute.accessToken || '');
+        acceptLogin(session);
+      }
       setRegisteredSession(session);
 
       setIsSuccess(true);
@@ -203,10 +209,10 @@ const RegisterInstitute = () => {
           )}
           <button
             type="button"
-            onClick={() => navigate('/college')}
+            onClick={() => navigate(platformManaged ? '/platform/institutes' : '/college')}
             className="mt-8 inline-flex items-center justify-center gap-3 rounded-3xl bg-slate-950 px-8 py-4 text-xs font-black uppercase tracking-widest text-white shadow-2xl shadow-blue-100 transition hover:-translate-y-1 hover:bg-blue-600"
           >
-            Continue to Dashboard
+            {platformManaged ? 'Return to Institutes' : 'Continue to Dashboard'}
             <ArrowRight size={16} />
           </button>
         </div>
@@ -221,7 +227,7 @@ const RegisterInstitute = () => {
       <div className="lg:w-1/3 bg-slate-950 p-12 lg:p-20 text-white flex flex-col justify-between relative overflow-hidden lg:sticky lg:top-0 lg:h-screen text-left">
         <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_left,var(--color-blue-900)_0%,transparent_60%)] opacity-40" />
         
-        <Link to="/" className="flex items-center gap-3 relative z-10 group">
+        <Link to={platformManaged ? '/platform/dashboard' : '/'} className="flex items-center gap-3 relative z-10 group">
           <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-900/40 group-hover:scale-110 transition-transform">
             <GraduationCap className="text-white" size={26} />
           </div>

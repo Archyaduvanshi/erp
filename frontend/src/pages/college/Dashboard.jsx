@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { instituteApi } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import ModuleCard from '../../components/dashboard/ModuleCard';
 import {
   Bell,
   Briefcase,
@@ -24,6 +25,8 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const { session, logout } = useAuth();
   const [collegeData, setCollegeData] = useState(() => sessionInstitute(session));
+  const entitlementMap = new Map((session?.assignedFeatures || []).map((item) => [item.feature, item.enabled]));
+  const canUse = (feature) => !entitlementMap.size || entitlementMap.get(feature) === true;
 
   useEffect(() => {
     if (!session?.id) {
@@ -112,6 +115,7 @@ const Dashboard = () => {
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-10 lg:grid-cols-3">
           <ModuleCard
+            enabled={canUse('admissionStudent')}
             icon={<Users className="text-emerald-700" size={42} />}
             title="Student Management"
             desc="Manage student profiles, admissions, and academic history"
@@ -119,6 +123,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('teacher')}
             icon={<Shield className="text-blue-700" size={42} />}
             title="Teacher Management"
             desc="Oversee faculty details, assignments, and performance"
@@ -126,6 +131,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('attendance')}
             icon={<CalendarDays className="text-emerald-700" size={42} />}
             title="Attendance Management"
             desc="Track daily student attendance with date, status, and marked-by records"
@@ -133,6 +139,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('courses')}
             icon={<BookOpen className="text-amber-700" size={42} />}
             title="Course & Subject"
             desc="Define academic courses, subjects, and curriculum structure"
@@ -140,6 +147,7 @@ const Dashboard = () => {
           />
 
            <ModuleCard
+            enabled={canUse('timetable')}
             icon={<CalendarDays className="text-teal-700" size={42} />}
             title="Timetable Management"
             desc="Schedule class periods, teachers, rooms, substitutions, and exams"
@@ -147,6 +155,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('examinations')}
             icon={<FileText className="text-indigo-700" size={42} />}
             title="Examination Management"
             desc="Schedule exams, manage results, and generate report cards"
@@ -154,6 +163,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('library')}
             icon={<Library className="text-purple-700" size={42} />}
             title="Library Management"
             desc="Track book inventory, issues, returns, and late fines"
@@ -161,6 +171,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('transport')}
             icon={<Bus className="text-sky-700" size={42} />}
             title="Transport Management"
             desc="Manage drivers, buses, routes, and student transport assignments"
@@ -168,6 +179,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('hostel')}
             icon={<GraduationCap className="text-cyan-700" size={42} />}
             title="Hostel Management"
             desc="Allocate rooms, manage residents, and attendance"
@@ -175,6 +187,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('fees')}
             icon={<Landmark className="text-rose-700" size={42} />}
             title="Fees Management"
             desc="Track fee structures, collections, dues, and payment history"
@@ -182,6 +195,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('salary')}
             icon={<Briefcase className="text-emerald-700" size={42} />}
             title="Salary Management"
             desc="Set teacher salary, revise compensation, and mark monthly salary payments"
@@ -189,6 +203,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('cashbook')}
             icon={<Wallet className="text-cyan-700" size={42} />}
             title="Cashbook & Finance"
             desc="Track all school income, expenses, fee collections, salary payouts, cash/bank balances, vouchers, refunds and financial transactions from one place."
@@ -196,6 +211,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('notices')}
             icon={<Megaphone className="text-violet-700" size={42} />}
             title="Notice Management"
             desc="Create, schedule, pin, publish, and archive campus notices"
@@ -203,6 +219,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('result')}
             icon={<FileText className="text-fuchsia-700" size={42} />}
             title="Result"
             desc="Review published results, merit summaries, and student performance records"
@@ -210,6 +227,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('holidays')}
             icon={<CalendarDays className="text-orange-700" size={42} />}
             title="Holiday"
             desc="Keep upcoming holidays, closures, and campus leave announcements in view"
@@ -217,6 +235,7 @@ const Dashboard = () => {
           />
 
           <ModuleCard
+            enabled={canUse('reports')}
             icon={<FileText className="text-slate-700" size={42} />}
             title="Reports"
             desc="View academic, financial, and institutional reports"
@@ -234,19 +253,6 @@ const Dashboard = () => {
     </div>
   );
 };
-
-const ModuleCard = ({ icon, title, desc, onClick }) => (
-  <button
-    onClick={onClick}
-    className="group flex w-full flex-col items-center rounded-4xl border border-slate-100 bg-white p-8 text-center shadow-xl shadow-slate-200/40 transition-all duration-300 hover:-translate-y-3 hover:scale-105 hover:shadow-2xl md:rounded-[2.5rem] md:p-12"
-  >
-    <div className="mb-6 transition-transform group-hover:scale-110 md:mb-8">
-      {icon}
-    </div>
-    <h3 className="mb-2 text-xl font-bold tracking-tight text-slate-800 md:mb-3 md:text-2xl">{title}</h3>
-    <p className="max-w-60 text-xs leading-relaxed text-slate-500 md:text-sm">{desc}</p>
-  </button>
-);
 
 const sessionInstitute = (session) => session?.instituteName
   ? {

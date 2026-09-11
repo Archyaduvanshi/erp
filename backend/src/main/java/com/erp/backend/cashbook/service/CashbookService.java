@@ -85,10 +85,10 @@ public class CashbookService {
                 from cashbook_entries
                 where institute_id = :instituteId
                   and status = 'POSTED'
-                  and (:academicSessionId is null or academic_session_id = :academicSessionId or academic_session_id is null)
-                  and (:accountId is null or account_id = :accountId)
-                  and (:dateFrom is null or transaction_date >= :dateFrom)
-                  and (:dateTo is null or transaction_date <= :dateTo)
+                  and (cast(:academicSessionId as bigint) is null or academic_session_id = cast(:academicSessionId as bigint) or academic_session_id is null)
+                  and (cast(:accountId as bigint) is null or account_id = cast(:accountId as bigint))
+                  and (cast(:dateFrom as date) is null or transaction_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or transaction_date <= cast(:dateTo as date))
                 """)
                 .setParameter("instituteId", instituteId)
                 .setParameter("academicSessionId", academicSessionId)
@@ -105,7 +105,7 @@ public class CashbookService {
                 where institute_id = :instituteId
                   and status = 'POSTED'
                   and transaction_date = current_date
-                  and (:accountId is null or account_id = :accountId)
+                  and (cast(:accountId as bigint) is null or account_id = cast(:accountId as bigint))
                 """)
                 .setParameter("instituteId", instituteId)
                 .setParameter("accountId", accountId)
@@ -151,9 +151,9 @@ public class CashbookService {
                 from cashbook_entries
                 where institute_id = :instituteId
                   and status = 'POSTED'
-                  and (:accountId is null or account_id = :accountId)
-                  and (:dateFrom is null or transaction_date >= :dateFrom)
-                  and (:dateTo is null or transaction_date <= :dateTo)
+                  and (cast(:accountId as bigint) is null or account_id = cast(:accountId as bigint))
+                  and (cast(:dateFrom as date) is null or transaction_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or transaction_date <= cast(:dateTo as date))
                 group by period
                 order by period
                 """.formatted(bucket))
@@ -185,9 +185,9 @@ public class CashbookService {
                 where institute_id = :instituteId
                   and status = 'POSTED'
                   and %s
-                  and (:accountId is null or account_id = :accountId)
-                  and (:dateFrom is null or transaction_date >= :dateFrom)
-                  and (:dateTo is null or transaction_date <= :dateTo)
+                  and (cast(:accountId as bigint) is null or account_id = cast(:accountId as bigint))
+                  and (cast(:dateFrom as date) is null or transaction_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or transaction_date <= cast(:dateTo as date))
                 group by category_code, category_label
                 order by amount desc, category_label
                 """.formatted(entryPredicate))
@@ -218,9 +218,9 @@ public class CashbookService {
                 from cashbook_entries
                 where institute_id = :instituteId
                   and status = 'POSTED'
-                  and (:accountId is null or account_id = :accountId)
-                  and (:dateFrom is null or transaction_date >= :dateFrom)
-                  and (:dateTo is null or transaction_date <= :dateTo)
+                  and (cast(:accountId as bigint) is null or account_id = cast(:accountId as bigint))
+                  and (cast(:dateFrom as date) is null or transaction_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or transaction_date <= cast(:dateTo as date))
                 group by payment_mode
                 order by payment_mode
                 """)
@@ -643,15 +643,15 @@ public class CashbookService {
                 where e.institute_id = :instituteId
                   and (:search = '' or lower(concat(coalesce(e.voucher_number,''), ' ', coalesce(e.description,''), ' ', coalesce(e.payer_payee_name,''), ' ', coalesce(e.reference_number,''))) like :search)
                   and (:entryType = '' or e.entry_type = :entryType)
-                  and (:categoryId is null or e.category_id = :categoryId)
-                  and (:accountId is null or e.account_id = :accountId)
+                  and (cast(:categoryId as bigint) is null or e.category_id = cast(:categoryId as bigint))
+                  and (cast(:accountId as bigint) is null or e.account_id = cast(:accountId as bigint))
                   and (:paymentMode = '' or lower(e.payment_mode) = lower(:paymentMode))
                   and (:sourceType = '' or e.source_type = :sourceType)
                   and (:status = '' or e.status = :status)
-                  and (:dateFrom is null or e.transaction_date >= :dateFrom)
-                  and (:dateTo is null or e.transaction_date <= :dateTo)
-                  and (:minAmount is null or e.amount >= :minAmount)
-                  and (:maxAmount is null or e.amount <= :maxAmount)
+                  and (cast(:dateFrom as date) is null or e.transaction_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or e.transaction_date <= cast(:dateTo as date))
+                  and (cast(:minAmount as numeric) is null or e.amount >= cast(:minAmount as numeric))
+                  and (cast(:maxAmount as numeric) is null or e.amount <= cast(:maxAmount as numeric))
                 """;
     }
 
@@ -677,8 +677,22 @@ public class CashbookService {
             case "REFUND_IN", "REFUND_OUT" -> "REF";
             default -> "REC";
         };
+        repairVoucherSequence();
         Number next = (Number) entityManager.createNativeQuery("select nextval('cashbook_voucher_sequence')").getSingleResult();
         return "%s-%d-%06d".formatted(prefix, Year.now().getValue(), next.longValue());
+    }
+
+    private void repairVoucherSequence() {
+        entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtext('cashbook_voucher_sequence_repair'))").getSingleResult();
+        entityManager.createNativeQuery("create sequence if not exists cashbook_voucher_sequence start with 1 increment by 1").executeUpdate();
+        entityManager.createNativeQuery("""
+                select setval('cashbook_voucher_sequence', greatest(
+                    (select last_value from cashbook_voucher_sequence),
+                    coalesce((select max(substring(voucher_number from '^[A-Z]{3}-[0-9]{4}-([0-9]+)$')::bigint)
+                              from cashbook_entries where voucher_number ~ '^[A-Z]{3}-[0-9]{4}-[0-9]+$'), 0),
+                    1
+                ), true)
+                """).getSingleResult();
     }
 
     private String categoryCodeForFee(FeePayment payment) {

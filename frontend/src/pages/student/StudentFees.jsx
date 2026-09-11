@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   ChevronDown,
@@ -20,6 +20,8 @@ import {
 import { useAuth } from '../../context/AuthContext';
 
 const PAGE_SIZE = 25;
+const CASHFREE_RECONCILE_ATTEMPTS = 12;
+const CASHFREE_RECONCILE_INTERVAL_MS = 2_500;
 
 const createPaymentForm = () => ({
   paidAmount: '',
@@ -27,6 +29,7 @@ const createPaymentForm = () => ({
 
 const StudentFees = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { session } = useAuth();
   const queryClient = useQueryClient();
   const [receiptSearch, setReceiptSearch] = useState('');
@@ -64,6 +67,13 @@ const StudentFees = () => {
     staleTime: 30_000,
   });
 
+  const cashfreeAttemptsQuery = useQuery({
+    queryKey: ['cashfree', 'student-me-orders'],
+    queryFn: () => cashfreeApi.getMyOrders({ page: 0, size: PAGE_SIZE }),
+    enabled: session?.role === 'student',
+    staleTime: 10_000,
+  });
+
   const student = summaryQuery.data?.student || null;
   const payments = pagesContent(paymentsQuery.data);
 
@@ -91,7 +101,7 @@ const StudentFees = () => {
 
   const receiptRows = useMemo(() => {
     if (!student) return [];
-    return payments
+    const confirmedPayments = payments
       .filter((payment) => String(payment.studentId) === String(student.id))
       .map((payment) => {
         const overallLabel = Array.isArray(payment.allocations) && payment.allocations.length > 0
@@ -107,9 +117,25 @@ const StudentFees = () => {
           taxBreakdown: payment.taxBreakdown || calculateTaxBreakdown(payment.paidAmount),
           downloadLink: payment.downloadLink || `receipt-${payment.id}.txt`,
         };
-      })
-      .sort((a, b) => new Date(b.paymentDate || b.createdAt || 0).getTime() - new Date(a.paymentDate || a.createdAt || 0).getTime());
-  }, [payments, student]);
+      });
+    const attemptRows = pageContent(cashfreeAttemptsQuery.data)
+      .filter((attempt) => !attempt.feePaymentId)
+      .map((attempt) => ({
+        id: `cashfree-${attempt.attemptId}`,
+        paymentDate: attempt.paidAt || attempt.createdAt,
+        receiptNumber: attempt.orderId,
+        transactionId: attempt.cfPaymentId || '',
+        gatewayRef: attempt.bankReference,
+        mode: attempt.paymentMode || 'Cashfree',
+        paymentStatus: attempt.status === 'ACTIVE' ? 'PENDING' : attempt.status === 'USER_DROPPED' ? 'CANCELLED' : attempt.status,
+        paidAmount: attempt.amount,
+        balanceRemaining: null,
+        createdAt: attempt.paidAt || attempt.createdAt,
+        isGatewayAttempt: true,
+      }));
+    return [...confirmedPayments, ...attemptRows]
+      .sort((a, b) => new Date(b.createdAt || b.paymentDate || 0).getTime() - new Date(a.createdAt || a.paymentDate || 0).getTime());
+  }, [cashfreeAttemptsQuery.data, payments, student]);
 
   const totalCurrentDue = Number(summaryQuery.data?.totalOutstanding) || 0;
   const totalPreviousPending = Number(summaryQuery.data?.previousPending) || 0;
@@ -148,6 +174,40 @@ const StudentFees = () => {
   }, [paymentsQuery.error, session, summaryQuery.error]);
 
   useEffect(() => {
+    if (session?.role !== 'student') return;
+    const params = new URLSearchParams(location.search);
+    const orderId = params.get('cashfree_order_id');
+    if (!orderId) return;
+
+    let cancelled = false;
+    const refreshReturnedOrder = async () => {
+      try {
+        const result = await reconcileCashfreeOrder(orderId);
+        if (cancelled) return;
+        if (result.status === 'SUCCESS' || result.feePaymentId) {
+          await refreshFeeData(queryClient);
+        } else if (result.status === 'FAILED' || result.status === 'USER_DROPPED') {
+          setLoadError('Payment complete nahi hua. Aap dobara safely try kar sakte hain.');
+        } else {
+          setLoadError('Payment Cashfree par processing mein hai. Status automatically check kiya gaya; thodi der baad Fees page refresh karein.');
+        }
+      } catch (error) {
+        if (!cancelled) setLoadError(error.message || 'Cashfree payment status verify nahi ho saka.');
+      } finally {
+        if (!cancelled) {
+          params.delete('cashfree_order_id');
+          navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+        }
+      }
+    };
+
+    refreshReturnedOrder();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.pathname, location.search, navigate, queryClient, session]);
+
+  useEffect(() => {
     if (totalCurrentDue > 0 && !paymentForm.paidAmount) {
       setPaymentForm((current) => ({
         ...current,
@@ -170,19 +230,26 @@ const StudentFees = () => {
       });
       const Cashfree = await loadCashfreeSdk();
       const cashfree = Cashfree({ mode: order.environment === 'production' ? 'production' : 'sandbox' });
-      await cashfree.checkout({
+      const checkoutResult = await cashfree.checkout({
         paymentSessionId: order.paymentSessionId,
         redirectTarget: '_modal',
       });
-      const result = await cashfreeApi.getMyOrder(order.orderId);
+      if (checkoutResult?.error) {
+        await cashfreeApi.cancelMyOrder(order.orderId);
+        await queryClient.invalidateQueries({ queryKey: ['cashfree', 'student-me-orders'] });
+        setLoadError(checkoutResult.error.message || 'Payment checkout cancel ho gaya.');
+        return;
+      }
+      const result = await reconcileCashfreeOrder(order.orderId);
       if (result.status === 'SUCCESS') {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-summary'] }),
-          queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-payments'] }),
-        ]);
+        await refreshFeeData(queryClient);
         setPaymentForm(createPaymentForm());
       } else if (result.status === 'FAILED' || result.status === 'USER_DROPPED') {
         setLoadError('Payment complete nahi hua. Aap dobara safely try kar sakte hain.');
+      } else {
+        await cashfreeApi.cancelMyOrder(order.orderId);
+        await queryClient.invalidateQueries({ queryKey: ['cashfree', 'student-me-orders'] });
+        setLoadError('Payment complete nahi hua. Checkout cancelled mark kar diya gaya; aap dobara safely try kar sakte hain.');
       }
     } catch (error) {
       setLoadError(error.message || 'Cashfree checkout start nahi ho saka.');
@@ -251,12 +318,6 @@ const StudentFees = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
-          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
-          </div>
-        ) : null}
-
         <div className="grid gap-8">
           <section className="space-y-8">
             <Panel
@@ -348,6 +409,7 @@ const StudentFees = () => {
           </section>
         </div>
       </main>
+      <FeeNoticeModal message={loadError} onClose={() => setLoadError('')} />
     </div>
   );
 };
@@ -483,8 +545,10 @@ const PaymentHistoryTable = ({ rows, onDownload }) => (
           <thead className="bg-white">
             <tr>
               <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Date</th>
-              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Receipt</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Receipt / Order</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Transaction ID</th>
               <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Mode</th>
+              <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Credited at</th>
               <th className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Status</th>
               <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Amount</th>
               <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Balance</th>
@@ -495,24 +559,26 @@ const PaymentHistoryTable = ({ rows, onDownload }) => (
             {rows.map((receipt) => (
               <tr key={receipt.id} className="hover:bg-emerald-50/40">
                 <td className="px-4 py-4 font-semibold text-slate-700">{receipt.paymentDate || '-'}</td>
-                <td className="px-4 py-4 font-black text-slate-900">{receipt.receiptNumber || receipt.transactionId || '-'}</td>
+                <td className="px-4 py-4 font-black text-slate-900">{receipt.isGatewayAttempt ? `Order: ${receipt.receiptNumber}` : receipt.receiptNumber || receipt.transactionId || '-'}</td>
+                <td className="px-4 py-4 font-mono text-xs text-slate-600">{receipt.transactionId || '-'}</td>
                 <td className="px-4 py-4 text-slate-600">{receipt.mode || '-'}</td>
+                <td className="px-4 py-4 text-slate-600">{formatDateTime(receipt.createdAt || receipt.paymentDate)}</td>
                 <td className="px-4 py-4">
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${['Success', 'COMPLETED'].includes(receipt.paymentStatus) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${['Success', 'COMPLETED'].includes(receipt.paymentStatus) ? 'bg-emerald-100 text-emerald-700' : receipt.paymentStatus === 'CANCELLED' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
                     {receipt.paymentStatus || 'Saved'}
                   </span>
                 </td>
                 <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(receipt.paidAmount)}</td>
-                <td className="px-4 py-4 text-right font-semibold text-slate-600">{formatMoney(receipt.balanceRemaining)}</td>
+                <td className="px-4 py-4 text-right font-semibold text-slate-600">{receipt.isGatewayAttempt ? '-' : formatMoney(receipt.balanceRemaining)}</td>
                 <td className="px-4 py-4 text-right">
-                  <button
+                  {!receipt.isGatewayAttempt && <button
                     type="button"
                     onClick={() => onDownload(receipt)}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700"
                     aria-label="Download receipt"
                   >
                     <Download size={16} />
-                  </button>
+                  </button>}
                 </td>
               </tr>
             ))}
@@ -540,6 +606,49 @@ function nextPageParam(lastPage) {
   if (!lastPage || Array.isArray(lastPage) || lastPage.last) return undefined;
   const nextPage = Number(lastPage.number || 0) + 1;
   return nextPage < Number(lastPage.totalPages || 0) ? nextPage : undefined;
+}
+
+async function reconcileCashfreeOrder(orderId) {
+  let result;
+  for (let attempt = 0; attempt < CASHFREE_RECONCILE_ATTEMPTS; attempt += 1) {
+    result = await cashfreeApi.getMyOrder(orderId);
+    if (result.status === 'SUCCESS' || result.feePaymentId || result.status === 'FAILED' || result.status === 'USER_DROPPED') {
+      return result;
+    }
+    if (attempt < CASHFREE_RECONCILE_ATTEMPTS - 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, CASHFREE_RECONCILE_INTERVAL_MS));
+    }
+  }
+  return result;
+}
+
+async function refreshFeeData(queryClient) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-summary'] }),
+    queryClient.invalidateQueries({ queryKey: ['fees', 'student-me-payments'] }),
+  ]);
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+}
+
+function FeeNoticeModal({ message, onClose }) {
+  if (!message) return null;
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-md" role="alertdialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-[2rem] border border-rose-100 bg-white p-7 text-center shadow-[0_30px_90px_-30px_rgba(15,23,42,0.65)]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-100 text-2xl font-black text-rose-700">!</div>
+        <p className="mt-5 text-[11px] font-black uppercase tracking-[0.25em] text-rose-600">Fee Payment Notice</p>
+        <p className="mt-3 text-sm font-semibold leading-7 text-slate-600">{message}</p>
+        <button type="button" onClick={onClose} className="mt-7 w-full rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-slate-800">
+          Okay
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function useDebouncedValue(value, delay) {

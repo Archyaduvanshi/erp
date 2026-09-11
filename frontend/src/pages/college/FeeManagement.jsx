@@ -16,7 +16,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { cashfreeApi, feeApi } from '../../utils/api';
+import { feeApi } from '../../utils/api';
 import QRScannerButton from '../../components/scanner/QRScannerButton';
 import {
   calculateTaxBreakdown,
@@ -72,12 +72,13 @@ const FeeManagement = () => {
   const [structureCategoryFilter, setStructureCategoryFilter] = useState('');
   const [dueSearch, setDueSearch] = useState('');
   const [loadError, setLoadError] = useState('');
+  const [pendingDelete, setPendingDelete] = useState(null);
   const [feeSummaryOpen, setFeeSummaryOpen] = useState(false);
   const [generatedReceipt, setGeneratedReceipt] = useState(null);
-  const [cashfreeMerchant, setCashfreeMerchant] = useState(null);
-  const [cashfreeOnboardingLink, setCashfreeOnboardingLink] = useState('');
   const [scannedStudent, setScannedStudent] = useState(null);
+  const [studentIdLookup, setStudentIdLookup] = useState('');
   const debouncedDueSearch = useDebouncedValue(dueSearch, 350);
+  const debouncedStudentIdLookup = useDebouncedValue(studentIdLookup, 300);
 
   const overviewQuery = useQuery({
     queryKey: ['fees', 'overview'],
@@ -111,6 +112,14 @@ const FeeManagement = () => {
     enabled: activeSection === 'payments' && Boolean(paymentForm.className),
     initialPageParam: 0,
     getNextPageParam: nextPageParam,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const studentIdLookupQuery = useQuery({
+    queryKey: ['fees', 'student-id-lookup', debouncedStudentIdLookup],
+    queryFn: () => feeApi.searchStudents({ search: debouncedStudentIdLookup, page: 0, size: 10 }),
+    enabled: activeSection === 'payments' && debouncedStudentIdLookup.trim().length >= 2,
     staleTime: 20_000,
     placeholderData: keepPreviousData,
   });
@@ -194,69 +203,47 @@ const FeeManagement = () => {
     },
   });
 
-  const createCashfreeMerchantMutation = useMutation({
-    mutationFn: cashfreeApi.createMerchant,
-    onSuccess: (merchant) => {
-      setCashfreeMerchant(merchant);
-      setActiveSection('cashfree');
-      setLoadError('');
-    },
-    onError: (error) => setLoadError(error.message || 'Unable to initialize Cashfree school account.'),
-  });
 
-  const refreshCashfreeMerchantMutation = useMutation({
-    mutationFn: cashfreeApi.getMerchant,
-    onSuccess: (merchant) => {
-      setCashfreeMerchant(merchant);
-      setLoadError('');
-    },
-    onError: (error) => setLoadError(error.message || 'Unable to refresh Cashfree account status.'),
-  });
-
-  const cashfreeOnboardingMutation = useMutation({
-    mutationFn: cashfreeApi.createOnboardingLink,
-    onSuccess: (merchant) => {
-      setCashfreeMerchant(merchant);
-      setCashfreeOnboardingLink(merchant.onboardingLink || '');
-      setLoadError('');
-    },
-    onError: (error) => setLoadError(error.message || 'Unable to create Cashfree onboarding link.'),
-  });
-
-  const cashfreeAttemptsQuery = useQuery({
-    queryKey: ['cashfree', 'attempts'],
-    queryFn: () => cashfreeApi.getAttempts({ page: 0, size: 25 }),
-    enabled: activeSection === 'cashfree',
-    staleTime: 15_000,
-  });
 
   const feeClasses = classesQuery.data || [];
   const structures = structuresQuery.data || [];
   const studentOptions = useMemo(() => {
-    const options = pagesContent(studentSearchQuery.data).map((student) => ({
-      id: student.id,
-      name: student.studentName || student.enrollmentNo || 'Unnamed student',
-      className: normalizeClassName(student.className) || 'Course pending',
-      sectionName: student.section || '',
-      enrollmentNo: student.enrollmentNo || `Student ${student.id}`,
-      category: student.category || 'General',
-      transportStatus: student.transportStatus,
-      hostelStatus: student.hostelStatus,
-      libraryStatus: student.libraryStatus,
-      libraryMonthlyCharge: student.libraryMonthlyCharge,
-    }));
+    const options = [
+      ...pagesContent(studentSearchQuery.data),
+      ...pagesContent(studentIdLookupQuery.data),
+    ].map(toPaymentStudentOption);
     if (scannedStudent && !options.some((student) => String(student.id) === String(scannedStudent.id))) {
       options.push(scannedStudent);
     }
-    return options.sort((a, b) => a.name.localeCompare(b.name));
-  }, [scannedStudent, studentSearchQuery.data]);
+    return [...new Map(options.map((student) => [String(student.id), student])).values()]
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [scannedStudent, studentIdLookupQuery.data, studentSearchQuery.data]);
   const selectedStudentPayments = pagesContent(selectedStudentPaymentsQuery.data);
   const dueRows = pagesContent(duesQuery.data);
 
   useEffect(() => {
+    const lookup = debouncedStudentIdLookup.trim();
+    if (lookup.length < 2) return;
+    const matchedStudent = pagesContent(studentIdLookupQuery.data)
+      .map(toPaymentStudentOption)
+      .find((student) => String(student.id) === lookup || student.enrollmentNo.toLowerCase() === lookup.toLowerCase());
+    if (!matchedStudent || String(paymentForm.studentId) === String(matchedStudent.id)) return;
+    setFeeSummaryOpen(false);
+    setGeneratedReceipt(null);
+    setPaymentForm((current) => ({
+      ...current,
+      className: matchedStudent.className,
+      section: matchedStudent.sectionName,
+      studentId: String(matchedStudent.id),
+      paymentTarget: 'due_auto',
+      paidAmount: '',
+    }));
+  }, [debouncedStudentIdLookup, paymentForm.studentId, studentIdLookupQuery.data]);
+
+  useEffect(() => {
     const error = overviewQuery.error || classesQuery.error || structuresQuery.error || studentSearchQuery.error || selectedStudentSummaryQuery.error || selectedStudentPaymentsQuery.error || duesQuery.error;
     setLoadError(error?.message || '');
-  }, [classesQuery.error, duesQuery.error, overviewQuery.error, selectedStudentPaymentsQuery.error, selectedStudentSummaryQuery.error, structuresQuery.error, studentSearchQuery.error]);
+  }, [classesQuery.error, duesQuery.error, overviewQuery.error, selectedStudentPaymentsQuery.error, selectedStudentSummaryQuery.error, structuresQuery.error, studentIdLookupQuery.error, studentSearchQuery.error]);
 
   const courseOptions = useMemo(() => {
     return [
@@ -289,7 +276,7 @@ const FeeManagement = () => {
           downloadLink: payment.downloadLink || `receipt-${payment.id}.txt`,
         };
       })
-      .sort((a, b) => new Date(b.paymentDate || b.createdAt || 0) - new Date(a.paymentDate || a.createdAt || 0));
+      .sort((a, b) => new Date(b.createdAt || b.paymentDate || 0) - new Date(a.createdAt || a.paymentDate || 0));
   }, [selectedStudentPayments, structures, studentOptions]);
 
   const filteredFeeClasses = useMemo(() => {
@@ -411,7 +398,7 @@ const FeeManagement = () => {
       .filter((receipt) => String(receipt.studentId) === String(selectedPaymentStudent.id))
       .map((receipt) => ({
         ...receipt,
-        noticeSent: receipt.notificationStatus === 'SENT',
+        notificationStatus: receipt.notificationStatus,
       }));
   }, [receiptRows, selectedPaymentStudent]);
 
@@ -463,14 +450,19 @@ const FeeManagement = () => {
   };
 
   const handleStudentSelect = (studentId) => {
+    const student = studentOptions.find((entry) => String(entry.id) === String(studentId));
+    if (!student) return;
     setFeeSummaryOpen(false);
     setGeneratedReceipt(null);
     setPaymentForm((current) => ({
       ...current,
-      studentId,
+      className: student.className,
+      section: student.sectionName,
+      studentId: String(student.id),
       paymentTarget: 'due_auto',
       paidAmount: '',
     }));
+    setStudentIdLookup(student.enrollmentNo);
   };
 
   const handleScannedStudent = (identity) => {
@@ -483,6 +475,7 @@ const FeeManagement = () => {
       category: 'General',
     };
     setScannedStudent(student);
+    setStudentIdLookup(student.enrollmentNo);
     setActiveSection('payments');
     setFeeSummaryOpen(false);
     setGeneratedReceipt(null);
@@ -556,7 +549,7 @@ const FeeManagement = () => {
         billingType: 'overall_payment',
       });
       const generated = enrichReceiptForDisplay(savedPayment, selectedStudent);
-      generated.noticeSent = savedPayment.notificationStatus === 'SENT';
+      generated.notificationStatus = savedPayment.notificationStatus;
       setGeneratedReceipt(generated);
       setPaymentForm(initialPaymentForm);
     } catch (error) {
@@ -564,16 +557,22 @@ const FeeManagement = () => {
     }
   };
 
-  const handleDelete = async (module, recordId, message) => {
-    if (!window.confirm(message)) return;
+  const handleDelete = (module, recordId, message) => {
+    setPendingDelete({ module, recordId, message });
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
     try {
-      if (module === 'fee_structures') {
-        await deleteStructureMutation.mutateAsync(recordId);
-      } else if (module === 'fee_payments') {
-        await voidPaymentMutation.mutateAsync(recordId);
+      if (pendingDelete.module === 'fee_structures') {
+        await deleteStructureMutation.mutateAsync(pendingDelete.recordId);
+      } else if (pendingDelete.module === 'fee_payments') {
+        await voidPaymentMutation.mutateAsync(pendingDelete.recordId);
       }
+      setPendingDelete(null);
     } catch (error) {
       setLoadError(error.message || 'Unable to delete fee record from database.');
+      setPendingDelete(null);
     }
   };
 
@@ -648,67 +647,12 @@ const FeeManagement = () => {
       </div>
 
       <main className="mx-auto max-w-7xl px-6 py-8 lg:px-10 lg:py-10">
-        {loadError ? (
-          <div className="mb-6 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
-            {loadError}
-          </div>
-        ) : null}
-
         {activeSection === 'home' ? (
           <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <ActionCard icon={BadgeIndianRupee} title="Fee Structure Setup" text="Define cycle-based fees and monthly hostel, transport, or library service fees." onClick={() => setActiveSection('structures')} />
             <ActionCard icon={CreditCard} title="Fee Collection" text="Collect fee at the counter, with cash as the default mode and receipt-ready allocation." onClick={() => setActiveSection('payments')} />
             <ActionCard icon={CalendarClock} title="Due Fee Reports" text="Find pending balances, late fines, and reminder counts." onClick={() => setActiveSection('dues')} />
-            <ActionCard icon={Landmark} title="Cashfree School Payments" text="Onboard this school account so student payments settle directly to the school's verified account." onClick={() => createCashfreeMerchantMutation.mutate()} />
           </section>
-        ) : (
-          <div className="mt-8">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700">Fee Module Page</p>
-              <h2 className="mt-2 font-serif text-3xl font-black italic tracking-tight text-slate-950">{sectionTitle(activeSection)}</h2>
-            </div>
-          </div>
-        )}
-
-        {activeSection === 'cashfree' ? (
-          <Panel
-            className="mt-8"
-            title="Cashfree School Payment Account"
-            description="Complete the school's own Cashfree KYC. VidyantraErp records payment status and receipts; settlement remains with Cashfree and the school account."
-          >
-            <div className="mt-6 grid gap-4 md:grid-cols-3">
-              <InfoPill icon={Landmark} text={`Merchant: ${cashfreeMerchant?.merchantId || 'Creating...'}`} />
-              <InfoPill icon={FileText} text={`Onboarding: ${cashfreeMerchant?.onboardingStatus || 'Pending'}`} />
-              <InfoPill icon={CreditCard} text={cashfreeMerchant?.paymentsEnabled ? 'Payments Active' : 'Payments Not Active'} />
-            </div>
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-              <PrimaryButton
-                type="button"
-                icon={CreditCard}
-                label={cashfreeOnboardingMutation.isPending ? 'Preparing KYC...' : 'Start / Continue KYC'}
-                disabled={cashfreeOnboardingMutation.isPending}
-                onClick={() => cashfreeOnboardingMutation.mutate()}
-              />
-              <PrimaryButton
-                type="button"
-                icon={CalendarClock}
-                label={refreshCashfreeMerchantMutation.isPending ? 'Refreshing...' : 'Refresh Status'}
-                disabled={refreshCashfreeMerchantMutation.isPending}
-                onClick={() => refreshCashfreeMerchantMutation.mutate()}
-              />
-            </div>
-            {cashfreeOnboardingLink ? (
-              <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200 bg-white">
-                <iframe
-                  title="Cashfree merchant onboarding"
-                  src={cashfreeOnboardingLink}
-                  className="h-[720px] w-full border-0"
-                  allow="camera; microphone"
-                />
-              </div>
-            ) : null}
-            <GatewayAttemptTable provider="Cashfree" rows={cashfreeAttemptsQuery.data?.content || []} />
-          </Panel>
         ) : null}
 
         {activeSection === 'structures' ? (
@@ -927,48 +871,27 @@ const FeeManagement = () => {
                   <QRScannerButton feature="fees" onResolved={handleScannedStudent} />
                 </div>
                 <form className="mt-8 grid gap-5 md:grid-cols-2" onSubmit={handleSavePayment}>
-                  <SelectField
-                    label="Class"
-                    value={paymentForm.className}
-                    onChange={(e) => handleCollectionClassSelect(e.target.value)}
-                    options={['', ...collectionClassOptions]}
-                    renderOptionLabel={(value) => value || 'Select class'}
-                  />
-                  <SelectField
-                    label="Section"
-                    value={paymentForm.section}
-                    onChange={(e) => handleCollectionSectionSelect(e.target.value)}
-                    options={['', ...collectionSectionOptions]}
-                    disabled={!paymentForm.className || collectionSectionOptions.length === 0}
-                    renderOptionLabel={(value) => {
-                      if (value) return value;
-                      if (!paymentForm.className) return 'Select class first';
-                      return collectionSectionOptions.length ? 'Select section' : 'No section found';
-                    }}
-                  />
-                  <div className="md:col-span-2">
-                    <SelectField
-                      label="Student Name"
-                      value={paymentForm.studentId}
-                      onChange={(e) => handleStudentSelect(e.target.value)}
-                      options={['', ...filteredCollectionStudents.map((student) => String(student.id))]}
-                      disabled={!canSelectCollectionStudent}
-                      renderOptionLabel={(value) => {
-                        if (!value && !paymentForm.className) return 'Select class first';
-                        if (!value && collectionSectionOptions.length > 0 && !paymentForm.section) return 'Select section first';
-                        return studentLabel(value, filteredCollectionStudents);
+                  <div className="space-y-2.5">
+                    <InputField
+                      label="Student ID"
+                      value={studentIdLookup}
+                      onChange={(e) => {
+                        setStudentIdLookup(e.target.value);
+                        setFeeSummaryOpen(false);
+                        setGeneratedReceipt(null);
+                        setPaymentForm((current) => ({ ...current, className: '', section: '', studentId: '', paidAmount: '' }));
                       }}
+                      placeholder="Enter enrollment / student ID"
+                      autoComplete="off"
                     />
+                    <p className="text-xs font-semibold text-slate-500">
+                      {studentIdLookup.trim().length < 2 ? 'Enter student ID or scan QR to load student details.' : studentIdLookupQuery.isFetching ? 'Finding student...' : selectedPaymentStudent ? 'Student details loaded.' : 'No student found with this ID.'}
+                    </p>
                   </div>
-                  {studentSearchQuery.hasNextPage ? (
-                    <div className="md:col-span-2">
-                      <LoadMoreButton
-                        label={`Load More Students (${studentOptions.length}/${studentSearchQuery.data?.pages?.at(-1)?.totalElements || studentOptions.length})`}
-                        loading={studentSearchQuery.isFetchingNextPage}
-                        onClick={() => studentSearchQuery.fetchNextPage()}
-                      />
-                    </div>
-                  ) : null}
+                  <InputField label="Student Name" value={selectedPaymentStudent?.name || ''} placeholder="Auto-filled from Student ID" readOnly />
+                  <InputField label="Father's Name" value={selectedPaymentStudent?.guardianName || ''} placeholder="Auto-filled from Student ID" readOnly />
+                  <InputField label="Class" value={paymentForm.className} placeholder="Auto-filled from Student ID" readOnly />
+                  <InputField label="Section" value={paymentForm.section} placeholder="Auto-filled from Student ID" readOnly />
                   {selectedPaymentStudent ? (
                     <div className="md:col-span-2 rounded-[1.8rem] border border-emerald-100 bg-emerald-50/70 p-4">
                       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1096,9 +1019,47 @@ const FeeManagement = () => {
           </Panel>
         ) : null}
       </main>
+      <FeeNoticeModal message={loadError} onClose={() => setLoadError('')} />
+      <FeeDeleteConfirmationModal
+        item={pendingDelete}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+        isSaving={deleteStructureMutation.isPending || voidPaymentMutation.isPending}
+      />
     </div>
   );
 };
+
+function FeeNoticeModal({ message, onClose }) {
+  if (!message) return null;
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-md" role="alertdialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-[2rem] border border-rose-100 bg-white p-7 text-center shadow-[0_30px_90px_-30px_rgba(15,23,42,0.65)]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-100 text-2xl font-black text-rose-700">!</div>
+        <p className="mt-5 text-[11px] font-black uppercase tracking-[0.25em] text-rose-600">Fee Management Notice</p>
+        <p className="mt-3 text-sm font-semibold leading-7 text-slate-600">{message}</p>
+        <button type="button" onClick={onClose} className="mt-7 w-full rounded-2xl bg-slate-950 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white transition hover:bg-slate-800">Okay</button>
+      </div>
+    </div>
+  );
+}
+
+function FeeDeleteConfirmationModal({ item, onCancel, onConfirm, isSaving }) {
+  if (!item) return null;
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-md" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-[2rem] border border-rose-100 bg-white p-7 text-center shadow-[0_30px_90px_-30px_rgba(15,23,42,0.65)]">
+        <p className="text-[11px] font-black uppercase tracking-[0.25em] text-rose-600">Confirm Fee Action</p>
+        <h3 className="mt-3 font-serif text-3xl font-black italic text-slate-950">Are you sure?</h3>
+        <p className="mt-3 text-sm font-semibold leading-7 text-slate-600">{item.message}</p>
+        <div className="mt-7 grid gap-3 sm:grid-cols-2">
+          <button type="button" onClick={onCancel} disabled={isSaving} className="rounded-2xl border-2 border-slate-200 bg-white px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600 disabled:opacity-60">Cancel</button>
+          <button type="button" onClick={onConfirm} disabled={isSaving} className="rounded-2xl bg-rose-600 px-5 py-3.5 text-[11px] font-black uppercase tracking-[0.2em] text-white disabled:opacity-60">{isSaving ? 'Working...' : 'Yes, Confirm'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const getStudentClassName = (student = {}) => (
   normalizeClassName(student.assignedClass || student.className || '')
@@ -1153,7 +1114,6 @@ const sectionTitle = (section) => ({
   structures: 'Fee Structure Setup',
   payments: 'Fee Counter Collection',
   dues: 'Due Fee Reports',
-  cashfree: 'Cashfree School Payments',
 }[section] || 'Fee Management');
 
 const enrichReceiptForDisplay = (receipt, student) => ({
@@ -1395,7 +1355,7 @@ const ReceiptPreview = ({ receipt, onDownload }) => (
       <InvoiceStat label="Paid Amount" value={formatMoney(receipt.paidAmount)} strong tone="success" />
       <InvoiceStat label="Balance" value={formatMoney(receipt.balanceRemaining)} tone={Number(receipt.balanceRemaining) > 0 ? 'danger' : 'success'} />
       <InvoiceStat label="Mode" value={receipt.mode || 'Cash'} />
-      <InvoiceStat label="Notice" value={receipt.noticeSent ? 'Sent' : 'Pending'} tone={receipt.noticeSent ? 'success' : 'default'} />
+      <InvoiceStat label="Notice" value={getNoticeLabel(receipt.notificationStatus)} tone={getNoticeTone(receipt.notificationStatus)} />
     </div>
     <div className="mt-5 grid gap-2 rounded-2xl border border-emerald-100 bg-white p-4">
       <SummaryLine label="Payment Date" value={receipt.paymentDate || '-'} />
@@ -1496,6 +1456,45 @@ const SummaryDetailLine = ({ label, meta, value }) => (
   </div>
 );
 
+const normalizedNoticeStatus = (status) => String(status || 'NOT_SENT').trim().toUpperCase();
+
+const getNoticeLabel = (status) => {
+  const normalized = normalizedNoticeStatus(status);
+  if (normalized === 'SENT') return 'Notice Sent';
+  if (normalized === 'PENDING') return 'Sending';
+  if (normalized === 'FAILED') return 'Failed';
+  return 'Not sent';
+};
+
+const getNoticeTone = (status) => {
+  const normalized = normalizedNoticeStatus(status);
+  if (normalized === 'SENT') return 'success';
+  if (normalized === 'FAILED') return 'danger';
+  return 'default';
+};
+
+const getNoticeBadgeClass = (status) => {
+  const normalized = normalizedNoticeStatus(status);
+  if (normalized === 'SENT') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'PENDING') return 'bg-amber-100 text-amber-700';
+  if (normalized === 'FAILED') return 'bg-rose-100 text-rose-700';
+  return 'bg-slate-100 text-slate-500';
+};
+
+const toPaymentStudentOption = (student) => ({
+  id: student.id,
+  name: student.studentName || student.enrollmentNo || 'Unnamed student',
+  guardianName: student.guardianName || '',
+  className: normalizeClassName(student.className) || 'Course pending',
+  sectionName: student.section || '',
+  enrollmentNo: student.enrollmentNo || `Student ${student.id}`,
+  category: student.category || 'General',
+  transportStatus: student.transportStatus,
+  hostelStatus: student.hostelStatus,
+  libraryStatus: student.libraryStatus,
+  libraryMonthlyCharge: student.libraryMonthlyCharge,
+});
+
 const PaymentHistoryTable = ({ rows, onVerify, onReject, verifying }) => (
   <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
     <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
@@ -1525,8 +1524,8 @@ const PaymentHistoryTable = ({ rows, onVerify, onReject, verifying }) => (
                 <td className="px-4 py-4 text-slate-600">{receipt.mode || '-'}</td>
                 <td className="px-4 py-4 text-slate-600">{receipt.paymentStatus || '-'}</td>
                 <td className="px-4 py-4">
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${receipt.noticeSent ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                    {receipt.noticeSent ? 'Notice Sent' : 'Pending'}
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${getNoticeBadgeClass(receipt.notificationStatus)}`}>
+                    {getNoticeLabel(receipt.notificationStatus)}
                   </span>
                 </td>
                 <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(receipt.paidAmount)}</td>
@@ -1565,42 +1564,6 @@ const PaymentHistoryTable = ({ rows, onVerify, onReject, verifying }) => (
         Is student ki payment history abhi empty hai.
       </div>
     )}
-  </div>
-);
-
-const GatewayAttemptTable = ({ provider, rows }) => (
-  <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-      <h4 className="text-sm font-black text-slate-950">{provider} Transaction Register</h4>
-      <p className="mt-1 text-xs font-semibold text-slate-500">Latest 25 successful, pending, failed, and dropped online payment attempts.</p>
-    </div>
-    <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-        <thead>
-          <tr>
-            {['Date & Time', 'Student', 'Order ID', `${provider} Payment ID`, 'Mode', 'Status', 'Amount'].map((label) => (
-              <th key={label} className="px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((attempt) => (
-            <tr key={attempt.attemptId} className="hover:bg-emerald-50/40">
-              <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-600">{attempt.paidAt || attempt.createdAt || '-'}</td>
-              <td className="px-4 py-4 font-black text-slate-900">{attempt.studentName || `Student ${attempt.studentId}`}</td>
-              <td className="px-4 py-4 font-semibold text-slate-600">{attempt.orderId}</td>
-              <td className="px-4 py-4 text-slate-600">{attempt.cfPaymentId || attempt.paymentId || '-'}</td>
-              <td className="px-4 py-4 text-slate-600">{attempt.paymentMode || '-'}</td>
-              <td className="px-4 py-4"><span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-600">{attempt.status}</span></td>
-              <td className="px-4 py-4 text-right font-black text-slate-950">{formatMoney(attempt.amount)}</td>
-            </tr>
-          ))}
-          {!rows.length ? (
-            <tr><td colSpan="7" className="px-4 py-8 text-center font-semibold text-slate-500">No {provider} transactions recorded yet.</td></tr>
-          ) : null}
-        </tbody>
-      </table>
-    </div>
   </div>
 );
 

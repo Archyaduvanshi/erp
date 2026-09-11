@@ -5,7 +5,6 @@ import java.util.Map;
 import com.erp.backend.auth.AuthPrincipal;
 import com.erp.backend.cashfree.dto.CashfreeDtos.AttemptResponse;
 import com.erp.backend.cashfree.dto.CashfreeDtos.CreateOrderRequest;
-import com.erp.backend.cashfree.dto.CashfreeDtos.MerchantResponse;
 import com.erp.backend.cashfree.dto.CashfreeDtos.OrderResponse;
 import com.erp.backend.cashfree.dto.CashfreeDtos.PaymentAvailabilityResponse;
 import jakarta.validation.Valid;
@@ -31,33 +30,6 @@ public class CashfreeController {
         this.cashfreePaymentService = cashfreePaymentService;
     }
 
-    @PostMapping("/merchant")
-    @PreAuthorize("hasRole('ADMIN')")
-    public MerchantResponse createMerchant(@AuthenticationPrincipal AuthPrincipal principal) {
-        return cashfreePaymentService.createMerchant(principal.instituteId());
-    }
-
-    @GetMapping("/merchant")
-    @PreAuthorize("hasRole('ADMIN')")
-    public MerchantResponse refreshMerchant(@AuthenticationPrincipal AuthPrincipal principal) {
-        return cashfreePaymentService.refreshMerchant(principal.instituteId());
-    }
-
-    @PostMapping("/merchant/onboarding-link")
-    @PreAuthorize("hasRole('ADMIN')")
-    public MerchantResponse onboardingLink(@AuthenticationPrincipal AuthPrincipal principal) {
-        return cashfreePaymentService.createOnboardingLink(principal.instituteId());
-    }
-
-    @GetMapping("/attempts")
-    @PreAuthorize("hasRole('ADMIN')")
-    public Page<AttemptResponse> attempts(
-            @AuthenticationPrincipal AuthPrincipal principal,
-            Pageable pageable
-    ) {
-        return cashfreePaymentService.getAttempts(principal.instituteId(), pageable);
-    }
-
     @PostMapping("/student/me/orders")
     @PreAuthorize("hasRole('STUDENT')")
     public OrderResponse createOrder(
@@ -75,6 +47,15 @@ public class CashfreeController {
         return cashfreePaymentService.getPaymentAvailability(principal.instituteId());
     }
 
+    @GetMapping("/student/me/orders")
+    @PreAuthorize("hasRole('STUDENT')")
+    public Page<AttemptResponse> getOrders(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            Pageable pageable
+    ) {
+        return cashfreePaymentService.getStudentAttempts(principal.instituteId(), principal.studentId(), pageable);
+    }
+
     @GetMapping("/student/me/orders/{orderId}")
     @PreAuthorize("hasRole('STUDENT')")
     public AttemptResponse getOrder(
@@ -82,6 +63,15 @@ public class CashfreeController {
             @PathVariable String orderId
     ) {
         return cashfreePaymentService.refreshAttempt(principal.instituteId(), principal.studentId(), orderId);
+    }
+
+    @PostMapping("/student/me/orders/{orderId}/cancel")
+    @PreAuthorize("hasRole('STUDENT')")
+    public AttemptResponse cancelOrder(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @PathVariable String orderId
+    ) {
+        return cashfreePaymentService.cancelStudentAttempt(principal.instituteId(), principal.studentId(), orderId);
     }
 
     @PostMapping("/webhook")

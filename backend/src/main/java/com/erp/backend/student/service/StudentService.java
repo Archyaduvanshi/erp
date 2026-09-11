@@ -22,6 +22,8 @@ import com.erp.backend.institute.repository.InstituteRepository;
 import com.erp.backend.institute.service.InstitutionCodeService;
 import com.erp.backend.scanner.service.QrIdentityTokenService;
 import com.erp.backend.scanner.service.QrIdentityTokenService.EntityType;
+import com.erp.backend.platform.service.PlanLimitService;
+import com.erp.backend.platform.service.PlanLimitService.Resource;
 import com.erp.backend.student.dto.StudentClassSummaryResponse;
 import com.erp.backend.student.dto.StudentDocumentPayload;
 import com.erp.backend.student.dto.StudentListResponse;
@@ -68,6 +70,7 @@ public class StudentService {
     private final InstitutionCodeService institutionCodeService;
     private final SectionCapacityService sectionCapacityService;
     private final QrIdentityTokenService qrIdentityTokenService;
+    private final PlanLimitService planLimitService;
 
     public StudentService(
             StudentRepository studentRepository,
@@ -78,7 +81,8 @@ public class StudentService {
             FeeService feeService,
             InstitutionCodeService institutionCodeService,
             SectionCapacityService sectionCapacityService,
-            QrIdentityTokenService qrIdentityTokenService
+            QrIdentityTokenService qrIdentityTokenService,
+            PlanLimitService planLimitService
     ) {
         this.studentRepository = studentRepository;
         this.instituteRepository = instituteRepository;
@@ -89,6 +93,7 @@ public class StudentService {
         this.institutionCodeService = institutionCodeService;
         this.sectionCapacityService = sectionCapacityService;
         this.qrIdentityTokenService = qrIdentityTokenService;
+        this.planLimitService = planLimitService;
     }
 
     public List<StudentResponse> getAllStudents(Long instituteId) {
@@ -146,6 +151,7 @@ public class StudentService {
 
     @Transactional
     public StudentResponse createStudent(Long instituteId, StudentPayload request) {
+        planLimitService.assertCanAdd(instituteId, Resource.STUDENTS, 1);
         Institute institute = validateInstitute(instituteId);
         validateRequiredFields(request);
         validateUniqueness(instituteId, request);
@@ -166,6 +172,8 @@ public class StudentService {
     @Transactional
     public StudentResponse updateStudent(Long instituteId, Long studentId, StudentPayload request) {
         Student student = findStudent(instituteId, studentId);
+        if ("archived".equalsIgnoreCase(student.getStatus()) && !"archived".equalsIgnoreCase(request.status()))
+            planLimitService.assertCanAdd(instituteId, Resource.STUDENTS, 1);
         validateRequiredFields(request);
         validateUniquenessForUpdate(instituteId, student, request);
         validatePhoto(request);
@@ -187,6 +195,7 @@ public class StudentService {
 
     @Transactional
     public List<StudentResponse> importStudents(Long instituteId, List<StudentPayload> students) {
+        planLimitService.assertCanAdd(instituteId, Resource.STUDENTS, students == null ? 0 : students.size());
         Institute institute = validateInstitute(instituteId);
         Map<String, Integer> nextRollByClass = new LinkedHashMap<>();
         List<Student> savedStudents = new java.util.ArrayList<>();

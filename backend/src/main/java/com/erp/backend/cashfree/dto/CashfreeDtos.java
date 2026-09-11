@@ -44,9 +44,18 @@ public final class CashfreeDtos {
             String productStatus,
             boolean paymentsEnabled,
             String onboardingLink,
-            String onboardingLinkExpiresAt
+            String onboardingLinkExpiresAt,
+            Long accountId,
+            long version
     ) {
     }
+
+    public record LinkMerchantRequest(
+            @NotBlank @jakarta.validation.constraints.Pattern(regexp="[A-Za-z0-9_-]{1,40}") String merchantId,
+            Long expectedAccountId, Long expectedVersion,
+            @NotBlank @jakarta.validation.constraints.Size(max=500) String reason,
+            @jakarta.validation.constraints.AssertTrue boolean confirmSchoolOwnership
+    ) {}
 
     public record AttemptResponse(
             Long attemptId,

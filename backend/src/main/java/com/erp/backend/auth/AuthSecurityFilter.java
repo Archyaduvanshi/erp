@@ -16,6 +16,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
+import com.erp.backend.platform.FeatureCode;
+import com.erp.backend.platform.service.EntitlementService;
 
 @Component
 public class AuthSecurityFilter extends OncePerRequestFilter {
@@ -31,7 +33,7 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         FEATURE_ROUTES.put("/api/transport", "transport");
         FEATURE_ROUTES.put("/api/attendance", "attendance");
         FEATURE_ROUTES.put("/api/marks", "examinations");
-        FEATURE_ROUTES.put("/api/results", "examinations");
+        FEATURE_ROUTES.put("/api/results", "result");
         FEATURE_ROUTES.put("/api/class-subjects", "courses");
         FEATURE_ROUTES.put("/api/classes", "courses");
         FEATURE_ROUTES.put("/api/course-books", "courses");
@@ -42,14 +44,18 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         FEATURE_ROUTES.put("/api/salary", "salary");
         FEATURE_ROUTES.put("/api/notices", "notices");
         FEATURE_ROUTES.put("/api/holidays", "holidays");
+        FEATURE_ROUTES.put("/api/reports", "reports");
     }
 
     private final JwtTokenService jwtTokenService;
     private final TeacherAuthorizationService teacherAuthorizationService;
+    private final EntitlementService entitlementService;
 
-    public AuthSecurityFilter(JwtTokenService jwtTokenService, TeacherAuthorizationService teacherAuthorizationService) {
+    public AuthSecurityFilter(JwtTokenService jwtTokenService, TeacherAuthorizationService teacherAuthorizationService,
+                              EntitlementService entitlementService) {
         this.jwtTokenService = jwtTokenService;
         this.teacherAuthorizationService = teacherAuthorizationService;
+        this.entitlementService = entitlementService;
     }
 
     @Override
@@ -64,9 +70,11 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
                 || path.equals("/api/auth/logout")
                 || path.equals("/api/auth/password/forgot")
                 || path.equals("/api/auth/password/reset")
-                || path.equals("/api/institutes/register")
                 || path.equals("/api/institutes/login")
                 || path.equals("/api/uploads/registration-logo")
+                || path.equals("/api/platform/auth/login")
+                || path.equals("/api/platform/auth/refresh")
+                || path.equals("/api/platform/auth/logout")
                 || ("POST".equalsIgnoreCase(request.getMethod()) && path.equals("/api/cashfree/webhook"));
     }
 
@@ -106,6 +114,19 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         if (isAlwaysAllowed(request)) {
             return;
         }
+        String path = request.getRequestURI();
+        if ("SUPER_ADMIN".equals(principal.role())) {
+            if (path.startsWith("/api/platform/")) return;
+            throw new AccessDeniedException("Platform identities cannot access tenant business APIs.");
+        }
+        if (path.startsWith("/api/platform/")) {
+            throw new AccessDeniedException("Platform access is required.");
+        }
+        entitlementService.validateInstituteAccess(principal.instituteId());
+        FeatureCode platformFeature = FeatureCode.fromLegacyKey(featureForPath(path));
+        if (platformFeature != null) {
+            entitlementService.validateFeature(principal.instituteId(), platformFeature);
+        }
         if ("ADMIN".equals(principal.role())) {
             return;
         }
@@ -123,6 +144,7 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
     private boolean isAlwaysAllowed(HttpServletRequest request) {
         String path = request.getRequestURI();
         return path.startsWith("/api/auth/")
+                || path.startsWith("/api/platform/auth/")
                 || path.equals("/api/health");
     }
 

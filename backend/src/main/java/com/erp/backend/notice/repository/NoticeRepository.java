@@ -20,6 +20,8 @@ public interface NoticeRepository extends JpaRepository<Notice, Long> {
 
     Optional<Notice> findByInstituteIdAndSourceTypeAndSourceId(Long instituteId, String sourceType, Long sourceId);
 
+    boolean existsByInstituteIdAndSourceTypeAndSourceId(Long instituteId, String sourceType, Long sourceId);
+
     void deleteByInstituteIdAndSourceTypeAndSourceId(Long instituteId, String sourceType, Long sourceId);
 
     @Query(

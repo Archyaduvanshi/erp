@@ -4,6 +4,7 @@ public record FeeStudentSearchResponse(
         Long id,
         String enrollmentNo,
         String studentName,
+        String guardianName,
         String className,
         String section,
         String category,

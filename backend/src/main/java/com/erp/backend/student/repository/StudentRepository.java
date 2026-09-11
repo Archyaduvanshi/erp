@@ -132,6 +132,7 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
                         s.id,
                         s.enrollmentNo,
                         coalesce(nullif(trim(concat(coalesce(s.firstName, ''), ' ', coalesce(s.lastName, ''))), ''), coalesce(s.name, s.enrollmentNo)),
+                        s.guardianName,
                         coalesce(s.className, s.assignedClass),
                         s.section,
                         coalesce(s.admissionCategory, s.category, 'General'),

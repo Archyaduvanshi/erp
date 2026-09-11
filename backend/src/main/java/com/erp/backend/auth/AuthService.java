@@ -28,6 +28,9 @@ import com.erp.backend.student.entity.Student;
 import com.erp.backend.student.repository.StudentRepository;
 import com.erp.backend.teacher.entity.Teacher;
 import com.erp.backend.teacher.repository.TeacherRepository;
+import com.erp.backend.platform.service.EntitlementService;
+import com.erp.backend.platform.service.PlanLimitService;
+import com.erp.backend.platform.service.PlanLimitService.Resource;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -56,6 +59,8 @@ public class AuthService {
     private final JwtTokenService jwtTokenService;
     private final RateLimiterService rateLimiterService;
     private final PasswordResetDeliveryService passwordResetDeliveryService;
+    private final EntitlementService entitlementService;
+    private final PlanLimitService planLimitService;
     private final long refreshDays;
     private final boolean exposeResetToken;
 
@@ -71,6 +76,8 @@ public class AuthService {
             JwtTokenService jwtTokenService,
             RateLimiterService rateLimiterService,
             PasswordResetDeliveryService passwordResetDeliveryService,
+            EntitlementService entitlementService,
+            PlanLimitService planLimitService,
             @Value("${app.auth.refresh-token-days:14}") long refreshDays,
             @Value("${app.auth.expose-reset-token:false}") boolean exposeResetToken
     ) {
@@ -85,6 +92,8 @@ public class AuthService {
         this.jwtTokenService = jwtTokenService;
         this.rateLimiterService = rateLimiterService;
         this.passwordResetDeliveryService = passwordResetDeliveryService;
+        this.entitlementService = entitlementService;
+        this.planLimitService = planLimitService;
         this.refreshDays = refreshDays;
         this.exposeResetToken = exposeResetToken;
     }
@@ -97,8 +106,10 @@ public class AuthService {
 
     @Transactional
     public UserAccount syncAdminAccount(Institute institute) {
-        UserAccount account = userAccountRepository.findByInstituteIdAndRole(institute.getId(), "ADMIN")
-                .orElseGet(UserAccount::new);
+        var existingAccount = userAccountRepository.findByInstituteIdAndRole(institute.getId(), "ADMIN");
+        boolean isNewAccount = existingAccount.isEmpty();
+        if (isNewAccount) planLimitService.assertCanAdd(institute.getId(), Resource.USERS, 1);
+        UserAccount account = existingAccount.orElseGet(UserAccount::new);
         populateAccount(account, institute, "ADMIN", institute.getUsername(), null, null);
         account.setPasswordHash(institute.getPasswordHash());
         account.setMustChangePassword(false);
@@ -111,6 +122,8 @@ public class AuthService {
         boolean isNewAccount = userAccountRepository.findByInstituteIdAndTeacherId(teacher.getInstitute().getId(), teacher.getId()).isEmpty();
         UserAccount account = userAccountRepository.findByInstituteIdAndTeacherId(teacher.getInstitute().getId(), teacher.getId())
                 .orElseGet(UserAccount::new);
+        if (activeTeacherStatus(teacher.getStatus()) && (isNewAccount || !"ACTIVE".equals(account.getStatus())))
+            planLimitService.assertCanAdd(teacher.getInstitute().getId(), Resource.USERS, 1);
         populateAccount(account, teacher.getInstitute(), "TEACHER", teacher.getEmployeeId(), teacher.getId(), null);
         account.setStatus(activeTeacherStatus(teacher.getStatus()) ? "ACTIVE" : "INACTIVE");
         String selectedPassword = StringUtils.hasText(rawPassword) ? rawPassword.trim() : isNewAccount ? generateTemporaryPassword() : null;
@@ -133,6 +146,8 @@ public class AuthService {
         boolean isNewAccount = userAccountRepository.findByInstituteIdAndStudentId(student.getInstitute().getId(), student.getId()).isEmpty();
         UserAccount account = userAccountRepository.findByInstituteIdAndStudentId(student.getInstitute().getId(), student.getId())
                 .orElseGet(UserAccount::new);
+        if (activeStudentStatus(student.getStatus()) && (isNewAccount || !"ACTIVE".equals(account.getStatus())))
+            planLimitService.assertCanAdd(student.getInstitute().getId(), Resource.USERS, 1);
         populateAccount(account, student.getInstitute(), "STUDENT", student.getEnrollmentNo(), null, student.getId());
         account.setStatus(activeStudentStatus(student.getStatus()) ? "ACTIVE" : "INACTIVE");
         String selectedPassword = StringUtils.hasText(rawPassword) ? rawPassword.trim() : isNewAccount ? generateTemporaryPassword() : null;
@@ -174,7 +189,8 @@ public class AuthService {
 
     private UserAccount verifyAccountPassword(UserAccount account, String rawPassword) {
         LocalDateTime now = LocalDateTime.now();
-        if (!"ACTIVE".equalsIgnoreCase(account.getStatus())) {
+        if (!"ACTIVE".equalsIgnoreCase(account.getStatus())
+                || !"ACTIVE".equalsIgnoreCase(account.getInstitute().getStatus())) {
             throw invalidCredentials();
         }
         if (account.getLockedUntil() != null && account.getLockedUntil().isAfter(now)) {
@@ -321,7 +337,9 @@ public class AuthService {
     }
 
     public AuthMeResponse me(AuthPrincipal principal) {
-        List<FeatureAccessResponse> permissions = "TEACHER".equals(principal.role()) && principal.teacherId() != null
+        List<FeatureAccessResponse> permissions = ("ADMIN".equals(principal.role()) || "STUDENT".equals(principal.role()))
+                ? entitlementService.effectivePermissions(principal.instituteId())
+                : "TEACHER".equals(principal.role()) && principal.teacherId() != null
                 ? featureAccessRepository.findAllByInstituteIdAndTeacherIdAndEnabledTrueOrderByFeatureKeyAsc(principal.instituteId(), principal.teacherId())
                 .stream()
                 .map(this::toFeatureResponse)
@@ -352,6 +370,10 @@ public class AuthService {
         );
     }
 
+    public List<FeatureAccessResponse> getAdminFeatureAccess(Long instituteId) {
+        return entitlementService.effectivePermissions(instituteId);
+    }
+
     private FeatureAccessResponse toFeatureResponse(FeatureAccess access) {
         Teacher teacher = access.getTeacher();
         return new FeatureAccessResponse(
@@ -379,6 +401,7 @@ public class AuthService {
     }
 
     private UserAccount saveAccount(Institute institute, String role, String identifier, String passwordHash, boolean mustChangePassword, Long teacherId, Long studentId) {
+        planLimitService.assertCanAdd(institute.getId(), Resource.USERS, 1);
         UserAccount account = new UserAccount();
         populateAccount(account, institute, role, identifier, teacherId, studentId);
         account.setPasswordHash(passwordHash);

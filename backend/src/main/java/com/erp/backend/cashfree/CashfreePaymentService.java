@@ -18,6 +18,7 @@ import javax.crypto.spec.SecretKeySpec;
 import com.erp.backend.cashfree.dto.CashfreeDtos.AttemptResponse;
 import com.erp.backend.cashfree.dto.CashfreeDtos.CreateOrderRequest;
 import com.erp.backend.cashfree.dto.CashfreeDtos.MerchantResponse;
+import com.erp.backend.cashfree.dto.CashfreeDtos.LinkMerchantRequest;
 import com.erp.backend.cashfree.dto.CashfreeDtos.OrderResponse;
 import com.erp.backend.cashfree.dto.CashfreeDtos.PaymentAvailabilityResponse;
 import com.erp.backend.cashfree.entity.CashfreeMerchantAccount;
@@ -83,9 +84,56 @@ public class CashfreePaymentService {
         this.feeService = feeService;
     }
 
+    @Transactional(readOnly = true)
+    public MerchantResponse currentMerchant(Long instituteId) {
+        return merchantRepository.findByInstituteId(instituteId)
+                .map(a -> toMerchantResponse(a,null,null)).orElse(null);
+    }
+
+    @Transactional
+    public MerchantResponse linkMerchant(Long instituteId, LinkMerchantRequest request) {
+        properties.requireConfigured();
+        Institute institute=lockInstitute(instituteId);
+        String merchantId=request.merchantId()==null?"":request.merchantId().trim();
+        if(!merchantId.matches("[A-Za-z0-9_-]{1,40}") || !request.confirmSchoolOwnership()
+                || !StringUtils.hasText(request.reason()) || request.reason().trim().length()>500)
+            throw new IllegalArgumentException("INVALID_MERCHANT_LINK: Merchant ID, ownership confirmation and reason are required.");
+        CashfreeMerchantAccount current=merchantRepository.findByInstituteId(instituteId).orElse(null);
+        if(!java.util.Objects.equals(request.expectedAccountId(),current==null?null:current.getId())
+                || (current!=null && !java.util.Objects.equals(request.expectedVersion(),current.getVersion())))
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"GATEWAY_MODIFIED_CONCURRENTLY");
+        CashfreeMerchantAccount target=merchantRepository.findByMerchantId(merchantId).orElse(null);
+        if(target!=null && !target.getInstitute().getId().equals(instituteId))
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"MERCHANT_ALREADY_LINKED_TO_ANOTHER_INSTITUTE");
+        // This lookup uses the configured partner key; arbitrary/unrelated Cashfree accounts cannot be linked.
+        JsonNode verified=client.getMerchant(merchantId);
+        if(!merchantId.equals(verified.path("merchant_id").asText()))
+            throw new IllegalArgumentException("CASHFREE_MERCHANT_VERIFICATION_FAILED");
+        if(target==null){target=new CashfreeMerchantAccount();target.setInstitute(institute);target.setMerchantId(merchantId);}
+        if(current!=null && !current.getMerchantId().equals(merchantId)) {
+            current.setCurrent(false);
+            merchantRepository.saveAndFlush(current);
+        }
+        target.setCurrent(true);
+        applyMerchantStatus(target,verified);
+        try { return toMerchantResponse(merchantRepository.saveAndFlush(target),null,null); }
+        catch(DataIntegrityViolationException ex) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"MERCHANT_LINK_CONFLICT",ex);
+        }
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void lockMerchantConfiguration(Long instituteId) { lockInstitute(instituteId); }
+
+    private Institute lockInstitute(Long instituteId) {
+        return instituteRepository.findByIdForGatewayUpdate(instituteId)
+                .orElseThrow(()->new ResourceNotFoundException("INSTITUTE_NOT_FOUND: Institute not found."));
+    }
+
     @Transactional
     public MerchantResponse createMerchant(Long instituteId) {
         properties.requireConfigured();
+        lockInstitute(instituteId);
         Optional<CashfreeMerchantAccount> existing = merchantRepository.findByInstituteId(instituteId);
         if (existing.isPresent()) return toMerchantResponse(existing.get(), null, null);
 
@@ -112,6 +160,7 @@ public class CashfreePaymentService {
 
     @Transactional
     public MerchantResponse refreshMerchant(Long instituteId) {
+        lockInstitute(instituteId);
         CashfreeMerchantAccount account = requireMerchant(instituteId);
         JsonNode response = client.getMerchant(account.getMerchantId());
         applyMerchantStatus(account, response);
@@ -120,6 +169,7 @@ public class CashfreePaymentService {
 
     @Transactional
     public MerchantResponse createOnboardingLink(Long instituteId) {
+        lockInstitute(instituteId);
         CashfreeMerchantAccount account = merchantRepository.findByInstituteId(instituteId)
                 .orElseGet(() -> {
                     createMerchant(instituteId);
@@ -127,13 +177,14 @@ public class CashfreePaymentService {
                 });
         ObjectNode body = objectMapper.createObjectNode();
         body.put("type", "account_onboarding");
-        body.put("return_url", properties.frontendBaseUrl() + "/college/fees?cashfree_onboarding=returned");
+        body.put("return_url", properties.frontendBaseUrl() + "/platform/gateways?instituteId=" + instituteId);
         JsonNode response = client.createOnboardingLink(account.getMerchantId(), body);
         return toMerchantResponse(account, response.path("onboarding_link").asText(null), response.path("expires_at").asText(null));
     }
 
     @Transactional
     public OrderResponse createOrder(Long instituteId, Long studentId, CreateOrderRequest request) {
+        lockInstitute(instituteId);
         properties.requireConfigured();
         String idempotencyKey = request.idempotencyKey().trim();
         Optional<CashfreePaymentAttempt> existing = attemptRepository
@@ -245,9 +296,35 @@ public class CashfreePaymentService {
         return toAttemptResponse(refreshed);
     }
 
+    @Transactional
+    public AttemptResponse reconcileAttempt(Long instituteId, String orderId) {
+        CashfreePaymentAttempt attempt = attemptRepository.findByInstituteIdAndOrderId(instituteId, orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("PAYMENT_ATTEMPT_NOT_FOUND: Payment attempt not found."));
+        return refreshAttempt(instituteId, attempt.getStudent().getId(), orderId);
+    }
+
+    @Transactional
+    public AttemptResponse cancelStudentAttempt(Long instituteId, Long studentId, String orderId) {
+        CashfreePaymentAttempt attempt = attemptRepository.findByInstituteIdAndStudentIdAndOrderId(instituteId, studentId, orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("PAYMENT_ATTEMPT_NOT_FOUND: Payment attempt not found."));
+        AttemptResponse current = refreshAttempt(instituteId, studentId, orderId);
+        if (!"SUCCESS".equalsIgnoreCase(current.status()) && current.feePaymentId() == null) {
+            attempt.setStatus("USER_DROPPED");
+            attempt.setFailureReason("Checkout closed before payment completion.");
+            attemptRepository.save(attempt);
+        }
+        return toAttemptResponse(attempt);
+    }
+
     @Transactional(readOnly = true)
     public Page<AttemptResponse> getAttempts(Long instituteId, Pageable pageable) {
         return attemptRepository.findAllByInstituteIdOrderByCreatedAtDesc(instituteId, pageable)
+                .map(this::toAttemptResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<AttemptResponse> getStudentAttempts(Long instituteId, Long studentId, Pageable pageable) {
+        return attemptRepository.findAllByInstituteIdAndStudentIdOrderByCreatedAtDesc(instituteId, studentId, pageable)
                 .map(this::toAttemptResponse);
     }
 
@@ -425,7 +502,7 @@ public class CashfreePaymentService {
     }
 
     private MerchantResponse toMerchantResponse(CashfreeMerchantAccount account, String link, String expiry) {
-        return new MerchantResponse(account.getMerchantId(), account.getOnboardingStatus(), account.getProductStatus(), account.isPaymentsEnabled(), link, expiry);
+        return new MerchantResponse(account.getMerchantId(), account.getOnboardingStatus(), account.getProductStatus(), account.isPaymentsEnabled(), link, expiry, account.getId(), account.getVersion());
     }
 
     private OrderResponse toOrderResponse(CashfreePaymentAttempt attempt) {

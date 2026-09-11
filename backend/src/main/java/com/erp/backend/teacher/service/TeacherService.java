@@ -15,6 +15,8 @@ import com.erp.backend.salary.entity.TeacherSalaryProfile;
 import com.erp.backend.salary.repository.TeacherSalaryProfileRepository;
 import com.erp.backend.scanner.service.QrIdentityTokenService;
 import com.erp.backend.scanner.service.QrIdentityTokenService.EntityType;
+import com.erp.backend.platform.service.PlanLimitService;
+import com.erp.backend.platform.service.PlanLimitService.Resource;
 import com.erp.backend.teacher.dto.TeacherDocumentPayload;
 import com.erp.backend.teacher.dto.TeacherListResponse;
 import com.erp.backend.teacher.dto.TeacherPageResponse;
@@ -35,6 +37,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class TeacherService {
@@ -58,6 +61,7 @@ public class TeacherService {
     private final AuthService authService;
     private final InstitutionCodeService institutionCodeService;
     private final QrIdentityTokenService qrIdentityTokenService;
+    private final PlanLimitService planLimitService;
 
     public TeacherService(
             TeacherRepository teacherRepository,
@@ -66,7 +70,8 @@ public class TeacherService {
             ObjectMapper objectMapper,
             AuthService authService,
             InstitutionCodeService institutionCodeService,
-            QrIdentityTokenService qrIdentityTokenService
+            QrIdentityTokenService qrIdentityTokenService,
+            PlanLimitService planLimitService
     ) {
         this.teacherRepository = teacherRepository;
         this.instituteRepository = instituteRepository;
@@ -75,6 +80,7 @@ public class TeacherService {
         this.authService = authService;
         this.institutionCodeService = institutionCodeService;
         this.qrIdentityTokenService = qrIdentityTokenService;
+        this.planLimitService = planLimitService;
     }
 
     public List<TeacherResponse> getAllTeachers(Long instituteId) {
@@ -133,7 +139,9 @@ public class TeacherService {
         throw new IllegalArgumentException("Teacher portal login has moved to the main login. Use your teacher ID and password.");
     }
 
-    public synchronized TeacherResponse createTeacher(Long instituteId, TeacherPayload request) {
+    @Transactional
+    public TeacherResponse createTeacher(Long instituteId, TeacherPayload request) {
+        planLimitService.assertCanAdd(instituteId, Resource.TEACHERS, 1);
         Institute institute = validateInstitute(instituteId);
         validateTeacherPayload(request);
         validateUniqueness(instituteId, request);
@@ -153,8 +161,11 @@ public class TeacherService {
         }
     }
 
+    @Transactional
     public TeacherResponse updateTeacher(Long instituteId, Long teacherId, TeacherPayload request) {
         Teacher teacher = findTeacher(instituteId, teacherId);
+        if ("archived".equalsIgnoreCase(teacher.getStatus()) && !"archived".equalsIgnoreCase(request.status()))
+            planLimitService.assertCanAdd(instituteId, Resource.TEACHERS, 1);
         validateTeacherPayload(request);
         validateUniquenessForUpdate(instituteId, teacherId, request);
         validatePhoto(request);
@@ -170,7 +181,9 @@ public class TeacherService {
         }
     }
 
+    @Transactional
     public List<TeacherResponse> importTeachers(Long instituteId, List<TeacherPayload> teachers) {
+        planLimitService.assertCanAdd(instituteId, Resource.TEACHERS, teachers == null ? 0 : teachers.size());
         Institute institute = validateInstitute(instituteId);
         List<Teacher> entities = teachers.stream()
                 .map(payload -> {
