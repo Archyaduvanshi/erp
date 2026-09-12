@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import EmailOtpField from '../../components/EmailOtpField';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -1155,7 +1156,7 @@ const EnrollmentWizard = ({
           <div className="mt-8 grid gap-5 md:grid-cols-2">
             <CreativeInput label="First Name" value={formData.firstName} onChange={(e) => updateFormField('firstName', e.target.value)} placeholder="Legal first name" error={fieldErrors.firstName} />
             <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => updateFormField('lastName', e.target.value)} placeholder="Legal surname" error={fieldErrors.lastName} />
-            <CreativeInput label="Personal Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} placeholder="student@email.com" />
+            <EmailOtpField email={formData.email} purpose="STUDENT">{(endAction) => <CreativeInput label="Personal Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} placeholder="student@email.com" endAction={endAction} />}</EmailOtpField>
             <CreativeInput label="Mobile Number" value={formData.mobile} onChange={(e) => updateFormField('mobile', e.target.value)} placeholder="9876543210" inputMode="numeric" error={fieldErrors.mobile} />
             <CreativeInput label="Date of Birth" type="date" value={formData.dob} onChange={(e) => updateFormField('dob', e.target.value)} error={fieldErrors.dob} />
             <CreativeInput label="Registration Date" type="date" value={today} readOnly />
@@ -1602,13 +1603,17 @@ const FormHeader = ({ eyebrow, title, desc }) => (
   </div>
 );
 
-const CreativeInput = ({ label, error, ...props }) => (
+const CreativeInput = ({ label, error, endAction, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <div className="relative">
     <input
       className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 ${error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-cyan-500 focus:ring-cyan-100'}`}
+      style={endAction ? { paddingRight: '8.5rem' } : undefined}
       {...props}
     />
+    {endAction}
+    </div>
     {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
   </div>
 );
@@ -2165,7 +2170,7 @@ function StudentDetailView({
                 <CreativeInput label="Last Name" value={formData.lastName} onChange={(e) => updateFormField('lastName', e.target.value)} error={fieldErrors.lastName} />
                 <CreativeInput label="Date of Birth" type="date" value={formData.dob} onChange={(e) => updateFormField('dob', e.target.value)} error={fieldErrors.dob} />
                 <CreativeSelect label="Gender" value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })} options={['Male', 'Female', 'Other']} />
-                <CreativeInput label="Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                <EmailOtpField email={formData.email} purpose="STUDENT" disabled={!(String(formData.email || '').trim().toLowerCase() !== String(student.email || '').trim().toLowerCase())}>{(endAction) => <CreativeInput label="Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} endAction={endAction} />}</EmailOtpField>
                 <CreativeInput label="Mobile" value={formData.mobile} onChange={(e) => updateFormField('mobile', e.target.value)} inputMode="numeric" error={fieldErrors.mobile} />
                 <CreativeInput label="Father First Name" value={formData.guardianFirstName} onChange={(e) => updateFormField('guardianFirstName', e.target.value)} error={fieldErrors.guardianFirstName} />
                 <CreativeInput label="Father Last Name (Optional)" value={formData.guardianLastName} onChange={(e) => updateFormField('guardianLastName', e.target.value)} error={fieldErrors.guardianLastName} />

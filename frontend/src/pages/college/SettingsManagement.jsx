@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import EmailOtpField from '../../components/EmailOtpField';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -421,7 +422,7 @@ const SettingsManagement = () => {
                   <TextInput label="Affiliation No." value={profileForm.affiliationNo} onChange={(e) => updateProfileField('affiliationNo', e.target.value)} error={fieldErrors.affiliationNo} />
                   <TextInput label="Affiliated From" value={profileForm.affiliatedFrom} onChange={(e) => updateProfileField('affiliatedFrom', e.target.value)} error={fieldErrors.affiliatedFrom} />
                   <TextInput label="Contact Number" value={profileForm.contact} onChange={(e) => updateProfileField('contact', e.target.value)} inputMode="numeric" error={fieldErrors.contact} />
-                  <TextInput label="Official Email" value={profileForm.email} onChange={(e) => updateProfileField('email', e.target.value)} error={fieldErrors.email} />
+                  <EmailOtpField email={profileForm.email} purpose="COLLEGE" disabled={!(String(profileForm.email || '').trim().toLowerCase() !== String(institute?.email || '').trim().toLowerCase())}>{(endAction) => <TextInput label="Official Email" value={profileForm.email} onChange={(e) => updateProfileField('email', e.target.value)} error={fieldErrors.email} endAction={endAction} />}</EmailOtpField>
                   <TextInput label="Website" value={profileForm.website} onChange={(e) => updateProfileField('website', e.target.value)} error={fieldErrors.website} />
                   <TextInput label="State" value={profileForm.state} onChange={(e) => updateProfileField('state', e.target.value)} error={fieldErrors.state} />
                   <TextInput label="City" value={profileForm.city} onChange={(e) => updateProfileField('city', e.target.value)} error={fieldErrors.city} />
@@ -640,15 +641,19 @@ const PanelTitle = ({ icon: Icon, title, description }) => (
   </div>
 );
 
-const TextInput = ({ label, error = '', helper = '', ...props }) => (
+const TextInput = ({ label, error = '', helper = '', endAction, ...props }) => (
   <div className="space-y-2">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <div className="relative">
     <input
       className={`w-full rounded-2xl border-2 bg-slate-50 px-5 py-3.5 text-sm font-semibold text-slate-900 outline-none transition focus:bg-white focus:ring-4 ${
         error ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-100'
       }`}
+      style={endAction ? { paddingRight: '8.5rem' } : undefined}
       {...props}
     />
+    {endAction}
+    </div>
     {helper ? <p className="text-[10px] font-bold leading-5 text-slate-400">{helper}</p> : null}
     {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : null}
   </div>

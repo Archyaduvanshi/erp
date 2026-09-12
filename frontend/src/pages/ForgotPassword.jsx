@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import EmailOtpField from '../components/EmailOtpField';
 import { AlertCircle, ArrowLeft, CheckCircle2, GraduationCap, Lock, ShieldCheck, User } from 'lucide-react';
 import { authApi } from '../utils/api';
 
 const ForgotPassword = () => {
+  const navigate = useNavigate();
+  const [email, setEmail] = useState('');
   const [formData, setFormData] = useState({ institutionCode: '', username: '' });
   const [error, setError] = useState('');
   const [response, setResponse] = useState(null);
@@ -20,6 +23,7 @@ const ForgotPassword = () => {
         username: formData.username.trim(),
       });
       setResponse(result);
+      if (result.resetToken) navigate('/reset-password', { state: { resetToken: result.resetToken } });
     } catch (apiError) {
       setError(apiError.message);
     } finally {
@@ -28,14 +32,13 @@ const ForgotPassword = () => {
   };
 
   return (
-    <AuthShell title="Recover Access" subtitle="Request a secure reset link for your account">
+    <AuthShell title="Recover Access" subtitle="Verify your registered email to reset your password">
       {error && <StatusPanel tone="error" icon={AlertCircle} text={error} />}
       {response && (
         <StatusPanel
           tone="success"
           icon={CheckCircle2}
           text={response.message || 'If the account exists, a reset link has been sent.'}
-          detail={response.resetToken ? `Dev reset token: ${response.resetToken}` : ''}
         />
       )}
 
@@ -59,12 +62,13 @@ const ForgotPassword = () => {
           onChange={(event) => setFormData((current) => ({ ...current, username: event.target.value }))}
           required
         />
+        <EmailOtpField email={email} purpose="PASSWORD_RESET">{(endAction) => <InputGroup label="Registered Email" icon={User} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Your account email" required endAction={endAction} />}</EmailOtpField>
         <button
           type="submit"
           disabled={isSubmitting}
           className="w-full rounded-3xl bg-slate-950 py-5 text-sm font-black uppercase tracking-widest text-white shadow-2xl shadow-blue-100 transition hover:-translate-y-1 hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0 disabled:hover:bg-slate-950"
         >
-          {isSubmitting ? 'Sending...' : 'Send Reset Link'}
+          {isSubmitting ? 'Checking...' : 'Continue To Reset Password'}
         </button>
       </form>
       <BackToLogin />
@@ -91,15 +95,17 @@ const AuthShell = ({ title, subtitle, children }) => (
   </div>
 );
 
-const InputGroup = ({ label, icon: Icon, ...props }) => (
+const InputGroup = ({ label, icon: Icon, endAction, ...props }) => (
   <div className="space-y-2 text-left">
     <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</label>
     <div className="relative">
       <Icon className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
       <input
         className="w-full rounded-2xl border border-slate-100 bg-slate-50 py-4 pl-12 pr-5 text-sm font-bold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
+        style={endAction ? { paddingRight: '8.5rem' } : undefined}
         {...props}
       />
+      {endAction}
     </div>
   </div>
 );

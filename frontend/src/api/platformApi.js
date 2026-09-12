@@ -1,3 +1,5 @@
+import { emailVerificationHeaders } from '../utils/emailVerification';
+
 const configured = import.meta.env.VITE_API_BASE_URL?.trim() || 'http://localhost:8080/api';
 const API_BASE = configured.replace(/\/+$/, '').endsWith('/api') ? configured.replace(/\/+$/, '') : `${configured.replace(/\/+$/, '')}/api`;
 const SESSION_KEY = 'erp.platform.session';
@@ -45,6 +47,10 @@ async function request(path, options = {}, retry = true) {
   const isPublic = ['/platform/auth/login', '/platform/auth/refresh', '/platform/auth/logout'].includes(path);
   if (!isPublic && !token) await refresh();
   const headers = new Headers(options.headers || {});
+  if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase())) {
+    const proofs = emailVerificationHeaders();
+    if (proofs) headers.set('X-Email-Verification', proofs);
+  }
   headers.set('Accept', 'application/json');
   if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (!isPublic && token) headers.set('Authorization', `Bearer ${token}`);

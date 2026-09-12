@@ -302,6 +302,9 @@ public class StudentService {
         student.setName(buildStudentName(uppercase(request.firstName()), uppercase(request.lastName())));
         student.setDob(trim(request.dob()));
         student.setGender(trim(request.gender()));
+        if (student.getId() == null || !com.erp.backend.auth.EmailVerificationService.normalize(student.getEmail()).equals(com.erp.backend.auth.EmailVerificationService.normalize(request.email()))) {
+            authService.requireEmailVerification(request.email(), "STUDENT");
+        }
         student.setEmail(normalizeEmail(request.email()));
         student.setMobile(digitsOnlyOrNull(request.mobile()));
         student.setBloodGroup(uppercase(request.bloodGroup()));

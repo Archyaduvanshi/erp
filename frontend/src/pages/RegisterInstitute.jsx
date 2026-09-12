@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import EmailOtpField from '../components/EmailOtpField';
 import { Link, useNavigate } from 'react-router-dom';
 import { instituteApi, setAccessToken, uploadApi } from '../utils/api';
 import { platformApi } from '../api/platformApi';
@@ -318,7 +319,7 @@ const RegisterInstitute = ({ platformManaged = false }) => {
               </h3>
               <div className="grid md:grid-cols-2 gap-6">
                 <InputGroup label="Contact Number" icon={Phone} inputMode="numeric" placeholder="9876543210" value={formData.contact} onChange={(e) => updateField('contact', e.target.value)} error={fieldErrors.contact} required />
-                <InputGroup label="Official Email" icon={Mail} type="email" placeholder="admin@domain.edu" value={formData.email} onChange={(e) => updateField('email', e.target.value)} error={fieldErrors.email} required />
+                <EmailOtpField email={formData.email} purpose="COLLEGE">{(endAction) => <InputGroup label="Official Email" icon={Mail} type="email" placeholder="admin@domain.edu" value={formData.email} onChange={(e) => updateField('email', e.target.value)} error={fieldErrors.email} required endAction={endAction} />}</EmailOtpField>
               </div>
               {/* Added Website URL field here */}
               <InputGroup label="Website URL (Optional)" icon={Globe} placeholder="https://www.yourinstitute.com" value={formData.website} onChange={(e) => updateField('website', e.target.value)} error={fieldErrors.website} />
@@ -424,6 +425,7 @@ const InputGroup = ({ label, icon: Icon, type = "text", error, helper, endAction
       <input 
         type={type}
         className={`w-full bg-white border-2 rounded-2xl pl-12 ${endAction ? 'pr-12' : 'pr-5'} py-4 font-bold text-sm text-slate-900 shadow-sm outline-none focus:ring-4 transition-all placeholder:text-slate-400 ${error ? 'border-rose-400 focus:ring-rose-100 focus:border-rose-500' : 'border-slate-300 focus:ring-blue-100 focus:border-blue-600'}`}
+        style={endAction ? { paddingRight: '8.5rem' } : undefined}
         {...props}
       />
       {endAction}

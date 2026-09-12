@@ -66,6 +66,8 @@ public class InstituteService {
         validateRegistrationRequest(request);
         validateUniqueness(request);
 
+        authService.requireEmailVerification(request.getEmail(), "COLLEGE");
+
         Institute savedInstitute = saveWithInstitutionCodeRetry(request);
         platformProvisioningService.provisionTrial(savedInstitute.getId());
         UserAccount account = authService.syncAdminAccount(savedInstitute);
@@ -80,6 +82,7 @@ public class InstituteService {
     public InstituteResponse createInstituteFromPlatform(RegisterInstituteRequest request) {
         validateRegistrationRequest(request);
         validateUniqueness(request);
+        authService.requireEmailVerification(request.getEmail(), "COLLEGE");
         Institute savedInstitute = saveWithInstitutionCodeRetry(request);
         platformProvisioningService.provisionTrial(savedInstitute.getId());
         authService.syncAdminAccount(savedInstitute);
@@ -109,10 +112,14 @@ public class InstituteService {
         return instituteMapper.toResponse(institute);
     }
 
+    @Transactional
     public InstituteResponse updateInstitute(Long id, UpdateInstituteRequest request) {
         Institute institute = instituteRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Institute not found with id: " + id));
 
+        if (!com.erp.backend.auth.EmailVerificationService.normalize(institute.getEmail()).equals(com.erp.backend.auth.EmailVerificationService.normalize(request.getEmail()))) {
+            authService.requireEmailVerification(request.getEmail(), "COLLEGE");
+        }
         institute.setInstituteName(normalizeUppercase(request.getInstituteName()));
         institute.setType(normalizeUppercase(request.getType()));
         institute.setAffiliationNo(normalizeUppercase(request.getAffiliationNo()));

@@ -1,3 +1,5 @@
+import { emailVerificationHeaders } from './emailVerification';
+
 const resolveApiBaseUrl = () => {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim() || 'http://localhost:8080/api';
   const trimmedUrl = configuredUrl.replace(/\/+$/, '');
@@ -116,6 +118,10 @@ async function requestWithAuth(path, options = {}, allowRefresh) {
     throw new Error('Session expired. Please login again before saving.');
   }
   const headers = new Headers(options.headers || {});
+  if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase())) {
+    const proofs = emailVerificationHeaders();
+    if (proofs) headers.set('X-Email-Verification', proofs);
+  }
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json');
   }

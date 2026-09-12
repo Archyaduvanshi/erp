@@ -65,6 +65,8 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         }
         String path = request.getRequestURI();
         return path.equals("/api/health")
+                || path.equals("/api/auth/email/send")
+                || path.equals("/api/auth/email/verify")
                 || path.equals("/api/settings/login")
                 || path.equals("/api/auth/refresh")
                 || path.equals("/api/auth/logout")

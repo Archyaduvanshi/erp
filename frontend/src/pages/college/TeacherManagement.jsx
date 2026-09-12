@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import EmailOtpField from '../../components/EmailOtpField';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -946,7 +947,7 @@ const TeacherWizard = ({
           <div className="mt-8 grid gap-5 md:grid-cols-2">
             <CreativeInput label="First Name" value={formData.firstName} onChange={updateUpperField('firstName')} placeholder="ENTER TEACHER FIRST NAME" />
             <CreativeInput label="Last Name (Optional)" value={formData.lastName} onChange={updateUpperField('lastName')} placeholder="ENTER TEACHER LAST NAME IF AVAILABLE" />
-            <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value.trim().toUpperCase() })} placeholder="ENTER UNIQUE EMAIL ADDRESS" />
+            <EmailOtpField email={formData.personalEmail} purpose="TEACHER">{(endAction) => <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value.trim().toUpperCase() })} placeholder="ENTER UNIQUE EMAIL ADDRESS" endAction={endAction} />}</EmailOtpField>
             <CreativeInput label="Mobile Number" value={formData.mobileNumber} onChange={updateDigitsField('mobileNumber', 10)} placeholder="ENTER 10 DIGIT MOBILE NUMBER" inputMode="numeric" maxLength={10} />
             <CreativeInput label="Date Of Birth" type="date" value={formData.dob} onChange={(e) => setFormData({ ...formData, dob: e.target.value })} />
             <CreativeInput
@@ -1296,13 +1297,17 @@ const FormHeader = ({ eyebrow, title, desc }) => (
   </div>
 );
 
-const CreativeInput = ({ label, ...props }) => (
+const CreativeInput = ({ label, endAction, ...props }) => (
   <div className="space-y-2.5">
     <label className="text-xs font-black uppercase tracking-[0.18em] text-slate-700">{label}</label>
+    <div className="relative">
     <input
       className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-3.5 text-sm font-semibold uppercase text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+      style={endAction ? { paddingRight: '8.5rem' } : undefined}
       {...props}
     />
+    {endAction}
+    </div>
   </div>
 );
 
@@ -1609,7 +1614,7 @@ function TeacherDetailView({
               <div className="mt-5 grid gap-5 md:grid-cols-2">
                 <CreativeInput label="First Name" value={formData.firstName} onChange={updateUpperField('firstName')} placeholder="ENTER TEACHER FIRST NAME" />
                 <CreativeInput label="Last Name (Optional)" value={formData.lastName} onChange={updateUpperField('lastName')} placeholder="ENTER TEACHER LAST NAME IF AVAILABLE" />
-                <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value.trim().toUpperCase() })} placeholder="ENTER UNIQUE EMAIL ADDRESS" />
+                <EmailOtpField email={formData.personalEmail} purpose="TEACHER" disabled={!(String(formData.personalEmail || '').trim().toLowerCase() !== String(teacher.personalEmail || '').trim().toLowerCase())}>{(endAction) => <CreativeInput label="Personal Email" type="email" value={formData.personalEmail} onChange={(e) => setFormData({ ...formData, personalEmail: e.target.value.trim().toUpperCase() })} placeholder="ENTER UNIQUE EMAIL ADDRESS" endAction={endAction} />}</EmailOtpField>
                 <CreativeInput label="Mobile Number" value={formData.mobileNumber} onChange={updateDigitsField('mobileNumber', 10)} placeholder="ENTER 10 DIGIT MOBILE NUMBER" inputMode="numeric" maxLength={10} />
                 <CreativeInput label="Date Of Birth" type="date" value={formData.dob} onChange={(e) => setFormData({ ...formData, dob: e.target.value })} />
                 <CreativeInput label="Experience Years" value={formData.experienceYears} onChange={updateDigitsField('experienceYears', 2)} placeholder="ENTER EXPERIENCE IN YEARS" inputMode="numeric" maxLength={2} />

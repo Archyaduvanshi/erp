@@ -390,9 +390,9 @@ public class ReportAnalyticsService {
                     from attendance_entries e
                     join attendance_sessions s on s.id = e.attendance_session_id
                     where s.institute_id = :instituteId
-                      and (:sessionId is null or s.academic_session_id = :sessionId)
-                      and (:classId is null or s.class_id = :classId)
-                      and (:sectionId is null or s.section_id = :sectionId)
+                      and (cast(:sessionId as bigint) is null or s.academic_session_id = cast(:sessionId as bigint))
+                      and (cast(:classId as bigint) is null or s.class_id = cast(:classId as bigint))
+                      and (cast(:sectionId as bigint) is null or s.section_id = cast(:sectionId as bigint))
                     group by e.student_id
                     having round(((count(e.id) filter (where lower(e.status) in ('present', 'p', 'late', 'half day', 'half_day', 'half'))::numeric / nullif(count(e.id), 0)) * 100), 2) < :threshold
                 ) low_students
@@ -406,10 +406,10 @@ public class ReportAnalyticsService {
                 join attendance_sessions s on s.id = e.attendance_session_id
                 where s.institute_id = :instituteId
                   and lower(e.status) in ('absent', 'a')
-                  and (:sessionId is null or s.academic_session_id = :sessionId)
-                  and (:classId is null or s.class_id = :classId)
-                  and (:sectionId is null or s.section_id = :sectionId)
-                  and (:date is null or s.attendance_date = :date)
+                  and (cast(:sessionId as bigint) is null or s.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:classId as bigint) is null or s.class_id = cast(:classId as bigint))
+                  and (cast(:sectionId as bigint) is null or s.section_id = cast(:sectionId as bigint))
+                  and (cast(:date as date) is null or s.attendance_date = cast(:date as date))
                 """, params("instituteId", instituteId, "sessionId", sessionId, "classId", classId, "sectionId", sectionId, "date", date));
     }
 
@@ -721,12 +721,12 @@ public class ReportAnalyticsService {
                 from attendance_entries e
                 join attendance_sessions s on s.id = e.attendance_session_id
                 where s.institute_id = :instituteId
-                  and (:sessionId is null or s.academic_session_id = :sessionId)
-                  and (:classId is null or s.class_id = :classId)
-                  and (:sectionId is null or s.section_id = :sectionId)
-                  and (:studentId is null or e.student_id = :studentId)
-                  and (:dateFrom is null or s.attendance_date >= :dateFrom)
-                  and (:dateTo is null or s.attendance_date <= :dateTo)
+                  and (cast(:sessionId as bigint) is null or s.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:classId as bigint) is null or s.class_id = cast(:classId as bigint))
+                  and (cast(:sectionId as bigint) is null or s.section_id = cast(:sectionId as bigint))
+                  and (cast(:studentId as bigint) is null or e.student_id = cast(:studentId as bigint))
+                  and (cast(:dateFrom as date) is null or s.attendance_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or s.attendance_date <= cast(:dateTo as date))
                 """, params("instituteId", instituteId, "sessionId", sessionId, "classId", classId, "sectionId", sectionId, "studentId", studentId, "dateFrom", from, "dateTo", to),
                 "totalRecords", "present", "absent", "halfDay", "leave");
         row.put("attendancePercentage", percent(number(row.get("present")).add(number(row.get("halfDay")).multiply(BigDecimal.valueOf(0.5))), number(row.get("totalRecords"))));
@@ -747,11 +747,11 @@ public class ReportAnalyticsService {
                 join attendance_sessions s on s.id = e.attendance_session_id
                 left join school_classes c on c.id = s.class_id
                 where s.institute_id = :instituteId
-                  and (:sessionId is null or s.academic_session_id = :sessionId)
-                  and (:classId is null or s.class_id = :classId)
-                  and (:sectionId is null or s.section_id = :sectionId)
-                  and (:dateFrom is null or s.attendance_date >= :dateFrom)
-                  and (:dateTo is null or s.attendance_date <= :dateTo)
+                  and (cast(:sessionId as bigint) is null or s.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:classId as bigint) is null or s.class_id = cast(:classId as bigint))
+                  and (cast(:sectionId as bigint) is null or s.section_id = cast(:sectionId as bigint))
+                  and (cast(:dateFrom as date) is null or s.attendance_date >= cast(:dateFrom as date))
+                  and (cast(:dateTo as date) is null or s.attendance_date <= cast(:dateTo as date))
                 group by label
                 order by label
                 """.formatted(bucket), params("instituteId", instituteId, "sessionId", sessionId, "classId", classId, "sectionId", sectionId, "dateFrom", from, "dateTo", to),
@@ -771,9 +771,9 @@ public class ReportAnalyticsService {
                 join students st on st.id = e.student_id and st.institute_id = s.institute_id
                 left join school_classes c on c.id = s.class_id
                 where s.institute_id = :instituteId
-                  and (:sessionId is null or s.academic_session_id = :sessionId)
-                  and (:classId is null or s.class_id = :classId)
-                  and (:sectionId is null or s.section_id = :sectionId)
+                  and (cast(:sessionId as bigint) is null or s.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:classId as bigint) is null or s.class_id = cast(:classId as bigint))
+                  and (cast(:sectionId as bigint) is null or s.section_id = cast(:sectionId as bigint))
                 group by e.student_id, studentName, className
                 having round(((count(e.id) filter (where lower(e.status) in ('present', 'p', 'late', 'half day', 'half_day', 'half'))::numeric / nullif(count(e.id), 0)) * 100), 2) < :threshold
                 order by percentage asc
@@ -794,10 +794,10 @@ public class ReportAnalyticsService {
                 left join school_classes c on c.id = s.class_id
                 where s.institute_id = :instituteId
                   and lower(e.status) in ('absent', 'a')
-                  and (:sessionId is null or s.academic_session_id = :sessionId)
-                  and (:classId is null or s.class_id = :classId)
-                  and (:sectionId is null or s.section_id = :sectionId)
-                  and (:date is null or s.attendance_date = :date)
+                  and (cast(:sessionId as bigint) is null or s.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:classId as bigint) is null or s.class_id = cast(:classId as bigint))
+                  and (cast(:sectionId as bigint) is null or s.section_id = cast(:sectionId as bigint))
+                  and (cast(:date as date) is null or s.attendance_date = cast(:date as date))
                 order by s.attendance_date desc, studentName
                 limit :limit offset :offset
                 """, params("instituteId", instituteId, "sessionId", sessionId, "classId", classId, "sectionId", sectionId, "date", date, "limit", pageSize(pageable), "offset", offset(pageable)),

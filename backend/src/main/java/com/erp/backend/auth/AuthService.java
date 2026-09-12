@@ -63,6 +63,7 @@ public class AuthService {
     private final PlanLimitService planLimitService;
     private final long refreshDays;
     private final boolean exposeResetToken;
+    private final EmailVerificationService emailVerification;
 
     public AuthService(
             UserAccountRepository userAccountRepository,
@@ -78,6 +79,7 @@ public class AuthService {
             PasswordResetDeliveryService passwordResetDeliveryService,
             EntitlementService entitlementService,
             PlanLimitService planLimitService,
+            EmailVerificationService emailVerification,
             @Value("${app.auth.refresh-token-days:14}") long refreshDays,
             @Value("${app.auth.expose-reset-token:false}") boolean exposeResetToken
     ) {
@@ -94,6 +96,7 @@ public class AuthService {
         this.passwordResetDeliveryService = passwordResetDeliveryService;
         this.entitlementService = entitlementService;
         this.planLimitService = planLimitService;
+        this.emailVerification = emailVerification;
         this.refreshDays = refreshDays;
         this.exposeResetToken = exposeResetToken;
     }
@@ -233,18 +236,19 @@ public class AuthService {
         rateLimiterService.check("forgot-password-ip", ipAddress, 10, Duration.ofMinutes(10));
         LoginIdentifier loginIdentifier = resolveLoginIdentifier(institutionCode, identifier);
         List<UserAccount> accounts = accountsForPasswordReset(loginIdentifier);
-        String message = "If an account matches, a reset link has been prepared.";
+        String message = "Unable to continue. Check your institution code, login identifier and verified registered email.";
         if (accounts.size() != 1) {
             return new ForgotPasswordResponse(message, null);
         }
+        emailVerification.require(passwordResetDeliveryService.emailFor(accounts.get(0)), "PASSWORD_RESET");
         String token = randomToken();
         PasswordResetToken resetToken = new PasswordResetToken();
         resetToken.setAccount(accounts.get(0));
         resetToken.setTokenHash(hash(token));
         resetToken.setExpiresAt(LocalDateTime.now().plus(RESET_TOKEN_DURATION));
         passwordResetTokenRepository.save(resetToken);
-        passwordResetDeliveryService.deliver(accounts.get(0), token);
-        return new ForgotPasswordResponse(message, exposeResetToken ? token : null);
+        // Return the reset capability only after proving ownership of the registered inbox.
+        return new ForgotPasswordResponse("Email verified. You can now choose a new password.", token);
     }
 
     @Transactional
@@ -505,6 +509,10 @@ public class AuthService {
 
     public static String normalizeIdentifier(String value) {
         return StringUtils.hasText(value) ? value.trim().toLowerCase() : "";
+    }
+
+    public void requireEmailVerification(String email, String purpose) {
+        emailVerification.require(email, purpose);
     }
 
     public String generateTemporaryPassword() {

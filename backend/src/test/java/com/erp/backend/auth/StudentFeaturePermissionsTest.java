@@ -24,7 +24,7 @@ class StudentFeaturePermissionsTest {
                 mock(PasswordResetTokenRepository.class), mock(InstituteRepository.class), mock(TeacherRepository.class),
                 mock(StudentRepository.class), mock(FeatureAccessRepository.class), mock(PasswordEncoder.class),
                 mock(JwtTokenService.class), mock(RateLimiterService.class), mock(PasswordResetDeliveryService.class),
-                entitlements, mock(PlanLimitService.class), 14L, false);
+                entitlements, mock(PlanLimitService.class), mock(EmailVerificationService.class), 14L, false);
         var response = service.me(new AuthPrincipal(8L, 4L, "STUDENT", null, 2L, "student", false));
         assertEquals(permissions, response.permissions());
         verify(entitlements).effectivePermissions(4L);

@@ -309,6 +309,9 @@ public class TeacherService {
         teacher.setFirstName(upper(request.firstName()));
         teacher.setLastName(upper(request.lastName()));
         teacher.setName(buildTeacherName(teacher.getFirstName(), teacher.getLastName()));
+        if (teacher.getId() == null || !com.erp.backend.auth.EmailVerificationService.normalize(teacher.getPersonalEmail()).equals(com.erp.backend.auth.EmailVerificationService.normalize(request.personalEmail()))) {
+            authService.requireEmailVerification(request.personalEmail(), "TEACHER");
+        }
         teacher.setPersonalEmail(normalizeEmail(request.personalEmail()));
         teacher.setMobileNumber(digitsOnly(request.mobileNumber()));
         teacher.setEmployeeId(resolveEmployeeId(teacher, request));

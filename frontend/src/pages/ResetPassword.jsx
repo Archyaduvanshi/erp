@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, GraduationCap, Lock, ShieldCheck } from 'lucide-react';
 import { authApi } from '../utils/api';
 
@@ -8,8 +8,9 @@ const PASSWORD_MESSAGE = 'Password must be at least 8 characters with uppercase,
 
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const [formData, setFormData] = useState({
-    token: searchParams.get('token') || '',
+    token: location.state?.resetToken || searchParams.get('token') || '',
     newPassword: '',
     confirmPassword: '',
   });
@@ -59,13 +60,13 @@ const ResetPassword = () => {
         {isSuccess && <StatusPanel tone="success" icon={CheckCircle2} text="Password updated. You can login with the new password now." />}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <InputGroup
+          {!location.state?.resetToken && <InputGroup
             label="Reset Token"
             icon={ShieldCheck}
             value={formData.token}
             onChange={(event) => setFormData((current) => ({ ...current, token: event.target.value.trim() }))}
             required
-          />
+          />}
           <PasswordInput
             label="New Password"
             value={formData.newPassword}

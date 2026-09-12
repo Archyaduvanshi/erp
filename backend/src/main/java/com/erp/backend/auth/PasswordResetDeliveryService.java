@@ -94,7 +94,7 @@ public class PasswordResetDeliveryService {
         return payload;
     }
 
-    private String emailFor(UserAccount account) {
+    public String emailFor(UserAccount account) {
         if ("TEACHER".equals(account.getRole()) && account.getTeacherId() != null) {
             return teacherRepository.findByInstituteIdAndId(account.getInstitute().getId(), account.getTeacherId())
                     .map(teacher -> teacher.getPersonalEmail())
