@@ -102,6 +102,13 @@ public class AuthController {
         authCookieSupport.clearRefreshCookie(response);
     }
 
+    @PostMapping("/password/change/otp")
+    public java.util.Map<String, Object> sendPasswordChangeOtp(@AuthenticationPrincipal AuthPrincipal principal,
+            @Valid @RequestBody ChangePasswordRequest request, HttpServletRequest servletRequest) {
+        return authService.sendPasswordChangeOtp(principal, request.currentPassword(), request.newPassword(),
+                request.confirmPassword(), clientIpResolver.resolve(servletRequest));
+    }
+
     @PostMapping("/password/forgot")
     public ForgotPasswordResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request, HttpServletRequest servletRequest) {
         return authService.forgotPassword(request.institutionCode(), request.username(), clientIpResolver.resolve(servletRequest));

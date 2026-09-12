@@ -120,7 +120,7 @@ async function requestWithAuth(path, options = {}, allowRefresh) {
   const headers = new Headers(options.headers || {});
   if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase())) {
     const proofs = emailVerificationHeaders();
-    if (proofs) headers.set('X-Email-Verification', proofs);
+    if (proofs && !headers.has('X-Email-Verification')) headers.set('X-Email-Verification', proofs);
   }
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json');
@@ -391,9 +391,15 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  changePassword: (payload) =>
+  sendPasswordChangeOtp: (payload) =>
+    request('/auth/password/change/otp', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  changePassword: (payload, proof) =>
     request('/auth/password/change', {
       method: 'POST',
+      headers: proof ? { 'X-Email-Verification': proof } : {},
       body: JSON.stringify(payload),
     }),
   logout: async () => {

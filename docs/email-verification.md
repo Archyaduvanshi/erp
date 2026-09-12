@@ -30,6 +30,8 @@ The existing platform-managed college registration policy is preserved. No new p
 
 Forgot password: enter institution code, login identifier and registered email, send/verify OTP, then continue to choose a password. Only proof for the email stored on that account authorizes reset. Reset tokens are returned only after verification and passed to the reset page through router state, not displayed as development tokens.
 
+Student/teacher first login: enter current, new and confirm password, then Update Password sends an OTP to the account's registered email. Passwords remain unchanged until Verify succeeds and the backend consumes a PASSWORD_CHANGE proof. The destination is resolved on the server. Incorrect current passwords do not send OTP. Registration or password-reset proofs cannot authorize this change. Resend uses the same cooldown/limits; successful change clears the first-login flag and revokes sessions. Existing email-provider environment variables are reused; no new mail settings are required.
+
 OTP expires after 5 minutes; verification allows 5 attempts. Sending is limited to once per 60 seconds and 5 per email per hour, using database-backed limits. IP limits also apply. Codes are hashed with the password encoder. A successful verification returns an unpredictable proof valid for 30 minutes, bound to normalized email and purpose. Saves consume it atomically in the business transaction. Resending invalidates older challenges/proofs for that email and purpose. Proofs stay in browser memory only.
 
 Flyway V48 creates email_verifications. No existing emails are automatically marked verified. This verifies inbox access, not a person's identity. Sensitive-admin step-up checks are not included in the latest requested scope.

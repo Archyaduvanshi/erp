@@ -226,7 +226,8 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         if (path.equals("/api/auth/me")
                 || path.equals("/api/auth/refresh")
                 || path.equals("/api/auth/logout")
-                || path.equals("/api/auth/password/change")) {
+                || path.equals("/api/auth/password/change")
+                || path.equals("/api/auth/password/change/otp")) {
             return;
         }
         throw new IllegalArgumentException("Password change is required before continuing.");

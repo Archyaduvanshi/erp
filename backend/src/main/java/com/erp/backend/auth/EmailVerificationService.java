@@ -16,7 +16,7 @@ public class EmailVerificationService {
     private final OtpEmailDeliveryService mail;
     private final RateLimiterService limiter;
     private final SecureRandom random = new SecureRandom();
-    private static final Set<String> PURPOSES = Set.of("COLLEGE", "STUDENT", "TEACHER", "PASSWORD_RESET");
+    private static final Set<String> PURPOSES = Set.of("COLLEGE", "STUDENT", "TEACHER", "PASSWORD_RESET", "PASSWORD_CHANGE");
 
     public EmailVerificationService(JdbcTemplate jdbc, PasswordEncoder encoder, OtpEmailDeliveryService mail, RateLimiterService limiter) {
         this.jdbc = jdbc; this.encoder = encoder; this.mail = mail; this.limiter = limiter;

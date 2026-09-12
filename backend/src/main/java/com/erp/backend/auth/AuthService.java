@@ -222,6 +222,9 @@ public class AuthService {
         if (!passwordEncoder.matches(currentPassword, account.getPasswordHash())) {
             throw new FieldValidationException("Current password is incorrect.", Map.of("currentPassword", "Current password is incorrect."));
         }
+        if (requiresFirstLoginOtp(account)) {
+            emailVerification.require(passwordResetDeliveryService.emailFor(account), "PASSWORD_CHANGE");
+        }
         account.setPasswordHash(passwordEncoder.encode(newPassword));
         account.setMustChangePassword(false);
         account.setPasswordChangedAt(LocalDateTime.now());
@@ -229,6 +232,32 @@ public class AuthService {
         account.setLockedUntil(null);
         userAccountRepository.save(account);
         revokeAll(account.getId());
+    }
+
+    @Transactional
+    public Map<String, Object> sendPasswordChangeOtp(AuthPrincipal principal, String currentPassword,
+            String newPassword, String confirmPassword, String ipAddress) {
+        rateLimiterService.check("password-change-otp", String.valueOf(principal.accountId()), 10, Duration.ofMinutes(10));
+        validateNewPassword(newPassword, confirmPassword);
+        UserAccount account = userAccountRepository.findByIdForUpdate(principal.accountId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authenticated account no longer exists."));
+        if (!requiresFirstLoginOtp(account)) {
+            throw new IllegalArgumentException("First-login password verification is not required for this account.");
+        }
+        if (!passwordEncoder.matches(currentPassword, account.getPasswordHash())) {
+            throw new FieldValidationException("Current password is incorrect.", Map.of("currentPassword", "Current password is incorrect."));
+        }
+        // The destination comes only from the authenticated account, never from client input.
+        String email = EmailVerificationService.normalize(passwordResetDeliveryService.emailFor(account));
+        if (email.isBlank()) throw new IllegalArgumentException("No registered email found. Contact your college administrator.");
+        var result = new java.util.HashMap<String, Object>(emailVerification.send(email, "PASSWORD_CHANGE", ipAddress));
+        int at = email.indexOf('@');
+        result.put("maskedEmail", at > 0 ? email.substring(0, 1) + "***" + email.substring(at) : "your registered email");
+        return result;
+    }
+
+    private boolean requiresFirstLoginOtp(UserAccount account) {
+        return account.isMustChangePassword() && ("STUDENT".equals(account.getRole()) || "TEACHER".equals(account.getRole()));
     }
 
     @Transactional
