@@ -58,7 +58,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   useEffect(() => {
-    const path = window.location?.pathname || '/';
+    const path = window.location?.pathname.replace(/\/+$/, '') || '/';
     if (PUBLIC_AUTH_PATHS.has(path) || path.startsWith('/platform')) {
       setIsLoading(false);
       return;

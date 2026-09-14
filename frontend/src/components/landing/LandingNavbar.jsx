@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { Menu, X } from 'lucide-react';
 import { Brand, TrialLink } from './LandingShared';
 
-const links = ['Features', 'Solutions', 'Pricing', 'Security', 'FAQ', 'Contact'];
+const links = ['Features', 'Solutions', 'Security', 'Pricing', 'FAQ', 'Contact'];
 export default function LandingNavbar() {
   const [active, setActive] = useState('');
   const dialog = useRef(null);
@@ -19,7 +19,10 @@ export default function LandingNavbar() {
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   };
-  useEffect(() => () => { if (dialog.current?.open) document.body.style.overflow = savedOverflow.current; }, []);
+  useEffect(() => {
+    const menu = dialog.current;
+    return () => { if (menu?.open) document.body.style.overflow = savedOverflow.current; };
+  }, []);
   useEffect(() => { dialog.current?.close(); }, [location]);
   useEffect(() => {
     const observer = new IntersectionObserver(entries => {

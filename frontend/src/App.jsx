@@ -85,7 +85,8 @@ const PlatformGateways = lazy(() => import('./pages/platform/GatewayPage'));
 
 function App() {
   useEffect(() => {
-    if (!['/', '/privacy', '/terms', '/register'].includes(window.location.pathname)) warmApi();
+    const path = window.location.pathname.replace(/\/+$/, '') || '/';
+    if (!['/', '/privacy', '/terms', '/register'].includes(path)) warmApi();
   }, []);
 
   return (

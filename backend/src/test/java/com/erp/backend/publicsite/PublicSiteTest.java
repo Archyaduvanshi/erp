@@ -88,6 +88,17 @@ class PublicSiteTest {
         assertEquals("3600",response.getHeader("Retry-After"));
     }
 
+    @Test void oversizedChunkedBodyIsRejectedBeforeValidation() throws Exception {
+        var filter=new PublicRequestFilter(mock(PublicRateLimitService.class),new ClientIpResolver(""));
+        var request=new MockHttpServletRequest("POST","/api/public/demo-requests") {
+            @Override public long getContentLengthLong() { return -1; }
+        };
+        request.setContent(new byte[32769]);
+        var response=new MockHttpServletResponse();
+        filter.doFilter(request,response,(req,res)->fail("Oversized body must not reach controller"));
+        assertEquals(413,response.getStatus());
+    }
+
     @Test void supportMailFailureKeepsRequestAndSchedulesRetry() {
         var jdbc=mock(JdbcTemplate.class);
         var catalog=mock(PublicCatalogService.class);

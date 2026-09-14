@@ -6,7 +6,7 @@ const api = base.endsWith('/api') ? base : `${base}/api`;
 // Public requests deliberately do not attach sessions, tokens, or refresh interceptors.
 export async function publicRequest(path, options = {}) {
   const response = await fetch(`${api}/public/${path}`, {
-    credentials: 'omit', signal: AbortSignal.timeout(15000), ...options,
+    credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(15000), ...options,
     headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
   });
   const body = await response.json().catch(() => ({}));
@@ -19,5 +19,5 @@ export async function publicRequest(path, options = {}) {
 }
 
 export const usePublicConfig = () => useQuery({
-  queryKey: ['public', 'config'], queryFn: () => publicRequest('config'), staleTime: 60000, retry: false,
+  queryKey: ['public', 'config'], queryFn: () => publicRequest('config'), staleTime: 0, retry: false,
 });

@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class PublicSecurityTest {
     @Configuration @EnableWebMvc @Import(SecurityConfig.class)
+    @org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
     static class TestConfiguration {
         @Bean PublicRateLimitService limiter() { return mock(PublicRateLimitService.class); }
         @Bean ClientIpResolver ipResolver() { return new ClientIpResolver(""); }
@@ -37,6 +38,11 @@ class PublicSecurityTest {
             var mvc=MockMvcBuilders.webAppContextSetup(context).addFilters(context.getBean(FilterChainProxy.class)).build();
             mvc.perform(get("/api/public/plans").header("Authorization","Bearer stale-token")).andExpect(status().isOk()).andExpect(content().json("[]"));
             mvc.perform(get("/api/public/config")).andExpect(status().isOk()).andExpect(jsonPath("$.registrationEnabled").value(false)).andExpect(jsonPath("$.defaultPlan").doesNotExist());
+            var demo=new PublicDtos.DemoRequest("Visitor","School","visitor@example.test","1234567890","School","",100,"Demo","",System.currentTimeMillis()-5000);
+            mvc.perform(post("/api/public/demo-requests").header("Authorization","Bearer stale-token")
+                    .contentType("application/json").content(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(demo)))
+                    .andExpect(status().isAccepted());
+            verify(context.getBean(DemoRequestService.class)).submit(argThat(value->value.name().equals("Visitor")));
             for(String path:List.of("/api/platform/plans","/api/platform/settings","/api/students","/api/public/demo-requests","/api/public/private"))
                 mvc.perform(get(path)).andExpect(status().isUnauthorized());
             mvc.perform(delete("/api/public/plans")).andExpect(status().isUnauthorized());

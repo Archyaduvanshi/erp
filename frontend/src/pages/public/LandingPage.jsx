@@ -14,5 +14,5 @@ import '../../components/landing/landing.css';
 export default function LandingPage() {
   const { hash } = useLocation();
   useEffect(() => { if (hash) document.getElementById(hash.slice(1))?.scrollIntoView(); }, [hash]);
-  return <div className="landing"><a className="landing-skip" href="#main">Skip to content</a><LandingNavbar /><main id="main"><HeroSection /><TrustStrip /><ProblemSolutionSection /><ModulesSection /><HowItWorksSection /><RoleSection /><MultiTenantSection /><SecuritySection /><PerformanceSection /><PricingSection /><ProductPreviewSection /><ReportingSection /><WhySection /><FAQSection /><DemoSection /><FinalCTA /></main><LandingFooter /></div>;
+  return <div className="landing"><a className="landing-skip" href="#main">Skip to content</a><LandingNavbar /><main id="main"><HeroSection /><TrustStrip /><ProblemSolutionSection /><ModulesSection /><HowItWorksSection /><RoleSection /><MultiTenantSection /><SecuritySection /><PricingSection /><PerformanceSection /><ProductPreviewSection /><ReportingSection /><WhySection /><FAQSection /><DemoSection /><FinalCTA /></main><LandingFooter /></div>;
 }

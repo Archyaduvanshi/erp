@@ -1,5 +1,5 @@
 import { Building2, ShieldCheck, Cloud, SlidersHorizontal, BarChart3, Check, ArrowRight, Users, GraduationCap, BookOpen, LockKeyhole, Fingerprint, ScrollText, Search, Layers, Gauge, QrCode } from 'lucide-react';
-import { SectionHeading, TrialLink } from './LandingShared';
+import { SectionHeading } from './LandingShared';
 
 export function TrustStrip() {
   return <div className="landing-trust"><div className="landing-container">{[[Building2, 'Multi-school ready', 'One platform, distinct institutions'], [ShieldCheck, 'Role-based access', 'Permissions for each responsibility'], [SlidersHorizontal, 'Modular features', 'Access matched to your plan'], [Cloud, 'Cloud-based', 'Your workspace in a browser'], [BarChart3, 'Connected reporting', 'A clearer view across departments']].map(([Icon, title, description]) => <div key={title}><Icon size={22} aria-hidden="true" /><strong>{title}</strong><span>{description}</span></div>)}</div></div>;
@@ -10,7 +10,7 @@ export function ProblemSolutionSection() {
 }
 
 export function HowItWorksSection() {
-  return <section className="landing-section"><div className="landing-container"><SectionHeading eyebrow="A CLEAR PATH TO YOUR NEW WORKSPACE" title="Get started in three simple steps" /><ol className="landing-steps">{[['Register your institute', 'Create your institution profile and verify your email to begin.'], ['Set up your plan and modules', 'Start with the configured trial. Discuss the right plan and modules as you grow.'], ['Bring your institution together', 'Add students and teachers, set up classes, and start using your enabled modules.']].map(([title, text], i) => <li key={title}><span className="step-number">0{i + 1}</span><h3>{title}</h3><p>{text}</p></li>)}</ol><div className="landing-step-footer"><span>Register <ArrowRight size={14} /> Set up institute <ArrowRight size={14} /> Add your people <ArrowRight size={14} /> Start managing</span><TrialLink /></div></div></section>;
+  return <section className="landing-section"><div className="landing-container"><SectionHeading eyebrow="A CLEAR PATH TO YOUR NEW WORKSPACE" title="Get started in three simple steps" /><ol className="landing-steps">{[['Register your institute', 'Create your institution profile and verify your email to begin.'], ['Set up your plan and modules', 'Start with the configured trial. Discuss the right plan and modules as you grow.'], ['Bring your institution together', 'Add students and teachers, set up classes, and start using your enabled modules.']].map(([title, text], i) => <li key={title}><span className="step-number">0{i + 1}</span><h3>{title}</h3><p>{text}</p></li>)}</ol><div className="landing-step-footer"><span>Register <ArrowRight size={14} /> Set up institute <ArrowRight size={14} /> Add your people <ArrowRight size={14} /> Start managing</span></div></div></section>;
 }
 
 export function RoleSection() {
@@ -39,5 +39,5 @@ export function WhySection() {
 }
 
 export function FinalCTA() {
-  return <section className="landing-final"><div className="landing-container"><div><p className="landing-eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2>Ready to simplify your institution management?</h2><p>Bring students, staff, fees, attendance, exams, transport and reporting into one platform.</p></div><div className="landing-cta-row"><TrialLink /><a href="#contact" className="landing-button secondary">Request Demo <ArrowRight size={17} /></a></div></div></section>;
+  return <section className="landing-final"><div className="landing-container"><div><p className="landing-eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2>Ready to simplify your institution management?</h2><p>Bring students, staff, fees, attendance, exams, transport and reporting into one platform.</p></div><div className="landing-cta-row"><a href="#contact" className="landing-button secondary">Request Demo <ArrowRight size={17} /></a></div></div></section>;
 }

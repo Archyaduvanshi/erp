@@ -78,9 +78,10 @@ test('pricing switches monthly/yearly and retains real limits', async ({ page })
 });
 
 for (const [name, overrides] of [['error', { planStatus: 503 }], ['empty', { plans: [] }]]) {
-  test(`plans ${name} state leaves page and demo usable`, async ({ page }) => {
+  test(`plans ${name} state hides pricing cards and keeps demo usable`, async ({ page }) => {
     await publicRoutes(page, overrides); await page.goto('/');
-    await expect(page.locator('#pricing')).toContainText('Contact us for plan details');
+    await expect(page.locator('#pricing')).toHaveAttribute('hidden', '');
+    await expect(page.locator('.landing-plan')).toHaveCount(0);
     await expect(page.locator('#contact').getByRole('button', { name: 'Request Demo' })).toBeVisible();
     await expect(page.locator('h1')).toBeVisible();
   });
@@ -97,22 +98,19 @@ test('pricing loading skeleton does not block hero', async ({ page }) => {
   await expect(page.getByRole('status', { name: 'Loading plans' })).toHaveCount(0);
 });
 
-test('registration disabled redirects trial CTAs to demo and guards direct registration', async ({ page }) => {
+test('registration disabled guards direct registration', async ({ page }) => {
   const requests = await publicRoutes(page, { config: { ...config, registrationEnabled: false } });
   await page.goto('/');
-  await expect(page.locator('.landing-hero .primary')).toHaveText('Request Demo');
-  await expect(page.locator('.landing-hero .primary')).toHaveAttribute('href', '/#contact');
   await page.goto('/register');
   await expect(page.getByText('Online registration is currently paused.', { exact: false })).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   expect(requests.every(path => path.startsWith('/api/public/'))).toBe(true);
 });
 
-test('trial and login links reach existing routes', async ({ page }) => {
+test('navbar demo and login links reach existing routes', async ({ page }) => {
   await publicRoutes(page); await page.goto('/');
-  await page.locator('.landing-hero').getByRole('link', { name: 'Start Free Trial' }).click();
-  await expect(page).toHaveURL(/\/register$/);
-  await expect(page.locator('input[type="password"]').first()).toBeVisible();
+  await page.locator('.landing-nav-actions').getByRole('link', { name: 'Request Free Demo' }).click();
+  await expect(page).toHaveURL(/#contact$/);
   await page.goto('/');
   await page.locator('.landing-login').click();
   await expect(page).toHaveURL(/\/login$/);

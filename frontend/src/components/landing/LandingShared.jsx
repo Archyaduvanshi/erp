@@ -3,13 +3,11 @@ import { ArrowRight, GraduationCap } from 'lucide-react';
 import { usePublicConfig } from '../../api/publicApi';
 
 export function Brand() {
-  return <Link className="landing-brand" to="/" aria-label="VidyantraErp home"><span className="landing-logo"><GraduationCap size={25} aria-hidden="true" /></span><span>Vidyantra<span className="brand-accent">Erp</span><small>SCHOOL & COLLEGE ERP</small></span></Link>;
+  return <Link className="landing-brand" to="/" aria-label="VidyantraErp School & College ERP home"><span className="landing-logo"><GraduationCap size={25} aria-hidden="true" /></span><span>Vidyantra<span className="brand-accent">Erp</span><small>SCHOOL & COLLEGE ERP</small></span></Link>;
 }
 
 export function TrialLink({ className = '', children }) {
-  const { data } = usePublicConfig();
-  const enabled = data?.registrationEnabled === true;
-  return <Link to={enabled ? '/register' : '/#contact'} className={`landing-button primary ${className}`}>{enabled ? children || 'Start Free Trial' : 'Request Demo'}<ArrowRight size={17} aria-hidden="true" /></Link>;
+  return <Link to="/#contact" className={`landing-button primary ${className}`}>{children || 'Request Free Demo'}<ArrowRight size={17} aria-hidden="true" /></Link>;
 }
 
 export function SectionHeading({ eyebrow, title, children }) {

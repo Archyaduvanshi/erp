@@ -1,6 +1,5 @@
 import { ArrowUpRight, Check, Users, ClipboardCheck, Wallet, CalendarDays, BookOpen, BarChart3, GraduationCap } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { TrialLink } from './LandingShared';
 
 export function DashboardPreview() {
   return <div className="landing-dashboard" aria-label="Illustrative ERP dashboard with sample data">
@@ -14,5 +13,5 @@ export function DashboardPreview() {
 }
 
 export default function HeroSection() {
-  return <section className="landing-container landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow"><span className="eyebrow-line" /> BUILT AROUND YOUR INSTITUTION</p><h1>Smart School &amp; College Management,<br /><span>All in One Place.</span></h1><p className="landing-hero-description">Less paperwork. More time for education. Bring students, staff, attendance, fees, examinations and everyday operations together in one connected ERP.</p><div className="landing-cta-row"><TrialLink /><a className="landing-button secondary" href="#contact">Request Demo <ArrowUpRight size={17} /></a></div><p className="landing-hero-note">Built for schools, colleges and growing educational institutions.</p><Link to="/login" className="landing-text-link">Already using VidyantraErp? Login <ArrowUpRight size={15} /></Link></div><div className="landing-hero-visual"><DashboardPreview /><p className="preview-caption">Product workflow preview · Illustrative data only</p></div></section>;
+  return <section className="landing-container landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow"><span className="eyebrow-line" /> BUILT AROUND YOUR INSTITUTION</p><h1>Smart School &amp; College Management,<br /><span>All in One Place.</span></h1><p className="landing-hero-description">Less paperwork. More time for education. Bring students, staff, attendance, fees, examinations and everyday operations together in one connected ERP.</p><div className="landing-cta-row"><a className="landing-button secondary" href="#contact">Request Demo <ArrowUpRight size={17} /></a></div><p className="landing-hero-note">Built for schools, colleges and growing educational institutions.</p><Link to="/login" className="landing-text-link">Already using VidyantraErp? Login <ArrowUpRight size={15} /></Link></div><div className="landing-hero-visual"><DashboardPreview /><p className="preview-caption">Product workflow preview · Illustrative data only</p></div></section>;
 }
