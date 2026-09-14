@@ -111,7 +111,7 @@ public class AuthController {
 
     @PostMapping("/password/forgot")
     public ForgotPasswordResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request, HttpServletRequest servletRequest) {
-        return authService.forgotPassword(request.institutionCode(), request.username(), clientIpResolver.resolve(servletRequest));
+        return authService.forgotPassword(request.email(), request.username(), clientIpResolver.resolve(servletRequest));
     }
 
     @PostMapping("/password/reset")

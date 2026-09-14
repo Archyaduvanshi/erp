@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface UserAccountRepository extends JpaRepository<UserAccount, Long> {
+    List<UserAccount> findAllByNormalizedLoginIdentifier(String normalizedLoginIdentifier);
     Optional<UserAccount> findByInstituteIdAndNormalizedLoginIdentifier(Long instituteId, String normalizedLoginIdentifier);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

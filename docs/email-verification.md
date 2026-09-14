@@ -28,7 +28,7 @@ Email fields in college creation, school-admin student/teacher creation, and pro
 
 The existing platform-managed college registration policy is preserved. No new public student/teacher signup endpoints are introduced.
 
-Forgot password: enter institution code, login identifier and registered email, send/verify OTP, then continue to choose a password. Only proof for the email stored on that account authorizes reset. Reset tokens are returned only after verification and passed to the reset page through router state, not displayed as development tokens.
+Forgot password: enter login identifier and registered email (no institution code), send/verify OTP, then continue to choose a password. The backend matches both identifier and registered email across institutions; ambiguous matches are rejected instead of selecting an arbitrary account. Only proof for the email stored on that account authorizes reset. Reset tokens are returned only after verification and passed to the reset page through router state, not displayed as development tokens.
 
 Student/teacher first login: enter current, new and confirm password, then Update Password sends an OTP to the account's registered email. Passwords remain unchanged until Verify succeeds and the backend consumes a PASSWORD_CHANGE proof. The destination is resolved on the server. Incorrect current passwords do not send OTP. Registration or password-reset proofs cannot authorize this change. Resend uses the same cooldown/limits; successful change clears the first-login flag and revokes sessions. Existing email-provider environment variables are reused; no new mail settings are required.
 

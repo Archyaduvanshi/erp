@@ -64,7 +64,8 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
             return true;
         }
         String path = request.getRequestURI();
-        return path.equals("/api/health")
+        return com.erp.backend.publicsite.PublicRequestFilter.isPublicRequest(request.getMethod(), path)
+                || path.equals("/api/health")
                 || path.equals("/api/auth/email/send")
                 || path.equals("/api/auth/email/verify")
                 || path.equals("/api/settings/login")

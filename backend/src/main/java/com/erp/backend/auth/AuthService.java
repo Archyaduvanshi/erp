@@ -261,11 +261,15 @@ public class AuthService {
     }
 
     @Transactional
-    public ForgotPasswordResponse forgotPassword(String institutionCode, String identifier, String ipAddress) {
+    public ForgotPasswordResponse forgotPassword(String email, String identifier, String ipAddress) {
         rateLimiterService.check("forgot-password-ip", ipAddress, 10, Duration.ofMinutes(10));
-        LoginIdentifier loginIdentifier = resolveLoginIdentifier(institutionCode, identifier);
-        List<UserAccount> accounts = accountsForPasswordReset(loginIdentifier);
-        String message = "Unable to continue. Check your institution code, login identifier and verified registered email.";
+        String registeredEmail = EmailVerificationService.normalize(email);
+        if (registeredEmail.isBlank()) throw new IllegalArgumentException("Registered email is required.");
+        List<UserAccount> accounts = userAccountRepository.findAllByNormalizedLoginIdentifier(normalizeIdentifier(identifier))
+                .stream()
+                .filter(account -> registeredEmail.equals(EmailVerificationService.normalize(passwordResetDeliveryService.emailFor(account))))
+                .toList();
+        String message = "Unable to identify a unique account. Check your login identifier and registered email, or contact your administrator.";
         if (accounts.size() != 1) {
             return new ForgotPasswordResponse(message, null);
         }
@@ -480,16 +484,6 @@ public class AuthService {
 
     private boolean activeStudentStatus(String status) {
         return !StringUtils.hasText(status) || "VERIFIED".equalsIgnoreCase(status) || "ACTIVE".equalsIgnoreCase(status);
-    }
-
-    private List<UserAccount> accountsForPasswordReset(LoginIdentifier loginIdentifier) {
-        if (loginIdentifier.institute() != null) {
-            return userAccountRepository
-                    .findByInstituteIdAndNormalizedLoginIdentifier(loginIdentifier.institute().getId(), normalizeIdentifier(loginIdentifier.accountIdentifier()))
-                    .stream()
-                    .toList();
-        }
-        return List.of();
     }
 
     private LoginIdentifier resolveLoginIdentifier(String institutionCode, String identifier) {

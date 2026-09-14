@@ -4,6 +4,9 @@ import { authApi, setAccessToken } from '../utils/api';
 const AuthContext = createContext(null);
 const PUBLIC_AUTH_PATHS = new Set([
   '/',
+  '/register',
+  '/privacy',
+  '/terms',
   '/login',
   '/forgot-password',
   '/reset-password',

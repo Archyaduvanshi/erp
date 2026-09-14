@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import EmailOtpField from '../components/EmailOtpField';
-import { AlertCircle, ArrowLeft, CheckCircle2, GraduationCap, Lock, ShieldCheck, User } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, GraduationCap, Lock, User } from 'lucide-react';
 import { authApi } from '../utils/api';
 
 const ForgotPassword = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
-  const [formData, setFormData] = useState({ institutionCode: '', username: '' });
+  const [formData, setFormData] = useState({ username: '' });
   const [error, setError] = useState('');
   const [response, setResponse] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,7 +19,7 @@ const ForgotPassword = () => {
     setIsSubmitting(true);
     try {
       const result = await authApi.forgotPassword({
-        institutionCode: formData.institutionCode.trim(),
+        email: email.trim(),
         username: formData.username.trim(),
       });
       setResponse(result);
@@ -36,24 +36,13 @@ const ForgotPassword = () => {
       {error && <StatusPanel tone="error" icon={AlertCircle} text={error} />}
       {response && (
         <StatusPanel
-          tone="success"
-          icon={CheckCircle2}
-          text={response.message || 'If the account exists, a reset link has been sent.'}
+          tone={response.resetToken ? 'success' : 'error'}
+          icon={response.resetToken ? CheckCircle2 : AlertCircle}
+          text={response.message || 'Check your login identifier and verified registered email.'}
         />
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <InputGroup
-          label="Institution Code"
-          icon={ShieldCheck}
-          placeholder="VICTOR"
-          value={formData.institutionCode}
-          onChange={(event) => setFormData((current) => ({
-            ...current,
-            institutionCode: event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20),
-          }))}
-          required
-        />
         <InputGroup
           label="Username / Enrollment ID / Teacher ID"
           icon={User}

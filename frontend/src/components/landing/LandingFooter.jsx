@@ -1,0 +1,5 @@
+import { Link } from 'react-router-dom';
+import { Brand, ContactLinks } from './LandingShared';
+export default function LandingFooter() {
+  return <footer className="landing-footer"><div className="landing-container"><div className="landing-footer-grid"><div><Brand /><p>One connected workspace for the people who make education happen.</p></div><nav aria-label="Product links"><h2>Product</h2><Link to="/#features">Features</Link><Link to="/#pricing">Pricing</Link><Link to="/login">Login</Link><Link to="/register">Register</Link></nav><nav aria-label="Company links"><h2>Company</h2><Link to="/#about">About VidyantraErp</Link><Link to="/#contact">Contact</Link><Link to="/privacy">Privacy Policy</Link><Link to="/terms">Terms of Service</Link></nav><div className="landing-support"><h2>Support</h2><ContactLinks /></div></div><div className="landing-footer-bottom"><span>© {new Date().getFullYear()} VidyantraErp. All rights reserved.</span><span>School &amp; College Management Software</span></div></div></footer>;
+}

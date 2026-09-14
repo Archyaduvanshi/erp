@@ -3,9 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import { LogOut } from 'lucide-react';
 import './index.css';
 
-import LandingPage from './components/LandingPage';
-import RegisterInstitute from './pages/RegisterInstitute';
-import Login from './pages/Login';
+import LandingPage from './pages/public/LandingPage';
+import PublicMetadata from './components/landing/PublicMetadata';
 import { warmApi } from './utils/api';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { PlatformAuthProvider, usePlatformAuth } from './context/PlatformAuthContext';
@@ -28,6 +27,11 @@ const FEATURE_ROUTE_MAP = {
 };
 
 const ComingSoonPage = lazy(() => import('./components/ComingSoonPage'));
+const RegisterInstitute = lazy(() => import('./pages/RegisterInstitute'));
+const PublicRegistration = lazy(() => import('./pages/public/PublicRegistration'));
+const PrivacyPage = lazy(() => import('./pages/public/PrivacyPage'));
+const TermsPage = lazy(() => import('./pages/public/TermsPage'));
+const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/college/Dashboard'));
 const StudentManagement = lazy(() => import('./pages/college/StudentManagement'));
 const TeacherManagement = lazy(() => import('./pages/college/TeacherManagement'));
@@ -81,17 +85,21 @@ const PlatformGateways = lazy(() => import('./pages/platform/GatewayPage'));
 
 function App() {
   useEffect(() => {
-    warmApi();
+    if (!['/', '/privacy', '/terms', '/register'].includes(window.location.pathname)) warmApi();
   }, []);
 
   return (
     <AuthProvider>
       <PlatformAuthProvider>
         <Router>
+        <PublicMetadata />
         <Suspense fallback={<RouteLoading />}>
           <Routes>
           {/* Public Landing Page */}
           <Route path="/" element={<LandingPage />} />  
+          <Route path="/register" element={<PublicRegistration />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />

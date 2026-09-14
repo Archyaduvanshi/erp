@@ -32,13 +32,14 @@ test('recovery verifies inline OTP and carries proof to reset request', async ({
       return route.fulfill({ json: { proof: 'test-proof', expiresIn: 1800 } });
     }
     if (path.endsWith('/auth/password/forgot')) {
+      expect(route.request().postDataJSON()).toEqual({ username: 'STU01', email: 'student@example.com' });
       proofHeader = route.request().headers()['x-email-verification'];
       return route.fulfill({ json: { message: 'Verified', resetToken: 'reset-capability' } });
     }
     return route.fulfill({ status: 401, json: { message: 'Not logged in' } });
   });
   await page.goto('/forgot-password');
-  await page.getByPlaceholder('VICTOR').fill('SCHOOL');
+  await expect(page.getByText('Institution Code', { exact: true })).toHaveCount(0);
   await page.getByPlaceholder('EMP0001 or STU0001').fill('STU01');
   await page.getByPlaceholder('Your account email').fill('student@example.com');
   await page.getByRole('button', { name: 'Send OTP', exact: true }).click();

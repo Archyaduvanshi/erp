@@ -29,7 +29,8 @@ public class SecurityConfig {
     );
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, AuthSecurityFilter authSecurityFilter) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, AuthSecurityFilter authSecurityFilter,
+            com.erp.backend.publicsite.PublicRateLimitService publicLimiter, ClientIpResolver clientIpResolver) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 .httpBasic(AbstractHttpConfigurer::disable)
@@ -41,11 +42,14 @@ public class SecurityConfig {
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(authSecurityFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new com.erp.backend.publicsite.PublicRequestFilter(publicLimiter, clientIpResolver), AuthSecurityFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/api/health").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/public/plans", "/api/public/config").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/demo-requests", "/api/institutes/register").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/email/send", "/api/auth/email/verify").permitAll()
                         .requestMatchers("/api/auth/refresh", "/api/auth/logout", "/api/auth/password/forgot", "/api/auth/password/reset").permitAll()
                         .requestMatchers("/api/settings/login").permitAll()

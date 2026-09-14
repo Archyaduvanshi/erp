@@ -31,6 +31,14 @@ public class InstituteController {
         this.instituteService = instituteService;
     }
 
+    @PostMapping("/register")
+    @ResponseStatus(HttpStatus.CREATED)
+    public InstituteAuthResponse registerInstitute(
+            @Valid @RequestBody com.erp.backend.institute.dto.RegisterInstituteRequest request,
+            HttpServletResponse response) {
+        return instituteService.registerInstitute(request, response);
+    }
+
     @PostMapping("/login")
     public InstituteAuthResponse loginInstitute(@Valid @RequestBody InstituteLoginRequest request, HttpServletRequest servletRequest, HttpServletResponse response) {
         return instituteService.loginInstitute(request, servletRequest, response);
