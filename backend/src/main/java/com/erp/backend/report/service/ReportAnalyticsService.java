@@ -420,13 +420,13 @@ public class ReportAnalyticsService {
                     select m.student_id
                     from student_marks m
                     where m.institute_id = :instituteId
-                      and (:sessionId is null or m.academic_session_id = :sessionId)
-                      and (:examId is null or m.exam_id = :examId)
-                      and (:classId is null or m.class_id = :classId)
+                      and (cast(:sessionId as bigint) is null or m.academic_session_id = cast(:sessionId as bigint))
+                      and (cast(:examId as bigint) is null or m.exam_id = cast(:examId as bigint))
+                      and (cast(:classId as bigint) is null or m.class_id = cast(:classId as bigint))
                       and m.max_marks > 0
                       and upper(coalesce(m.status, 'PRESENT')) not in ('EXEMPT', 'NOT_ENTERED')
                     group by m.student_id
-                    having (:lowOnly = false or round((sum(m.marks_obtained) / nullif(sum(m.max_marks), 0)) * 100, 2) < :passPercentage)
+                    having (cast(:lowOnly as boolean) = false or round((sum(m.marks_obtained) / nullif(sum(m.max_marks), 0)) * 100, 2) < :passPercentage)
                 ) ranked_students
                 """, params("instituteId", instituteId, "sessionId", sessionId, "examId", examId, "classId", classId, "lowOnly", lowOnly, "passPercentage", passPercentage));
     }
@@ -580,7 +580,7 @@ public class ReportAnalyticsService {
                 from class_timetables t
                 left join timetable_periods p on p.timetable_id = t.id
                 where t.institute_id = :instituteId
-                  and (:sessionId is null or t.academic_session_id = :sessionId)
+                  and (cast(:sessionId as bigint) is null or t.academic_session_id = cast(:sessionId as bigint))
                   and lower(coalesce(t.status, 'published')) = 'published'
                 """, params("instituteId", instituteId, "sessionId", sessionId), "timetables", "periods", "teachers");
         List<Map<String, Object>> byDay = grouped("""
@@ -588,7 +588,7 @@ public class ReportAnalyticsService {
                 from timetable_periods p
                 join class_timetables t on t.id = p.timetable_id
                 where t.institute_id = :instituteId
-                  and (:sessionId is null or t.academic_session_id = :sessionId)
+                  and (cast(:sessionId as bigint) is null or t.academic_session_id = cast(:sessionId as bigint))
                   and lower(coalesce(t.status, 'published')) = 'published'
                 group by label
                 order by label
@@ -645,7 +645,7 @@ public class ReportAnalyticsService {
                        greatest(coalesce(r.capacity, 0) - coalesce(count(res.id) filter (where lower(coalesce(res.status, 'active')) = 'active'), 0), 0) as vacant
                 from hostel_rooms r
                 join hostels h on h.id = r.hostel_id and h.institute_id = r.institute_id
-                left join hostel_residents res on res.room_id = r.id and res.institute_id = r.institute_id and (:sessionId is null or res.academic_session_id = :sessionId)
+                left join hostel_residents res on res.room_id = r.id and res.institute_id = r.institute_id and (cast(:sessionId as bigint) is null or res.academic_session_id = cast(:sessionId as bigint))
                 where r.institute_id = :instituteId
                   and lower(coalesce(r.status, 'active')) <> 'archived'
                   and lower(coalesce(h.status, 'active')) <> 'archived'
@@ -813,10 +813,10 @@ public class ReportAnalyticsService {
                            bool_or(upper(coalesce(status, 'PRESENT')) = 'NOT_ENTERED') as has_pending
                     from student_marks
                     where institute_id = :instituteId
-                      and (:sessionId is null or academic_session_id = :sessionId)
-                      and (:examId is null or exam_id = :examId)
-                      and (:classId is null or class_id = :classId)
-                      and (:subjectId is null or subject_id = :subjectId)
+                      and (cast(:sessionId as bigint) is null or academic_session_id = cast(:sessionId as bigint))
+                      and (cast(:examId as bigint) is null or exam_id = cast(:examId as bigint))
+                      and (cast(:classId as bigint) is null or class_id = cast(:classId as bigint))
+                      and (cast(:subjectId as bigint) is null or subject_id = cast(:subjectId as bigint))
                       and max_marks > 0
                     group by student_id
                 ), scored as (
@@ -849,10 +849,10 @@ public class ReportAnalyticsService {
                 left join school_classes c on c.id = m.class_id
                 left join subjects sub on sub.id = m.subject_id
                 where m.institute_id = :instituteId
-                  and (:sessionId is null or m.academic_session_id = :sessionId)
-                  and (:examId is null or m.exam_id = :examId)
-                  and (:classId is null or m.class_id = :classId)
-                  and (:subjectId is null or m.subject_id = :subjectId)
+                  and (cast(:sessionId as bigint) is null or m.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:examId as bigint) is null or m.exam_id = cast(:examId as bigint))
+                  and (cast(:classId as bigint) is null or m.class_id = cast(:classId as bigint))
+                  and (cast(:subjectId as bigint) is null or m.subject_id = cast(:subjectId as bigint))
                   and m.max_marks > 0
                   and upper(coalesce(m.status, 'PRESENT')) <> 'NOT_ENTERED'
                 group by label
@@ -870,10 +870,10 @@ public class ReportAnalyticsService {
                            bool_or(upper(coalesce(status, 'PRESENT')) = 'NOT_ENTERED') as has_pending
                     from student_marks
                     where institute_id = :instituteId
-                      and (:sessionId is null or academic_session_id = :sessionId)
-                      and (:examId is null or exam_id = :examId)
-                      and (:classId is null or class_id = :classId)
-                      and (:subjectId is null or subject_id = :subjectId)
+                      and (cast(:sessionId as bigint) is null or academic_session_id = cast(:sessionId as bigint))
+                      and (cast(:examId as bigint) is null or exam_id = cast(:examId as bigint))
+                      and (cast(:classId as bigint) is null or class_id = cast(:classId as bigint))
+                      and (cast(:subjectId as bigint) is null or subject_id = cast(:subjectId as bigint))
                       and max_marks > 0
                     group by student_id
                 ), scored as (
@@ -901,13 +901,13 @@ public class ReportAnalyticsService {
                 from student_marks m
                 join students s on s.id = m.student_id and s.institute_id = m.institute_id
                 where m.institute_id = :instituteId
-                  and (:sessionId is null or m.academic_session_id = :sessionId)
-                  and (:examId is null or m.exam_id = :examId)
-                  and (:classId is null or m.class_id = :classId)
+                  and (cast(:sessionId as bigint) is null or m.academic_session_id = cast(:sessionId as bigint))
+                  and (cast(:examId as bigint) is null or m.exam_id = cast(:examId as bigint))
+                  and (cast(:classId as bigint) is null or m.class_id = cast(:classId as bigint))
                   and m.max_marks > 0
                   and upper(coalesce(m.status, 'PRESENT')) not in ('EXEMPT', 'NOT_ENTERED')
                 group by m.student_id, studentName, className
-                having (:lowOnly = false or round((sum(m.marks_obtained) / nullif(sum(m.max_marks), 0)) * 100, 2) < :passPercentage)
+                having (cast(:lowOnly as boolean) = false or round((sum(m.marks_obtained) / nullif(sum(m.max_marks), 0)) * 100, 2) < :passPercentage)
                 order by percentage %s
                 limit :limit
                 """.formatted(lowOnly ? "asc" : "desc"), params("instituteId", instituteId, "sessionId", sessionId, "examId", examId, "classId", classId, "lowOnly", lowOnly, "passPercentage", passPercentage, "limit", limit),
@@ -937,15 +937,15 @@ public class ReportAnalyticsService {
     private Map<String, Object> transportSummary(Long instituteId, Long sessionId) {
         return single("""
                 select coalesce((select count(*) from transport_drivers where institute_id = :instituteId and lower(coalesce(status, 'active')) <> 'archived'), 0) as drivers,
-                       coalesce((select count(*) from transport_assignments where institute_id = :instituteId and (:sessionId is null or academic_session_id = :sessionId)), 0) as assignedStudents,
+                       coalesce((select count(*) from transport_assignments where institute_id = :instituteId and (cast(:sessionId as bigint) is null or academic_session_id = cast(:sessionId as bigint))), 0) as assignedStudents,
                        coalesce((select count(distinct ta.id)
                                  from transport_attendance ta
                                  left join transport_assignments a
                                    on a.institute_id = ta.institute_id
                                   and a.student_id = ta.student_id
-                                  and (:sessionId is null or a.academic_session_id = :sessionId)
+                                  and (cast(:sessionId as bigint) is null or a.academic_session_id = cast(:sessionId as bigint))
                                  where ta.institute_id = :instituteId
-                                   and (:sessionId is null or a.id is not null)), 0) as attendanceRecords
+                                   and (cast(:sessionId as bigint) is null or a.id is not null)), 0) as attendanceRecords
                 """, params("instituteId", instituteId, "sessionId", sessionId), "drivers", "assignedStudents", "attendanceRecords");
     }
 
@@ -957,7 +957,7 @@ public class ReportAnalyticsService {
                        coalesce(count(distinct r.id), 0) as rooms
                 from hostels h
                 left join hostel_rooms r on r.hostel_id = h.id and r.institute_id = h.institute_id and lower(coalesce(r.status, 'active')) <> 'archived'
-                left join hostel_residents res on res.room_id = r.id and res.institute_id = h.institute_id and (:sessionId is null or res.academic_session_id = :sessionId)
+                left join hostel_residents res on res.room_id = r.id and res.institute_id = h.institute_id and (cast(:sessionId as bigint) is null or res.academic_session_id = cast(:sessionId as bigint))
                 where h.institute_id = :instituteId
                   and lower(coalesce(h.status, 'active')) <> 'archived'
                 """, params("instituteId", instituteId, "sessionId", sessionId), "capacity", "occupied", "hostels", "rooms");
